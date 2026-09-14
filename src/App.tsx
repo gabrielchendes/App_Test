@@ -1,0 +1,294 @@
+import { useState, useEffect, Suspense } from 'react';
+import { supabase, isSupabaseConfigured } from './lib/supabase';
+import { User } from '@supabase/supabase-js';
+import { useSettings } from './contexts/SettingsContext';
+import { lazyWithRetry } from './lib/lazyWithRetry';
+import { safeFetch } from './lib/utils';
+import { toast } from 'sonner';
+import LoginPage from './pages/LoginPage';
+import Dashboard from './pages/Dashboard';
+import { GlowingSpinner } from './components/GlowingSpinner';
+
+// Smooth hardware-accelerated Loading Screen
+function LoadingScreen() {
+  return <GlowingSpinner fullScreen size="lg" />;
+}
+
+// Main application component
+export default function App() {
+  const [user, setUser] = useState<User | null>(null);
+  const [authLoading, setAuthLoading] = useState(true);
+  const { settings, loading: settingsLoading } = useSettings();
+
+  useEffect(() => {
+    // Global listener for unhandled token refresh/Supabase API rejections and transient network errors
+    const handleUnhandledRejection = (event: PromiseRejectionEvent) => {
+      const reason = event.reason;
+      const errorMsg = reason?.message || String(reason || '');
+      const isAuthError = 
+        errorMsg.includes('Refresh Token Not Found') || 
+        errorMsg.includes('Invalid Refresh Token') ||
+        errorMsg.includes('invalid_grant') || 
+        errorMsg.includes('AuthApiError') ||
+        errorMsg.includes('AuthSessionMissingError') ||
+        errorMsg.includes('session_not_found') ||
+        errorMsg.includes('refresh_token_not_found');
+
+      if (isAuthError) {
+        console.warn('⚠️ Caught background auth rejection gracefully (preventing unhandled crash):', errorMsg);
+        try {
+          event.preventDefault();
+          event.stopPropagation();
+          event.stopImmediatePropagation();
+        } catch (e) {}
+
+        // If the refresh token is truly gone/invalid, clear local auth storage to stop recurring failed attempts
+        if (errorMsg.includes('Refresh Token Not Found') || errorMsg.includes('Invalid Refresh Token') || errorMsg.includes('invalid_grant')) {
+          try {
+            window.localStorage.removeItem('maternidade_premium_auth');
+            const keys = Object.keys(window.localStorage);
+            keys.forEach(k => {
+              if (k.startsWith('sb-') && k.endsWith('-auth-token')) {
+                window.localStorage.removeItem(k);
+              }
+            });
+          } catch (e) {}
+          setUser(null);
+          setAuthLoading(false);
+        }
+      } else if (
+        errorMsg.includes('NetworkError') ||
+        errorMsg.includes('fetch resource') ||
+        errorMsg.includes('Failed to fetch') ||
+        errorMsg.includes('Load failed')
+      ) {
+        console.warn('⚠️ Intercepted transient background NetworkError gracefully:', errorMsg);
+        try {
+          event.preventDefault();
+        } catch (e) {}
+      }
+    };
+
+    // Global onerror handler to suppress and gracefully intercept cross-origin and network exceptions
+    const handleGlobalError = (event: ErrorEvent) => {
+      const msg = event.message || '';
+      const source = event.filename || '';
+      const isCrossOriginOrChunk = 
+        msg.includes('Script error') || 
+        msg.toLowerCase().includes('script error') ||
+        msg.includes('Failed to fetch dynamically imported module') ||
+        msg.includes('NetworkError') ||
+        msg.includes('fetch resource') ||
+        msg.includes('Failed to fetch') ||
+        msg.includes('Load failed') ||
+        !msg || // Empty error message
+        (source && (source.includes('gtag') || source.includes('googletagmanager') || source.includes('supabase') || source.includes('pwa')));
+
+      if (isCrossOriginOrChunk) {
+        console.warn('⚠️ Intercepted cross-origin, chunk or network error gracefully:', msg, 'from:', source);
+        try {
+          event.preventDefault();
+          event.stopPropagation();
+        } catch (e) {}
+        return true; // Stop error from bubbling and triggering parent iframe warnings
+      }
+      return false;
+    };
+
+    window.addEventListener('unhandledrejection', handleUnhandledRejection);
+    window.addEventListener('error', handleGlobalError);
+
+    if (!isSupabaseConfigured) {
+      setAuthLoading(false);
+      return;
+    }
+
+    // Check current session
+    const checkInitialSession = async () => {
+      try {
+        const { data: { session }, error } = await supabase.auth.getSession();
+        
+        if (error) {
+          console.warn('Session check note:', error.message);
+          // Clear if the refresh token is dead, not found, or invalid
+          const msg = error.message || '';
+          if (
+            msg.includes('Refresh Token Not Found') ||
+            msg.includes('Invalid Refresh Token') ||
+            msg.includes('invalid_grant') ||
+            msg.includes('refresh_token_not_found')
+          ) {
+            console.warn('Handling expired refresh token cleanly...');
+            try {
+              localStorage.removeItem('maternidade_premium_auth');
+              Object.keys(localStorage).forEach(k => {
+                if (k.startsWith('sb-') && k.endsWith('-auth-token')) {
+                  localStorage.removeItem(k);
+                }
+              });
+            } catch (e) {}
+          }
+          setUser(null);
+          setAuthLoading(false);
+          return;
+        }
+
+        if (session) {
+          setUser(session.user);
+          setAuthLoading(false);
+        } else {
+          // If no session, only stop loading if we are NOT in the middle of a hash login
+          if (!window.location.hash.includes('access_token=')) {
+            setAuthLoading(false);
+          } else {
+            console.log('Detected hash fragment, keeping loading state for processing...');
+            // Safety timeout: if after 5 seconds nothing happened, stop loading
+            setTimeout(() => setAuthLoading(false), 5000);
+          }
+        }
+      } catch (error) {
+        console.error('Initial session check error:', error);
+        setUser(null);
+        setAuthLoading(false);
+      }
+    };
+
+    // Check for Custom Magic Link
+    const checkMagicLink = async () => {
+      try {
+        const urlParams = new URLSearchParams(window.location.search);
+        const magicB64 = urlParams.get('magic');
+        if (magicB64) {
+          // Remove the parameter from URL immediately so it doesn't trigger on reload
+          const cleanUrl = window.location.pathname + window.location.search.replace(/[?&]magic=[^&]+/, '').replace(/^&/, '?');
+          window.history.replaceState(null, '', cleanUrl);
+
+          setAuthLoading(true);
+          const targetEmail = atob(magicB64);
+          console.log('[Magic Link] Attempting auto login for:', targetEmail);
+
+          const data = await safeFetch('/api/v1/auth?action=login-verify', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ email: targetEmail })
+          });
+
+          if (!data || data.error) {
+            toast.error(data?.error || 'Erro ao processar MagicLink');
+            setAuthLoading(false);
+            return;
+          }
+
+          if (data.tempPassword) {
+            const { error: signInError } = await supabase.auth.signInWithPassword({
+              email: targetEmail,
+              password: data.tempPassword
+            });
+            if (signInError) {
+              console.error('[Magic Link] Sign in failed:', signInError);
+              toast.error('Ocorreu um erro no login via MagicLink.');
+              setAuthLoading(false);
+            } else {
+              toast.success('Login realizado com sucesso via MagicLink!');
+            }
+          } else {
+            // It's the master admin (no tempPassword returned)
+            toast.info('MagicLink do Administrador. Insira sua senha para continuar.');
+            localStorage.setItem('prefilled_email', targetEmail);
+            setAuthLoading(false);
+          }
+        } else {
+          // Check normal initial session
+          await checkInitialSession();
+        }
+      } catch (err) {
+        console.error('[Magic Link] Error processing magic link:', err);
+        setAuthLoading(false);
+        await checkInitialSession();
+      }
+    };
+
+    checkMagicLink();
+
+    // Absolute fallback to ensure we don't get stuck on loading screen
+    const forceStopLoading = setTimeout(() => {
+      setAuthLoading(false);
+    }, 10000);
+
+    // Listen for auth changes
+    const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, session) => {
+      console.log(`Auth Event: ${event}`);
+      
+      if (session?.user) {
+        setUser(prev => (prev?.id === session.user.id && prev?.email === session.user.email ? prev : session.user));
+        setAuthLoading(false);
+        clearTimeout(forceStopLoading);
+      } else if (event === 'SIGNED_OUT' || (event as any) === 'USER_DELETED') {
+        setUser(null);
+        setAuthLoading(false);
+        clearTimeout(forceStopLoading);
+        if (window.location.hash) {
+          window.history.replaceState(null, '', window.location.pathname + window.location.search);
+        }
+      }
+    });
+
+    return () => {
+      subscription.unsubscribe();
+      clearTimeout(forceStopLoading);
+      window.removeEventListener('unhandledrejection', handleUnhandledRejection);
+      window.removeEventListener('error', handleGlobalError);
+    };
+  }, []);
+
+  useEffect(() => {
+    window.scrollTo(0, 0);
+  }, [user]);
+
+  // Google Tag Manager dynamic initialization
+  useEffect(() => {
+    // Avoid loading tracking scripts inside the sandboxed preview iframe to prevent security exceptions/Script errors
+    const isIframe = typeof window !== 'undefined' && window.self !== window.top;
+    if (isIframe) return;
+
+    // Altere para a chave do GTM (ex: GTM-XXXXXXX)
+    const gtmId = settings?.gtm_id; 
+    if (!gtmId) return;
+
+    // Check if GTM script already exists
+    if (document.querySelector(`script[src*="googletagmanager.com/gtm.js?id=${gtmId}"]`)) return;
+
+    // Prepara a dataLayer global
+    (window as any).dataLayer = (window as any).dataLayer || [];
+    (window as any).dataLayer.push({
+      'gtm.start': new Date().getTime(),
+      event: 'gtm.js'
+    });
+
+    // Injeta o script do GTM no head
+    const script = document.createElement('script');
+    script.async = true;
+    script.src = `https://www.googletagmanager.com/gtm.js?id=${gtmId}`;
+    document.head.appendChild(script);
+
+    return () => {
+      // Opcional: limpeza se o componente desmontar
+    };
+  }, [settings?.gtm_id]);
+
+  if (settingsLoading || authLoading) {
+    return <LoadingScreen />;
+  }
+
+  return (
+    <div className="min-h-screen bg-bg-main text-white font-sans selection:bg-primary/30 text-pretty">
+      {!user ? (
+        <LoginPage />
+      ) : (
+        <Suspense fallback={<LoadingScreen />}>
+          <Dashboard user={user} />
+        </Suspense>
+      )}
+    </div>
+  );
+}
