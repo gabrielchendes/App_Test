@@ -4,15 +4,15 @@ import { safeFetch } from './utils';
 
 // Firebase configuration with robust defaults matching project
 const firebaseConfig = {
-  apiKey: import.meta.env.VITE_FIREBASE_API_KEY || "AIzaSyDjl30PtezVKv0eJvEnNJopGCHGGQGLiAg",
-  authDomain: import.meta.env.VITE_FIREBASE_AUTH_DOMAIN || "app-maternidade.firebaseapp.com",
-  projectId: import.meta.env.VITE_FIREBASE_PROJECT_ID || "app-maternidade",
-  storageBucket: import.meta.env.VITE_FIREBASE_STORAGE_BUCKET || "app-maternidade.firebasestorage.app",
-  messagingSenderId: import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID || "669118811483",
-  appId: import.meta.env.VITE_FIREBASE_APP_ID || "1:669118811483:web:0402740c397b1c7cb55e7e"
+  apiKey: import.meta.env.VITE_FIREBASE_API_KEY,
+  authDomain: import.meta.env.VITE_FIREBASE_AUTH_DOMAIN,
+  projectId: import.meta.env.VITE_FIREBASE_PROJECT_ID,
+  storageBucket: import.meta.env.VITE_FIREBASE_STORAGE_BUCKET,
+  messagingSenderId: import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID,
+  appId: import.meta.env.VITE_FIREBASE_APP_ID
 };
 
-const VAPID_KEY = import.meta.env.VITE_FIREBASE_VAPID_KEY || "BGNNXxZmddn3ZCpHjQKCGBy4rGlsyC-e2CNhYb-j5pfeXXHhmrTEGLk3L6r-7PMNNHVdYwNhyJBpzMvRg7LjTfQ";
+const VAPID_KEY = import.meta.env.VITE_FIREBASE_VAPID_KEY;
 
 let firebaseAppInstance: any = null;
 let messagingInstance: any = null;
