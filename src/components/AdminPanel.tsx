@@ -119,9 +119,9 @@ const CourseAdminCard = ({ course, courseStats, setViewingCourseId, setEditingCo
       )}
       <div className="absolute inset-0 bg-gradient-to-t from-black via-black/20 to-transparent opacity-80" />
       
-      {/* Barra superior de controles: Botão Editar fixo e transparente à esquerda, outros à direita no hover */}
-      <div className="absolute top-2 inset-x-2 z-20 flex items-center justify-between pointer-events-none">
-        {/* Botão de Editar Curso compacto, transparente e encostado à esquerda */}
+      {/* Barra superior de controles: Botão Editar menor, bem encostado à esquerda e hiper-transparente */}
+      <div className="absolute top-1 left-1 right-1 z-20 flex items-center justify-between pointer-events-none">
+        {/* Botão de Editar Curso menor, encostado à esquerda e com alta transparência para visualizar a foto atrás */}
         <button 
           type="button"
           onClick={(e) => { 
@@ -129,25 +129,25 @@ const CourseAdminCard = ({ course, courseStats, setViewingCourseId, setEditingCo
             setEditingCourseId(course.id); 
             setShowCourseEditor(true); 
           }}
-          className="pointer-events-auto flex items-center gap-1 py-1 px-2 rounded-md bg-black/35 hover:bg-black/65 active:bg-blue-600/70 text-white backdrop-blur-[2px] border border-white/20 hover:border-blue-400/50 font-bold text-[9px] sm:text-[10px] uppercase tracking-wider shadow-sm transition-all active:scale-95 cursor-pointer"
+          className="pointer-events-auto flex items-center gap-1 py-0.5 px-1.5 rounded-md bg-black/20 hover:bg-black/60 active:bg-blue-600/60 text-white/90 hover:text-white backdrop-blur-[1px] border border-white/15 hover:border-blue-400/40 font-bold text-[8.5px] sm:text-[9px] uppercase tracking-tight shadow-sm transition-all active:scale-95 cursor-pointer"
           title="Editar Curso"
         >
-          <Edit3 size={11} strokeWidth={2.2} className="shrink-0 text-white/90" />
+          <Edit3 size={10} strokeWidth={2} className="shrink-0 text-white/80" />
           <span>Editar</span>
         </button>
 
-        {/* Botões secundários na direita (visíveis apenas no hover) */}
-        <div className="pointer-events-auto flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+        {/* Botões secundários na fileira da direita (visíveis apenas no hover para deixar apenas o Editar visível) */}
+        <div className="pointer-events-auto flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity duration-200">
           <button 
             type="button"
             onClick={(e) => { 
               e.stopPropagation(); 
               onAiEdit?.(course); 
             }}
-            className="p-1 bg-black/40 hover:bg-amber-500 text-white rounded-md backdrop-blur-sm transition-all border border-white/20 shadow-sm active:scale-95 cursor-pointer"
+            className="p-1 bg-black/30 hover:bg-amber-500 text-white/90 hover:text-white rounded backdrop-blur-sm transition-all border border-white/15 shadow-sm active:scale-95 cursor-pointer"
             title="Editar com IA"
           >
-            <Sparkles size={11} />
+            <Sparkles size={10} />
           </button>
           <button 
             type="button"
@@ -155,10 +155,10 @@ const CourseAdminCard = ({ course, courseStats, setViewingCourseId, setEditingCo
               e.stopPropagation(); 
               setViewingCourseId(course.id); 
             }}
-            className="p-1 bg-black/40 hover:bg-white text-white hover:text-black rounded-md backdrop-blur-sm transition-all border border-white/20 shadow-sm active:scale-95 cursor-pointer"
+            className="p-1 bg-black/30 hover:bg-white text-white/90 hover:text-black rounded backdrop-blur-sm transition-all border border-white/15 shadow-sm active:scale-95 cursor-pointer"
             title="Visualizar Grade"
           >
-            <Eye size={11} />
+            <Eye size={10} />
           </button>
           <button 
             type="button"
@@ -166,10 +166,10 @@ const CourseAdminCard = ({ course, courseStats, setViewingCourseId, setEditingCo
               e.stopPropagation(); 
               onDelete(course.id, course.title, !course.is_bonus && !course.is_free); 
             }}
-            className="p-1 bg-black/40 hover:bg-red-600 text-white rounded-md backdrop-blur-sm transition-all border border-white/20 shadow-sm active:scale-95 cursor-pointer"
+            className="p-1 bg-black/30 hover:bg-red-600 text-white/90 hover:text-white rounded backdrop-blur-sm transition-all border border-white/15 shadow-sm active:scale-95 cursor-pointer"
             title="Excluir"
           >
-            <Trash2 size={11} />
+            <Trash2 size={10} />
           </button>
         </div>
       </div>
@@ -188,23 +188,23 @@ const CourseAdminCard = ({ course, courseStats, setViewingCourseId, setEditingCo
         </div>
       </div>
 
-      {/* Move arrows */}
-      <div className="absolute bottom-2 right-2 flex gap-1 opacity-100 transition-opacity z-20">
+      {/* Move arrows (visíveis no hover para não poluir a foto) */}
+      <div className="absolute bottom-1.5 right-1.5 flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity z-20">
         <button 
           type="button"
           onClick={(e) => { e.stopPropagation(); onMove(course.id, 'up'); }}
-          className="p-1 sm:p-1.5 bg-black/70 hover:bg-blue-600 text-white rounded-lg backdrop-blur-md transition-all border border-white/20 shadow-xl active:scale-95 cursor-pointer"
+          className="p-1 bg-black/50 hover:bg-blue-600 text-white rounded backdrop-blur-sm transition-all border border-white/15 shadow-md active:scale-95 cursor-pointer"
           title="Mover para esquerda"
         >
-          <ChevronLeft size={14} strokeWidth={3} />
+          <ChevronLeft size={12} strokeWidth={2.5} />
         </button>
         <button 
           type="button"
           onClick={(e) => { e.stopPropagation(); onMove(course.id, 'down'); }}
-          className="p-1 sm:p-1.5 bg-black/70 hover:bg-blue-600 text-white rounded-lg backdrop-blur-md transition-all border border-white/20 shadow-xl active:scale-95 cursor-pointer"
+          className="p-1 bg-black/50 hover:bg-blue-600 text-white rounded backdrop-blur-sm transition-all border border-white/15 shadow-md active:scale-95 cursor-pointer"
           title="Mover para direita"
         >
-          <ChevronRight size={14} strokeWidth={3} />
+          <ChevronRight size={12} strokeWidth={2.5} />
         </button>
       </div>
     </div>
@@ -351,6 +351,7 @@ export default function AdminPanel({ user }: AdminPanelProps) {
   const [salesPaymentType, setSalesPaymentType] = useState<string>('all');
   const [salesSearch, setSalesSearch] = useState<string>('');
   const [salesDatePreset, setSalesDatePreset] = useState<string>('all');
+  const [visibleSalesCount, setVisibleSalesCount] = useState<number>(20);
 
   // Payload detail modal state
   const [selectedSaleDetail, setSelectedSaleDetail] = useState<any | null>(null);
@@ -421,8 +422,11 @@ export default function AdminPanel({ user }: AdminPanelProps) {
     }
   };
 
-  const fetchSalesData = async () => {
+  const fetchSalesData = async (resetPagination = false) => {
     setLoadingSales(true);
+    if (resetPagination) {
+      setVisibleSalesCount(20);
+    }
     try {
       const { data: { session } } = await supabase.auth.getSession();
       const queryParams = new URLSearchParams({
@@ -454,26 +458,23 @@ export default function AdminPanel({ user }: AdminPanelProps) {
   const applySalesDatePreset = (preset: string) => {
     setSalesDatePreset(preset);
     const now = new Date();
+    let start = '';
+    let end = '';
     if (preset === 'today') {
-      const start = new Date(now.getFullYear(), now.getMonth(), now.getDate()).toISOString();
-      setSalesStartDate(start);
-      setSalesEndDate(now.toISOString());
+      start = new Date(now.getFullYear(), now.getMonth(), now.getDate()).toISOString();
+      end = now.toISOString();
     } else if (preset === '7days') {
-      const start = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000).toISOString();
-      setSalesStartDate(start);
-      setSalesEndDate(now.toISOString());
+      start = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000).toISOString();
+      end = now.toISOString();
     } else if (preset === '30days') {
-      const start = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000).toISOString();
-      setSalesStartDate(start);
-      setSalesEndDate(now.toISOString());
+      start = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000).toISOString();
+      end = now.toISOString();
     } else if (preset === 'month') {
-      const start = new Date(now.getFullYear(), now.getMonth(), 1).toISOString();
-      setSalesStartDate(start);
-      setSalesEndDate(now.toISOString());
-    } else {
-      setSalesStartDate('');
-      setSalesEndDate('');
+      start = new Date(now.getFullYear(), now.getMonth(), 1).toISOString();
+      end = now.toISOString();
     }
+    setSalesStartDate(start);
+    setSalesEndDate(end);
   };
 
   const isAdminAuthorized = !settings?.admin_email || user.email?.toLowerCase() === settings?.admin_email?.toLowerCase();
@@ -487,9 +488,9 @@ export default function AdminPanel({ user }: AdminPanelProps) {
 
   useEffect(() => {
     if (activeTab === 'vendas') {
-      fetchSalesData();
+      fetchSalesData(true);
     }
-  }, [activeTab, salesStartDate, salesEndDate, salesProductId, salesProductType, salesStatus, salesPaymentType, salesSearch]);
+  }, [activeTab]);
 
   const fetchNotificationHistory = async () => {
     setLoadingHistory(true);
@@ -498,11 +499,33 @@ export default function AdminPanel({ user }: AdminPanelProps) {
       const data = await safeFetch('/api/v1/notifications?action=notification-history', {
         headers: { 'Authorization': `Bearer ${session?.access_token}` }
       });
-      if (Array.isArray(data)) {
+      if (Array.isArray(data) && data.length > 0) {
+        setNotificationHistory(data);
+        return;
+      }
+      
+      // Fallback robusto para buscar direto da tabela notification_history
+      const { data: directHist, error: directErr } = await supabase
+        .from('notification_history')
+        .select('*')
+        .order('created_at', { ascending: false })
+        .limit(200);
+
+      if (!directErr && directHist && directHist.length > 0) {
+        setNotificationHistory(directHist);
+      } else if (Array.isArray(data)) {
         setNotificationHistory(data);
       }
     } catch (e) {
       console.error('Error fetching history:', e);
+      try {
+        const { data: directHist } = await supabase
+          .from('notification_history')
+          .select('*')
+          .order('created_at', { ascending: false })
+          .limit(200);
+        if (directHist) setNotificationHistory(directHist);
+      } catch {}
     } finally {
       setLoadingHistory(false);
     }
@@ -6995,9 +7018,10 @@ export default function AdminPanel({ user }: AdminPanelProps) {
                       </div>
 
                       <button
-                        onClick={fetchSalesData}
+                        type="button"
+                        onClick={() => fetchSalesData(false)}
                         disabled={loadingSales}
-                        className="flex items-center gap-2 bg-emerald-600 hover:bg-emerald-500 text-white px-5 py-2.5 rounded-xl font-bold text-xs uppercase tracking-wider transition-all shadow-lg shadow-emerald-600/20"
+                        className="flex items-center gap-2 bg-emerald-600 hover:bg-emerald-500 text-white px-5 py-2.5 rounded-xl font-bold text-xs uppercase tracking-wider transition-all shadow-lg shadow-emerald-600/20 cursor-pointer"
                       >
                         <RefreshCw size={16} className={loadingSales ? 'animate-spin' : ''} />
                         Atualizar Vendas
@@ -7017,7 +7041,15 @@ export default function AdminPanel({ user }: AdminPanelProps) {
                         <div className="text-2xl font-black text-emerald-400">
                           R$ {(salesMetrics.totalRevenue || 0).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                         </div>
-                        <p className="text-[10px] text-gray-500 font-semibold">Receita líquida total aprovada</p>
+                        <p className="text-[10px] font-semibold">
+                          {(salesMetrics.totalDeductions || (salesMetrics.refundedAmount || 0) + (salesMetrics.canceledAmount || 0)) > 0 ? (
+                            <span className="text-emerald-400/90 font-bold">
+                              Líquido: subtraídos R$ {Number(salesMetrics.totalDeductions || (salesMetrics.refundedAmount || 0) + (salesMetrics.canceledAmount || 0)).toLocaleString('pt-BR', { minimumFractionDigits: 2 })} de estornos/canc.
+                            </span>
+                          ) : (
+                            <span className="text-gray-500">Receita líquida total aprovada</span>
+                          )}
+                        </p>
                       </div>
 
                       {/* Metric 2 */}
@@ -7056,8 +7088,13 @@ export default function AdminPanel({ user }: AdminPanelProps) {
                             <XCircle size={18} />
                           </div>
                         </div>
-                        <div className="text-2xl font-black text-red-400">
-                          {(salesMetrics.refundCount || 0) + (salesMetrics.cancelCount || 0)}
+                        <div className="text-2xl font-black text-red-400 flex items-baseline gap-1.5 flex-wrap">
+                          <span>{(salesMetrics.refundCount || 0) + (salesMetrics.cancelCount || 0)}</span>
+                          {(salesMetrics.totalDeductions || (salesMetrics.refundedAmount || 0) + (salesMetrics.canceledAmount || 0)) > 0 && (
+                            <span className="text-xs font-bold text-red-400/80">
+                              (-R$ {Number(salesMetrics.totalDeductions || (salesMetrics.refundedAmount || 0) + (salesMetrics.canceledAmount || 0)).toLocaleString('pt-BR', { minimumFractionDigits: 2 })})
+                            </span>
+                          )}
                         </div>
                         <p className="text-[10px] text-gray-500 font-semibold">
                           {salesMetrics.refundCount || 0} reembolsadas / {salesMetrics.cancelCount || 0} canceladas
@@ -7197,7 +7234,7 @@ export default function AdminPanel({ user }: AdminPanelProps) {
                         </div>
                       </div>
 
-                      {/* Search Bar & Clear Button */}
+                      {/* Search Bar, OK/Filter Button & Clear Button */}
                       <div className="flex flex-col sm:flex-row gap-3 pt-2">
                         <div className="flex-1 relative">
                           <Search size={16} className="absolute left-3 top-3 text-gray-500" />
@@ -7205,13 +7242,35 @@ export default function AdminPanel({ user }: AdminPanelProps) {
                             type="text"
                             value={salesSearch}
                             onChange={(e) => setSalesSearch(e.target.value)}
-                            placeholder="Buscar por nome do aluno, e-mail ou código HP..."
+                            onKeyDown={(e) => {
+                              if (e.key === 'Enter') {
+                                fetchSalesData(true);
+                              }
+                            }}
+                            placeholder="Buscar por nome do aluno, e-mail ou código HP... (pressione Enter ou OK)"
                             className="w-full bg-black border border-white/10 rounded-xl pl-9 pr-4 py-2.5 text-xs text-white focus:border-amber-500 outline-none"
                           />
                         </div>
 
+                        {/* Botão de OK / Aplicar Filtros com destaque */}
+                        <button
+                          type="button"
+                          onClick={() => fetchSalesData(true)}
+                          disabled={loadingSales}
+                          className="flex items-center justify-center gap-2 bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-400 hover:to-amber-500 active:scale-95 text-black px-6 py-2.5 rounded-xl font-black text-xs uppercase tracking-wider transition-all shadow-lg shadow-amber-500/20 cursor-pointer shrink-0"
+                          title="Aplicar todos os filtros selecionados"
+                        >
+                          {loadingSales ? (
+                            <Loader2 size={15} className="animate-spin text-black" />
+                          ) : (
+                            <Check size={15} strokeWidth={3} className="text-black" />
+                          )}
+                          <span>Aplicar Filtros (OK)</span>
+                        </button>
+
                         {(salesStartDate || salesEndDate || salesProductId !== 'all' || salesProductType !== 'all' || salesStatus !== 'all' || salesPaymentType !== 'all' || salesSearch || salesDatePreset !== 'all') && (
                           <button
+                            type="button"
                             onClick={() => {
                               setSalesStartDate('');
                               setSalesEndDate('');
@@ -7221,8 +7280,9 @@ export default function AdminPanel({ user }: AdminPanelProps) {
                               setSalesPaymentType('all');
                               setSalesSearch('');
                               setSalesDatePreset('all');
+                              setTimeout(() => fetchSalesData(true), 50);
                             }}
-                            className="bg-zinc-800 hover:bg-zinc-700 text-gray-300 border border-white/10 px-4 py-2.5 rounded-xl text-xs font-bold uppercase tracking-wider transition-all"
+                            className="bg-zinc-800 hover:bg-zinc-700 text-gray-300 border border-white/10 px-4 py-2.5 rounded-xl text-xs font-bold uppercase tracking-wider transition-all shrink-0 cursor-pointer"
                           >
                             Limpar Filtros
                           </button>
@@ -7301,10 +7361,26 @@ export default function AdminPanel({ user }: AdminPanelProps) {
                     {/* Sales Table */}
                     <div className="bg-zinc-900/50 rounded-2xl border border-white/10 overflow-hidden space-y-2">
                       <div className="p-4 border-b border-white/10 flex items-center justify-between">
-                        <span className="text-xs font-bold uppercase tracking-wider text-gray-300">
-                          Listagem de Transações ({salesList.length})
-                        </span>
-                        {loadingSales && <Loader2 className="animate-spin text-emerald-400" size={16} />}
+                        <div className="flex items-center gap-2">
+                          <span className="text-xs font-bold uppercase tracking-wider text-gray-300">
+                            Listagem de Transações
+                          </span>
+                          <span className="text-[11px] font-bold text-amber-400 bg-amber-500/10 px-2.5 py-0.5 rounded-full border border-amber-500/20">
+                            Exibindo {Math.min(visibleSalesCount, salesList.length)} de {salesList.length}
+                          </span>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <button
+                            type="button"
+                            onClick={() => fetchSalesData(false)}
+                            disabled={loadingSales}
+                            className="p-1.5 bg-zinc-800 hover:bg-zinc-700 text-gray-300 hover:text-white rounded-lg border border-white/10 transition-all cursor-pointer"
+                            title="Atualizar lista"
+                          >
+                            <RefreshCw size={14} className={loadingSales ? 'animate-spin' : ''} />
+                          </button>
+                          {loadingSales && <Loader2 className="animate-spin text-emerald-400" size={16} />}
+                        </div>
                       </div>
 
                       <div className="overflow-x-auto">
@@ -7329,7 +7405,7 @@ export default function AdminPanel({ user }: AdminPanelProps) {
                                 </td>
                               </tr>
                             ) : (
-                              salesList.map((sale) => {
+                              salesList.slice(0, visibleSalesCount).map((sale) => {
                                 const isAppr = sale.status === 'approved';
                                 const isRef = sale.status === 'refunded';
                                 const isCanc = sale.status === 'canceled';
@@ -7404,6 +7480,36 @@ export default function AdminPanel({ user }: AdminPanelProps) {
                             )}
                           </tbody>
                         </table>
+                      </div>
+
+                      {/* Paginação de 20 em 20 com botão de atualizar e carregar mais 20 */}
+                      <div className="p-4 border-t border-white/10 flex flex-col sm:flex-row items-center justify-between gap-3 bg-black/40">
+                        <div className="text-xs text-gray-400">
+                          Exibindo <span className="font-bold text-white">{Math.min(visibleSalesCount, salesList.length)}</span> de <span className="font-bold text-white">{salesList.length}</span> transações
+                        </div>
+
+                        <div className="flex items-center gap-2">
+                          <button
+                            type="button"
+                            onClick={() => fetchSalesData(false)}
+                            disabled={loadingSales}
+                            className="flex items-center gap-1.5 px-3 py-2 bg-zinc-800 hover:bg-zinc-700 active:bg-zinc-600 text-gray-300 hover:text-white rounded-xl text-xs font-bold transition-all border border-white/10 cursor-pointer"
+                            title="Atualizar lista de vendas"
+                          >
+                            <RefreshCw size={13} className={loadingSales ? 'animate-spin' : ''} />
+                            <span>Atualizar</span>
+                          </button>
+
+                          {visibleSalesCount < salesList.length && (
+                            <button
+                              type="button"
+                              onClick={() => setVisibleSalesCount(prev => prev + 20)}
+                              className="flex items-center gap-1.5 px-4 py-2 bg-gradient-to-r from-emerald-600 to-emerald-500 hover:from-emerald-500 hover:to-emerald-400 active:scale-95 text-white rounded-xl text-xs font-black uppercase tracking-wider shadow-md shadow-emerald-600/20 transition-all cursor-pointer"
+                            >
+                              <span>Carregar Mais 20 Transações (+20)</span>
+                            </button>
+                          )}
+                        </div>
                       </div>
                     </div>
 

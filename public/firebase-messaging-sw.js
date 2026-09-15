@@ -77,6 +77,38 @@ try {
   console.warn('[Push SW] Initialization deferred or failed:', e);
 }
 
+// Resilient native push event listener fallback
+self.addEventListener('push', (event) => {
+  if (!event.data) return;
+  try {
+    const raw = event.data.json();
+    console.log('[Push SW] Native push event received:', raw);
+    const notification = raw.notification || raw.data || {};
+    const title = notification.title || raw.data?.title || 'Nova Notificação';
+    const body = notification.body || raw.data?.body || '';
+    const icon = notification.icon || raw.data?.icon || '/icon-192.png';
+    const badge = notification.badge || raw.data?.badge || '/icon-192.png';
+    const tag = raw.data?.broadcast_id || raw.data?.id || raw.data?.tag || 'maternidade-push';
+
+    event.waitUntil(
+      self.registration.getNotifications({ tag }).then((existing) => {
+        // If notification is already displayed by Firebase SDK, avoid duplicate
+        if (existing && existing.length > 0) return;
+        return self.registration.showNotification(title, {
+          body,
+          icon,
+          badge,
+          tag,
+          data: raw.data || raw || {},
+          renotify: false
+        });
+      })
+    );
+  } catch (err) {
+    console.warn('[Push SW] Native push fallback parse note:', err);
+  }
+});
+
 // Handle notification click: focus existing window or open new window
 self.addEventListener('notificationclick', (event) => {
   event.notification.close();

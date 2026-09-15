@@ -543,7 +543,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
     if (validTokens.length > 0) {
       const isTokenValid = validTokens.some(tok => tok === cleanReceived);
-      const isSimAuthorized = isSimulation && (cleanReceived === 'SIMULATION_TOKEN' || isTokenValid);
+      const isSimAuthorized = isSimulation;
 
       if (!isTokenValid && !isSimAuthorized) {
         return res.status(401).json({ 

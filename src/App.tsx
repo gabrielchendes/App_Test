@@ -245,6 +245,16 @@ export default function App() {
     window.scrollTo(0, 0);
   }, [user]);
 
+  // Keep push notifications synced if user has granted permission
+  useEffect(() => {
+    if (!user?.id) return;
+    if (typeof window !== 'undefined' && 'Notification' in window && Notification.permission === 'granted') {
+      import('./lib/pushNotifications').then(({ initPushIfGranted }) => {
+        initPushIfGranted(user.id);
+      }).catch(() => {});
+    }
+  }, [user?.id]);
+
   // Google Tag Manager dynamic initialization
   useEffect(() => {
     // Avoid loading tracking scripts inside the sandboxed preview iframe to prevent security exceptions/Script errors

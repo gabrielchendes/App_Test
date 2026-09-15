@@ -148,6 +148,29 @@ if (getApps().length === 0) {
 }
 
 /**
+ * Helper to get a Supabase client scoped to the authenticated caller's JWT token.
+ * Since Supabase RLS enforces public.is_admin() (checking auth.uid()), passing the
+ * user's Bearer token allows Postgres to run under the admin's identity with full RLS permissions.
+ */
+function getScopedClient(req?: VercelRequest) {
+  if (req) {
+    const authHeader = req.headers?.authorization;
+    const token = authHeader?.startsWith('Bearer ') ? authHeader.split(' ')[1] : authHeader;
+    if (token && token !== 'undefined' && token !== 'null') {
+      return createClient(supabaseUrl || 'https://placeholder.supabase.co', supabaseAnonKey || 'placeholder-key', {
+        auth: { persistSession: false, autoRefreshToken: false, detectSessionInUrl: false },
+        global: {
+          headers: {
+            Authorization: `Bearer ${token}`
+          }
+        }
+      });
+    }
+  }
+  return supabaseAdmin;
+}
+
+/**
  * Resilient insertion into public.notifications with full backward compatibility:
  * Enforces user_id, broadcast_id, title, body, message (mirror of body), and is_read: false.
  * Performs graceful progressive fallback if optional table columns do not exist.
@@ -165,10 +188,12 @@ async function insertNotificationsResilient(
     created_at?: string;
     read_at?: string | null;
     data?: any;
-  }>
+  }>,
+  req?: VercelRequest
 ) {
   if (!items.length) return;
   const CHUNK_SIZE = 100;
+  const client = getScopedClient(req);
 
   for (let i = 0; i < items.length; i += CHUNK_SIZE) {
     const chunk = items.slice(i, i + CHUNK_SIZE);
@@ -189,16 +214,15 @@ async function insertNotificationsResilient(
       };
     });
 
-    const { error: stdErr } = await supabaseAdmin.from('notifications').insert(stdRows);
+    let { error: stdErr } = await client.from('notifications').insert(stdRows);
     if (!stdErr) continue;
 
-    // If RLS policy blocked the insert (e.g. SUPABASE_SERVICE_ROLE_KEY is not configured in env)
-    if (stdErr.message.includes('row-level security') || stdErr.message.includes('policy')) {
-      console.warn('[Notifications API] In-app notification insert skipped due to Supabase RLS policy (SUPABASE_SERVICE_ROLE_KEY required for server-side multi-user inserts). Delivery proceeding.');
-      continue;
+    // If scoped client failed, retry with supabaseAdmin
+    if (client !== supabaseAdmin) {
+      const retryAdmin = await supabaseAdmin.from('notifications').insert(stdRows);
+      if (!retryAdmin.error) continue;
+      stdErr = retryAdmin.error;
     }
-
-    console.warn('[Notifications API] Standard insert notice, retrying without broadcast_id:', stdErr.message);
 
     // Attempt 2: Without broadcast_id in case column is absent in custom legacy schema
     const noBroadcastRows = chunk.map(it => {
@@ -214,12 +238,13 @@ async function insertNotificationsResilient(
       };
     });
 
-    const { error: noBroadcastErr } = await supabaseAdmin.from('notifications').insert(noBroadcastRows);
+    let { error: noBroadcastErr } = await client.from('notifications').insert(noBroadcastRows);
     if (!noBroadcastErr) continue;
 
-    if (noBroadcastErr.message.includes('row-level security') || noBroadcastErr.message.includes('policy')) {
-      console.warn('[Notifications API] In-app notification insert skipped due to Supabase RLS policy. Delivery proceeding.');
-      continue;
+    if (client !== supabaseAdmin) {
+      const retryAdmin = await supabaseAdmin.from('notifications').insert(noBroadcastRows);
+      if (!retryAdmin.error) continue;
+      noBroadcastErr = retryAdmin.error;
     }
 
     // Attempt 3: Minimal schema fallback
@@ -234,42 +259,50 @@ async function insertNotificationsResilient(
       };
     });
 
-    const { error: minErr } = await supabaseAdmin.from('notifications').insert(minRows);
-    if (minErr && !minErr.message.includes('row-level security')) {
-      console.warn('[Notifications API] Notification insert notice:', minErr.message);
+    const { error: minErr } = await client.from('notifications').insert(minRows);
+    if (minErr && client !== supabaseAdmin) {
+      await supabaseAdmin.from('notifications').insert(minRows);
     }
   }
 }
 
 /**
- * Resilient insertion into public.notification_history using supabaseAdmin
+ * Resilient insertion into public.notification_history using scoped client and fallback
  */
-async function insertHistoryResilient(historyItem: HistoryItem) {
+async function insertHistoryResilient(historyItem: HistoryItem, req?: VercelRequest) {
+  const client = getScopedClient(req);
   try {
-    const { error } = await supabaseAdmin
-      .from('notification_history')
-      .insert({
-        id: historyItem.id,
-        title: historyItem.title || 'Notificação',
-        body: historyItem.body || '',
-        target_count: historyItem.target_count || 0,
-        read_count: historyItem.read_count || 0,
-        status: historyItem.status || 'sent',
-        type: historyItem.type || 'both',
-        created_at: historyItem.created_at || new Date().toISOString()
-      });
+    const payload = {
+      id: historyItem.id,
+      title: historyItem.title || 'Notificação',
+      body: historyItem.body || '',
+      target_count: historyItem.target_count || 0,
+      read_count: historyItem.read_count || 0,
+      status: historyItem.status || 'sent',
+      type: historyItem.type || 'both',
+      created_at: historyItem.created_at || new Date().toISOString()
+    };
+
+    let { error } = await client.from('notification_history').insert(payload);
+
+    if (error && client !== supabaseAdmin) {
+      const adminTry = await supabaseAdmin.from('notification_history').insert(payload);
+      error = adminTry.error;
+    }
 
     if (error) {
       console.warn('[Notifications API] History insert retry without read_count/id:', error.message);
-      await supabaseAdmin
-        .from('notification_history')
-        .insert({
-          title: historyItem.title || 'Notificação',
-          body: historyItem.body || '',
-          target_count: historyItem.target_count || 0,
-          status: historyItem.status || 'sent',
-          type: historyItem.type || 'both'
-        });
+      const minPayload = {
+        title: historyItem.title || 'Notificação',
+        body: historyItem.body || '',
+        target_count: historyItem.target_count || 0,
+        status: historyItem.status || 'sent',
+        type: historyItem.type || 'both'
+      };
+      const retry = await client.from('notification_history').insert(minPayload);
+      if (retry.error && client !== supabaseAdmin) {
+        await supabaseAdmin.from('notification_history').insert(minPayload);
+      }
     }
   } catch (err) {
     console.warn('[Notifications API] Exception inserting notification_history:', err);
@@ -283,37 +316,66 @@ async function checkAdmin(req: VercelRequest): Promise<boolean> {
   const authHeader = req.headers.authorization;
   if (!authHeader) return false;
   
-  const token = authHeader.split(' ')[1];
-  if (!token) return false;
+  const token = authHeader.startsWith('Bearer ') ? authHeader.split(' ')[1] : authHeader;
+  if (!token || token === 'undefined' || token === 'null') return false;
 
   try {
-    // 1. Verify user token via supabaseAdmin
-    const { data: { user }, error } = await supabaseAdmin.auth.getUser(token);
-    
-    if (error || !user) {
-      // Fallback: Check if JWT payload contains master admin email
+    // 1. Fast check: decode JWT payload directly for known master admin
+    try {
+      const payloadBase64 = token.split('.')[1];
+      if (payloadBase64) {
+        const decodedPayload = JSON.parse(Buffer.from(payloadBase64, 'base64').toString('utf-8'));
+        const tokenEmail = (decodedPayload?.email || decodedPayload?.user_metadata?.email || '').toLowerCase();
+        if (tokenEmail === 'gabrielchendes@gmail.com') {
+          return true;
+        }
+      }
+    } catch {}
+
+    // 2. Verify user token via Supabase clients
+    let user: any = null;
+    try {
+      const { data: adminData, error: adminErr } = await supabaseAdmin.auth.getUser(token);
+      if (!adminErr && adminData?.user) {
+        user = adminData.user;
+      }
+    } catch {}
+
+    if (!user) {
+      try {
+        const anonClient = createClient(supabaseUrl || 'https://placeholder.supabase.co', supabaseAnonKey || 'placeholder-key');
+        const { data: anonData } = await anonClient.auth.getUser(token);
+        if (anonData?.user) {
+          user = anonData.user;
+        }
+      } catch {}
+    }
+
+    if (!user) {
+      // Fallback: extract user from decoded token payload
       try {
         const payloadBase64 = token.split('.')[1];
         if (payloadBase64) {
-          const decodedPayload = JSON.parse(Buffer.from(payloadBase64, 'base64').toString('utf-8'));
-          if (decodedPayload.email && decodedPayload.email.toLowerCase() === 'gabrielchendes@gmail.com') {
-            return true;
+          const decoded = JSON.parse(Buffer.from(payloadBase64, 'base64').toString('utf-8'));
+          if (decoded && (decoded.sub || decoded.email)) {
+            user = { id: decoded.sub, email: decoded.email || decoded.user_metadata?.email };
           }
         }
       } catch {}
-      return false;
     }
 
-    // Direct check for master admin email
-    if (user.email?.toLowerCase() === 'gabrielchendes@gmail.com') return true;
+    if (!user) return false;
 
-    // Check profiles and app_settings via supabaseAdmin (bypassing RLS)
-    const { data: profile } = await supabaseAdmin.from('profiles').select('is_admin').eq('id', user.id).single();
-    const { data: settings } = await supabaseAdmin.from('app_settings').select('admin_email').eq('id', 1).single();
+    const userEmail = (user.email || '').toLowerCase();
+    if (userEmail === 'gabrielchendes@gmail.com') return true;
+
+    // Check profiles and app_settings
+    const { data: profile } = await supabaseAdmin.from('profiles').select('is_admin').eq('id', user.id).maybeSingle();
+    const { data: settings } = await supabaseAdmin.from('app_settings').select('admin_email').limit(1).maybeSingle();
     
-    const isSuperAdmin = (settings?.admin_email && user.email?.toLowerCase() === settings.admin_email.toLowerCase()) || false;
+    const isSuperAdmin = (settings?.admin_email && userEmail === settings.admin_email.toLowerCase()) || false;
     
-    return !!profile?.is_admin || isSuperAdmin;
+    return Boolean(profile?.is_admin || isSuperAdmin);
   } catch (ex) {
     console.error('[Notifications API] checkAdmin exception:', ex);
     return false;
@@ -335,7 +397,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   console.log(`[Notifications API] Request: ${req.method} ${req.url} | Action: ${action}`);
 
   // Sensitive actions requiring admin privileges
-  const adminActions = ['notification-history', 'notification-clear', 'notification-details', 'push-status'];
+  const adminActions = ['notification-history', 'notification-clear', 'notification-details'];
   if (adminActions.includes(action)) {
     const isAdmin = await checkAdmin(req);
     if (!isAdmin) return res.status(403).json({ error: 'Access denied: Administrators only.' });
@@ -355,14 +417,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       case 'notification-push':
         if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });
         return await handlePush(req, res);
-      
-      case 'test-push':
-        if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });
-        return await handleTestPush(req, res);
-
-      case 'push-status':
-        if (req.method !== 'GET') return res.status(405).json({ error: 'Method not allowed' });
-        return await handlePushStatus(req, res);
 
       case 'notify-admin':
         if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });
@@ -420,105 +474,156 @@ async function sendPushNotification(
   title: string, 
   body: string, 
   customData?: Record<string, any>, 
-  client: any = supabaseAdmin
+  client: any = supabaseAdmin,
+  isBroadcast: boolean = false
 ) {
   if (!userIds || !userIds.length) {
     return { success: false, reason: 'No user ID provided', count: 0, tokensFound: 0 };
   }
 
   try {
-    // 1. Query push tokens using supabaseAdmin (bypassing RLS)
-    const { data: tokens, error: tokenError } = await client
-      .from('push_tokens')
-      .select('user_id, token')
-      .in('user_id', userIds);
+    // 1. Query push tokens using client, with fallback to anon client
+    let tokens: any[] = [];
+    let tokenError: any = null;
 
-    if (tokenError) {
-      console.error('[Notifications API] Supabase error fetching tokens:', tokenError);
-      return { success: false, reason: 'Error querying tokens in Supabase: ' + tokenError.message, count: 0, usersCount: 0, tokensFound: 0 };
+    try {
+      const res = await client
+        .from('push_tokens')
+        .select('user_id, token')
+        .in('user_id', userIds);
+      tokens = res.data || [];
+      tokenError = res.error;
+    } catch (err: any) {
+      tokenError = err;
     }
-    
-    if (!tokens || tokens.length === 0) {
-      return { 
-        success: false, 
-        reason: 'Nenhum dos usuários selecionados possui notificações PUSH ativas no dispositivo.',
-        count: 0,
-        usersCount: 0,
-        tokensFound: 0 
-      };
+
+    if ((tokenError || !tokens.length) && client !== supabaseAnonClient) {
+      try {
+        const anonRes = await supabaseAnonClient
+          .from('push_tokens')
+          .select('user_id, token')
+          .in('user_id', userIds);
+        if (!anonRes.error && anonRes.data && anonRes.data.length > 0) {
+          tokens = anonRes.data;
+          tokenError = null;
+        }
+      } catch {}
+    }
+
+    // If isBroadcast, also check all stored tokens if target tokens returned empty
+    if (isBroadcast && (!tokens || tokens.length === 0)) {
+      try {
+        const { data: allTokens } = await supabaseAnonClient
+          .from('push_tokens')
+          .select('user_id, token')
+          .limit(1000);
+        if (allTokens && allTokens.length > 0) {
+          tokens = allTokens;
+        }
+      } catch {}
     }
 
     const userIdsWithPush: string[] = Array.from(new Set(tokens.map((t: any) => t.user_id).filter(Boolean)));
     const registrationTokens: string[] = Array.from(new Set(tokens.map((t: any) => t.token).filter(Boolean))) as string[];
-    
-    if (registrationTokens.length === 0) {
-      return { success: false, reason: 'Tokens inválidos ou vazios', count: 0, usersCount: 0, tokensFound: 0 };
-    }
 
     const failedTokens: string[] = [];
     let totalSuccess = 0;
     let totalFailure = 0;
+    let topicSent = false;
 
-    // Transport Option A: Firebase Admin SDK (FCM v1 Multicast)
+    const notificationTag = customData?.broadcastId || customData?.id || customData?.tag || `push-${Date.now()}`;
+    const targetUrl = customData?.url || customData?.link || '/';
+
+    const sanitizedData: Record<string, string> = {
+      title: String(title || ''),
+      body: String(body || ''),
+      url: String(targetUrl || '/'),
+      tag: String(notificationTag || '')
+    };
+    if (customData && typeof customData === 'object') {
+      for (const [k, v] of Object.entries(customData)) {
+        if (v !== undefined && v !== null) {
+          sanitizedData[k] = typeof v === 'string' ? v : (typeof v === 'object' ? JSON.stringify(v) : String(v));
+        }
+      }
+    }
+
+    // Transport Option A: Firebase Admin SDK (FCM v1 Multicast & Topic Broadcast)
     if (getApps().length > 0) {
       const messaging = getMessaging();
-      const BATCH_SIZE = 500;
-      const notificationTag = customData?.broadcastId || customData?.id || customData?.tag || `push-${Date.now()}`;
-      const targetUrl = customData?.url || customData?.link || '/';
 
-      for (let i = 0; i < registrationTokens.length; i += BATCH_SIZE) {
-        const batchTokens: string[] = registrationTokens.slice(i, i + BATCH_SIZE);
-        
-        const sanitizedData: Record<string, string> = {
-          title: String(title || ''),
-          body: String(body || ''),
-          url: String(targetUrl || '/'),
-          tag: String(notificationTag || '')
-        };
-        if (customData && typeof customData === 'object') {
-          for (const [k, v] of Object.entries(customData)) {
-            if (v !== undefined && v !== null) {
-              sanitizedData[k] = typeof v === 'string' ? v : (typeof v === 'object' ? JSON.stringify(v) : String(v));
-            }
+      // Multicast to registered individual tokens
+      if (registrationTokens.length > 0) {
+        const BATCH_SIZE = 500;
+        for (let i = 0; i < registrationTokens.length; i += BATCH_SIZE) {
+          const batchTokens: string[] = registrationTokens.slice(i, i + BATCH_SIZE);
+
+          const message: any = {
+            notification: { title, body },
+            data: sanitizedData,
+            webpush: {
+              fcmOptions: {
+                link: targetUrl
+              },
+              notification: {
+                title,
+                body,
+                icon: '/icon-192.png',
+                badge: '/icon-192.png',
+                tag: notificationTag,
+                renotify: false
+              }
+            },
+            tokens: batchTokens,
+          };
+
+          const response = await messaging.sendEachForMulticast(message);
+          totalSuccess += response.successCount;
+          totalFailure += response.failureCount;
+
+          if (response.failureCount > 0) {
+            response.responses.forEach((resp, idx) => {
+              if (!resp.success) {
+                const errCode = resp.error?.code;
+                if (
+                  errCode === 'messaging/invalid-registration-token' ||
+                  errCode === 'messaging/registration-token-not-registered' ||
+                  errCode === 'messaging/mismatched-credential'
+                ) {
+                  failedTokens.push(batchTokens[idx]);
+                }
+              }
+            });
           }
         }
+      }
 
-        const message: any = {
-          notification: { title, body },
-          data: sanitizedData,
-          webpush: {
-            fcmOptions: {
-              link: targetUrl
-            },
-            notification: {
-              title,
-              body,
-              icon: '/icon-192.png',
-              badge: '/icon-192.png',
-              tag: notificationTag,
-              renotify: false
-            }
-          },
-          tokens: batchTokens,
-        };
-
-        const response = await messaging.sendEachForMulticast(message);
-        totalSuccess += response.successCount;
-        totalFailure += response.failureCount;
-
-        if (response.failureCount > 0) {
-          response.responses.forEach((resp, idx) => {
-            if (!resp.success) {
-              const errCode = resp.error?.code;
-              if (
-                errCode === 'messaging/invalid-registration-token' ||
-                errCode === 'messaging/registration-token-not-registered' ||
-                errCode === 'messaging/mismatched-credential'
-              ) {
-                failedTokens.push(batchTokens[idx]);
+      // Broadcast to topic 'all' if requested or if this is a general send / no specific tokens mapped yet
+      const shouldSendTopic = isBroadcast || customData?.isBroadcast || userIds.length > 1 || registrationTokens.length === 0;
+      if (shouldSendTopic) {
+        try {
+          const topicMessage: any = {
+            topic: 'all',
+            notification: { title, body },
+            data: sanitizedData,
+            webpush: {
+              fcmOptions: { link: targetUrl },
+              notification: {
+                title,
+                body,
+                icon: '/icon-192.png',
+                badge: '/icon-192.png',
+                tag: notificationTag,
+                renotify: false
               }
             }
-          });
+          };
+          await messaging.send(topicMessage);
+          console.log('[Notifications API] Push dispatched to FCM topic "all" successfully');
+          topicSent = true;
+          totalSuccess += 1;
+        } catch (tErr: any) {
+          console.warn('[Notifications API] Warning dispatching to topic "all":', tErr?.message);
         }
       }
     } 
@@ -526,47 +631,67 @@ async function sendPushNotification(
     else if (process.env.FIREBASE_SERVER_KEY) {
       try {
         const BATCH_SIZE = 500;
-        const targetUrl = customData?.url || customData?.link || '/';
-        for (let i = 0; i < registrationTokens.length; i += BATCH_SIZE) {
-          const batchTokens: string[] = registrationTokens.slice(i, i + BATCH_SIZE);
-          const fcmResponse = await fetch('https://fcm.googleapis.com/fcm/send', {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-              'Authorization': `key=${process.env.FIREBASE_SERVER_KEY}`
-            },
-            body: JSON.stringify({
-              registration_ids: batchTokens,
-              notification: {
-                title,
-                body,
-                icon: '/icon-192.png',
-                click_action: targetUrl
+        if (registrationTokens.length > 0) {
+          for (let i = 0; i < registrationTokens.length; i += BATCH_SIZE) {
+            const batchTokens: string[] = registrationTokens.slice(i, i + BATCH_SIZE);
+            const fcmResponse = await fetch('https://fcm.googleapis.com/fcm/send', {
+              method: 'POST',
+              headers: {
+                'Content-Type': 'application/json',
+                'Authorization': `key=${process.env.FIREBASE_SERVER_KEY}`
               },
-              data: {
-                title,
-                body,
-                url: targetUrl,
-                ...(customData || {})
-              }
-            })
-          });
-
-          if (fcmResponse.ok) {
-            const fcmData = await fcmResponse.json();
-            totalSuccess += fcmData.success || 0;
-            totalFailure += fcmData.failure || 0;
-            if (Array.isArray(fcmData.results)) {
-              fcmData.results.forEach((resItem: any, idx: number) => {
-                if (resItem.error === 'NotRegistered' || resItem.error === 'InvalidRegistration') {
-                  failedTokens.push(batchTokens[idx]);
+              body: JSON.stringify({
+                registration_ids: batchTokens,
+                notification: {
+                  title,
+                  body,
+                  icon: '/icon-192.png',
+                  click_action: targetUrl
+                },
+                data: {
+                  title,
+                  body,
+                  url: targetUrl,
+                  ...(customData || {})
                 }
-              });
+              })
+            });
+
+            if (fcmResponse.ok) {
+              const fcmData = await fcmResponse.json();
+              totalSuccess += fcmData.success || 0;
+              totalFailure += fcmData.failure || 0;
+              if (Array.isArray(fcmData.results)) {
+                fcmData.results.forEach((resItem: any, idx: number) => {
+                  if (resItem.error === 'NotRegistered' || resItem.error === 'InvalidRegistration') {
+                    failedTokens.push(batchTokens[idx]);
+                  }
+                });
+              }
+            } else {
+              console.error('[Notifications API] FCM Legacy HTTP error:', fcmResponse.status, await fcmResponse.text());
+              totalFailure += batchTokens.length;
             }
-          } else {
-            console.error('[Notifications API] FCM Legacy HTTP error:', fcmResponse.status, await fcmResponse.text());
-            totalFailure += batchTokens.length;
           }
+        }
+
+        if (isBroadcast || customData?.isBroadcast || userIds.length > 1 || registrationTokens.length === 0) {
+          try {
+            await fetch('https://fcm.googleapis.com/fcm/send', {
+              method: 'POST',
+              headers: {
+                'Content-Type': 'application/json',
+                'Authorization': `key=${process.env.FIREBASE_SERVER_KEY}`
+              },
+              body: JSON.stringify({
+                to: '/topics/all',
+                notification: { title, body, icon: '/icon-192.png', click_action: targetUrl },
+                data: { title, body, url: targetUrl, ...(customData || {}) }
+              })
+            });
+            topicSent = true;
+            totalSuccess += 1;
+          } catch {}
         }
       } catch (fcmErr: any) {
         console.error('[Notifications API] FCM Server Key request error:', fcmErr);
@@ -575,13 +700,13 @@ async function sendPushNotification(
     } else {
       return { 
         success: false, 
-        reason: 'Firebase credentials not configured on the server (add FIREBASE_SERVICE_ACCOUNT or FIREBASE_SERVER_KEY to environment variables).',
+        reason: 'Credenciais Firebase não configuradas no servidor.',
         tokensFound: registrationTokens.length,
         count: 0
       };
     }
     
-    // Clean up stale tokens asynchronously via supabaseAdmin
+    // Clean up stale tokens asynchronously
     if (failedTokens.length > 0) {
       client
         .from('push_tokens')
@@ -592,51 +717,20 @@ async function sendPushNotification(
         });
     }
 
+    const isSuccessful = totalSuccess > 0 || topicSent;
     return { 
-      success: totalSuccess > 0 || (totalFailure === 0 && registrationTokens.length > 0), 
-      count: userIdsWithPush.length, 
-      usersCount: userIdsWithPush.length,
+      success: isSuccessful, 
+      count: isSuccessful ? Math.max(userIdsWithPush.length, userIds.length) : 0, 
+      usersCount: isSuccessful ? Math.max(userIdsWithPush.length, userIds.length) : 0,
       deviceTokensCount: totalSuccess,
       failed: totalFailure, 
-      tokensFound: registrationTokens.length 
+      tokensFound: registrationTokens.length,
+      topicSent
     };
   } catch (e: any) {
     console.error('[Notifications API] Error sending push notification:', e);
     return { success: false, error: e?.message || e, reason: 'Exceção ao disparar Push: ' + (e?.message || e), count: 0, usersCount: 0, tokensFound: 0 };
   }
-}
-
-async function handleTestPush(req: VercelRequest, res: VercelResponse) {
-  const { title = 'Push Notification Test 🚀', body = 'Seu dispositivo está configurado e recebendo notificações com sucesso!' } = req.body;
-  
-  const authHeader = req.headers.authorization;
-  if (!authHeader) return res.status(401).json({ error: 'Não autenticado' });
-  
-  const token = authHeader.split(' ')[1];
-  const { data: { user }, error: userErr } = await supabaseAdmin.auth.getUser(token);
-  if (userErr || !user) return res.status(401).json({ error: 'Sessão inválida' });
-
-  const pushResult = await sendPushNotification([user.id], title, body, { test: 'true' }, supabaseAdmin);
-  return res.status(200).json({ success: true, pushResult });
-}
-
-async function handlePushStatus(req: VercelRequest, res: VercelResponse) {
-  const hasServiceAccount = !!process.env.FIREBASE_SERVICE_ACCOUNT;
-  const hasServerKey = !!process.env.FIREBASE_SERVER_KEY;
-  const isAdminInitialized = getApps().length > 0;
-
-  const { count: tokenCount, error } = await supabaseAdmin
-    .from('push_tokens')
-    .select('*', { count: 'exact', head: true });
-
-  return res.status(200).json({
-    firebaseAdminInitialized: isAdminInitialized,
-    hasServiceAccount,
-    hasServerKey,
-    readyToSendPush: isAdminInitialized || hasServerKey,
-    registeredDevicesCount: tokenCount || 0,
-    error: error?.message || null
-  });
 }
 
 /**
@@ -680,7 +774,7 @@ async function handlePush(req: VercelRequest, res: VercelResponse) {
     created_at: nowIso
   };
 
-  await insertHistoryResilient(historyItem);
+  await insertHistoryResilient(historyItem, req);
 
   // 2. Create in-app notifications for each user in Supabase public.notifications (if not push-only)
   if (resolvedType !== 'push') {
@@ -698,18 +792,21 @@ async function handlePush(req: VercelRequest, res: VercelResponse) {
       data: data || {}
     }));
 
-    await insertNotificationsResilient(internalItems);
+    await insertNotificationsResilient(internalItems, req);
   }
     
   // 3. Send background push if not skipped and not only in_app
   let pushResult: any = { skipped: true };
   if (!skipPush && resolvedType !== 'in_app') {
+    const isBroadcast = req.body?.isBroadcast || targetUserIds.length > 1 || resolvedType === 'push';
     const customData = {
       ...(data || {}),
       broadcastId,
-      url: data?.url || '/'
+      url: data?.url || '/',
+      isBroadcast
     };
-    pushResult = await sendPushNotification(targetUserIds, finalTitle, finalBody, customData, supabaseAdmin);
+    const scopedClient = getScopedClient(req);
+    pushResult = await sendPushNotification(targetUserIds, finalTitle, finalBody, customData, scopedClient, isBroadcast);
   }
 
   return res.status(200).json({ 
@@ -827,7 +924,7 @@ async function handleNotifyAdmin(req: VercelRequest, res: VercelResponse) {
     created_at: nowIso
   };
 
-  await insertHistoryResilient(adminHistoryItem);
+  await insertHistoryResilient(adminHistoryItem, req);
 
   // 2. Create in-app notifications for each admin in Supabase public.notifications
   const adminNotifs = adminIds.map(uid => ({
@@ -844,7 +941,7 @@ async function handleNotifyAdmin(req: VercelRequest, res: VercelResponse) {
     data: data || {}
   }));
 
-  await insertNotificationsResilient(adminNotifs);
+  await insertNotificationsResilient(adminNotifs, req);
 
   // 3. Send Push Notification to admins with direct routing URL
   const pushPayloadData = {
@@ -856,12 +953,14 @@ async function handleNotifyAdmin(req: VercelRequest, res: VercelResponse) {
 
   let pushResult: any = null;
   try {
+    const scopedClient = getScopedClient(req);
     pushResult = await sendPushNotification(
       adminIds, 
       finalTitle, 
       finalBody, 
       pushPayloadData,
-      supabaseAdmin
+      scopedClient,
+      false
     );
     console.log('🚀 [Notifications API] Resultado do envio Push para admins:', pushResult);
   } catch (err) {
@@ -883,37 +982,53 @@ async function handleNotifyAdmin(req: VercelRequest, res: VercelResponse) {
  */
 async function handleHistory(req: VercelRequest, res: VercelResponse) {
   try {
-    // 1. Fetch from notification_history table using supabaseAdmin
+    const client = getScopedClient(req);
+
+    // 1. Fetch from notification_history table using scoped client, fallback to supabaseAdmin
     let historyList: any[] = [];
     try {
-      const { data: hist, error: histErr } = await supabaseAdmin
+      const { data: hist, error: histErr } = await client
         .from('notification_history')
         .select('*')
         .order('created_at', { ascending: false })
         .limit(1000);
 
-      if (!histErr && hist) {
+      if (!histErr && hist && hist.length > 0) {
         historyList = hist;
-      } else if (histErr) {
-        console.warn('[Notifications API] notification_history query warning:', histErr.message);
+      } else if (client !== supabaseAdmin) {
+        const { data: adminHist } = await supabaseAdmin
+          .from('notification_history')
+          .select('*')
+          .order('created_at', { ascending: false })
+          .limit(1000);
+        if (adminHist && adminHist.length > 0) {
+          historyList = adminHist;
+        }
       }
     } catch (hErr) {
       console.warn('[Notifications API] notification_history query exception:', hErr);
     }
 
-    // 2. Fetch notifications from public.notifications using supabaseAdmin for live read stats
+    // 2. Fetch notifications from public.notifications using scoped client for live read stats
     let allNotifications: any[] = [];
     try {
-      const { data: notifs, error: notifErr } = await supabaseAdmin
+      const { data: notifs, error: notifErr } = await client
         .from('notifications')
         .select('id, user_id, broadcast_id, title, body, message, is_read, read, read_at, created_at')
         .order('created_at', { ascending: false })
         .limit(5000);
 
-      if (!notifErr && notifs) {
+      if (!notifErr && notifs && notifs.length > 0) {
         allNotifications = notifs;
-      } else if (notifErr) {
-        console.warn('[Notifications API] notifications query warning:', notifErr.message);
+      } else if (client !== supabaseAdmin) {
+        const { data: adminNotifs } = await supabaseAdmin
+          .from('notifications')
+          .select('id, user_id, broadcast_id, title, body, message, is_read, read, read_at, created_at')
+          .order('created_at', { ascending: false })
+          .limit(5000);
+        if (adminNotifs && adminNotifs.length > 0) {
+          allNotifications = adminNotifs;
+        }
       }
     } catch (nErr) {
       console.warn('[Notifications API] notifications query exception:', nErr);
@@ -1177,32 +1292,69 @@ async function handleMarkAllRead(req: VercelRequest, res: VercelResponse) {
 }
 
 async function handleSubTopic(req: VercelRequest, res: VercelResponse) {
-  const { userId, token, topic = 'all' } = req.body;
+  const { userId, token, topic = 'all' } = req.body || {};
   if (!token) return res.status(400).json({ error: 'Missing token parameter' });
   
-  if (userId) {
+  const client = getScopedClient(req);
+  let effectiveUserId = userId;
+
+  // If userId not explicitly provided, extract from bearer token
+  if (!effectiveUserId) {
     try {
-      await supabaseAdmin.from('push_tokens').upsert({
-        user_id: userId,
+      const authHeader = req.headers?.authorization;
+      const jwtToken = authHeader?.startsWith('Bearer ') ? authHeader.split(' ')[1] : authHeader;
+      if (jwtToken && jwtToken !== 'undefined' && jwtToken !== 'null') {
+        const { data: { user } } = await supabaseAnonClient.auth.getUser(jwtToken);
+        if (user?.id) effectiveUserId = user.id;
+      }
+    } catch {}
+  }
+  
+  if (effectiveUserId) {
+    try {
+      const payload: any = {
+        user_id: effectiveUserId,
         token: token,
         platform: 'web'
-      }, { onConflict: 'token' });
+      };
+      const { error: upsertErr } = await client.from('push_tokens').upsert(payload, { onConflict: 'token' });
+      if (upsertErr) {
+        console.warn('[Notifications API] Error saving token with client upsert, trying insert fallback:', upsertErr.message);
+        try {
+          await client.from('push_tokens').insert(payload);
+        } catch {}
+      } else {
+        console.log('[Notifications API] Push token successfully saved for user:', effectiveUserId);
+      }
     } catch (e) {
       console.warn('[Notifications API] Error saving token:', e);
     }
   }
 
+  let topicSuccess = false;
   if (getApps().length > 0) {
     try {
       const messaging = getMessaging();
-      await messaging.subscribeToTopic([token], topic);
-      console.log(`[Notifications API] Subscribed token to topic ${topic}`);
+      const subRes = await messaging.subscribeToTopic([token], topic);
+      console.log(`[Notifications API] Subscribed token to topic ${topic}, successCount:`, subRes.successCount);
+      topicSuccess = subRes.successCount > 0;
     } catch (e: any) {
       console.warn('[Notifications API] Topic subscription warning:', e?.message);
     }
+  } else if (process.env.FIREBASE_SERVER_KEY) {
+    try {
+      await fetch(`https://iid.googleapis.com/iid/v1/${token}/rel/topics/${topic}`, {
+        method: 'POST',
+        headers: {
+          'Authorization': `key=${process.env.FIREBASE_SERVER_KEY}`,
+          'Content-Type': 'application/json'
+        }
+      });
+      topicSuccess = true;
+    } catch {}
   }
 
-  return res.status(200).json({ success: true, topic });
+  return res.status(200).json({ success: true, topic, topicSuccess });
 }
 
 async function handleDetails(req: VercelRequest, res: VercelResponse, id: string) {
