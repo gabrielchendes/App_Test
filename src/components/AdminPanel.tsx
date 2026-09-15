@@ -100,16 +100,13 @@ const AiCourseFactoryModal = lazyWithRetry(() => import('./AiCourseFactoryModal'
 const AiCourseEditModal = lazyWithRetry(() => import('./AiCourseEditModal').then(m => ({ default: m.AiCourseEditModal })));
 
 const CourseAdminCard = ({ course, courseStats, setViewingCourseId, setEditingCourseId, setShowCourseEditor, onDelete, onMove, onAiEdit }: any) => (
-  <div 
-    onClick={() => { setEditingCourseId(course.id); setShowCourseEditor(true); }}
-    className="bg-zinc-900 border border-white/5 rounded-xl overflow-hidden group hover:border-blue-500/50 transition-all flex flex-col w-36 sm:w-44 shrink-0 shadow-2xl cursor-pointer relative"
-  >
+  <div className="bg-zinc-900 border border-white/5 rounded-xl overflow-hidden group hover:border-blue-500/50 transition-all flex flex-col w-36 sm:w-44 shrink-0 shadow-2xl">
     <div className="relative aspect-[2/3] overflow-hidden shrink-0">
       {course.cover_url?.trim() ? (
         <img 
           src={course.cover_url.trim()} 
           alt={course.title} 
-          className="w-full h-full object-cover transition-transform duration-700 group-hover:scale-105" 
+          className="w-full h-full object-cover transition-transform duration-700 group-hover:scale-110" 
           referrerPolicy="no-referrer" 
         />
       ) : (
@@ -119,66 +116,11 @@ const CourseAdminCard = ({ course, courseStats, setViewingCourseId, setEditingCo
       )}
       <div className="absolute inset-0 bg-gradient-to-t from-black via-black/20 to-transparent opacity-80" />
       
-      {/* Barra superior de controles: Botão Editar menor, bem encostado à esquerda e hiper-transparente */}
-      <div className="absolute top-1 left-1 right-1 z-20 flex items-center justify-between pointer-events-none">
-        {/* Botão de Editar Curso menor, encostado à esquerda e com alta transparência para visualizar a foto atrás */}
-        <button 
-          type="button"
-          onClick={(e) => { 
-            e.stopPropagation(); 
-            setEditingCourseId(course.id); 
-            setShowCourseEditor(true); 
-          }}
-          className="pointer-events-auto flex items-center gap-1 py-0.5 px-1.5 rounded-md bg-black/20 hover:bg-black/60 active:bg-blue-600/60 text-white/90 hover:text-white backdrop-blur-[1px] border border-white/15 hover:border-blue-400/40 font-bold text-[8.5px] sm:text-[9px] uppercase tracking-tight shadow-sm transition-all active:scale-95 cursor-pointer"
-          title="Editar Curso"
-        >
-          <Edit3 size={10} strokeWidth={2} className="shrink-0 text-white/80" />
-          <span>Editar</span>
-        </button>
-
-        {/* Botões secundários na fileira da direita (visíveis apenas no hover para deixar apenas o Editar visível) */}
-        <div className="pointer-events-auto flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity duration-200">
-          <button 
-            type="button"
-            onClick={(e) => { 
-              e.stopPropagation(); 
-              onAiEdit?.(course); 
-            }}
-            className="p-1 bg-black/30 hover:bg-amber-500 text-white/90 hover:text-white rounded backdrop-blur-sm transition-all border border-white/15 shadow-sm active:scale-95 cursor-pointer"
-            title="Editar com IA"
-          >
-            <Sparkles size={10} />
-          </button>
-          <button 
-            type="button"
-            onClick={(e) => { 
-              e.stopPropagation(); 
-              setViewingCourseId(course.id); 
-            }}
-            className="p-1 bg-black/30 hover:bg-white text-white/90 hover:text-black rounded backdrop-blur-sm transition-all border border-white/15 shadow-sm active:scale-95 cursor-pointer"
-            title="Visualizar Grade"
-          >
-            <Eye size={10} />
-          </button>
-          <button 
-            type="button"
-            onClick={(e) => { 
-              e.stopPropagation(); 
-              onDelete(course.id, course.title, !course.is_bonus && !course.is_free); 
-            }}
-            className="p-1 bg-black/30 hover:bg-red-600 text-white/90 hover:text-white rounded backdrop-blur-sm transition-all border border-white/15 shadow-sm active:scale-95 cursor-pointer"
-            title="Excluir"
-          >
-            <Trash2 size={10} />
-          </button>
-        </div>
-      </div>
-
-      <div className="absolute inset-x-0 bottom-0 p-3 space-y-1 z-10 pointer-events-none">
+      <div className="absolute inset-x-0 bottom-0 p-3 space-y-1">
         <h4 className="font-black text-[10px] sm:text-xs text-white leading-tight line-clamp-2 drop-shadow-md uppercase italic">
           {course.title}
         </h4>
-        <div className="text-[8px] font-black text-blue-400 uppercase tracking-tighter drop-shadow-md flex items-center gap-1">
+        <div className="text-[8px] font-black text-blue-500 uppercase tracking-tighter drop-shadow-md flex items-center gap-1">
           {course.is_bonus ? 'BÔNUS 🎁' : course.is_free ? 'PRODUTO PRINCIPAL 💎' : 'PREMIUM'}
           {course.is_package_exclusive_bonus && (
              <div className={`${course.is_bonus ? 'bg-purple-600' : 'bg-emerald-600'} p-0.5 rounded shadow-sm border ${course.is_bonus ? 'border-purple-400/50' : 'border-emerald-400/50'}`} title="Liberado via Pacote">
@@ -188,23 +130,53 @@ const CourseAdminCard = ({ course, courseStats, setViewingCourseId, setEditingCo
         </div>
       </div>
 
-      {/* Move arrows (visíveis no hover para não poluir a foto) */}
-      <div className="absolute bottom-1.5 right-1.5 flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity z-20">
+      {/* Admin floating controls */}
+      <div className="absolute top-2 right-2 flex flex-col gap-1 opacity-0 group-hover:opacity-100 transition-opacity z-10">
         <button 
-          type="button"
-          onClick={(e) => { e.stopPropagation(); onMove(course.id, 'up'); }}
-          className="p-1 bg-black/50 hover:bg-blue-600 text-white rounded backdrop-blur-sm transition-all border border-white/15 shadow-md active:scale-95 cursor-pointer"
-          title="Mover para esquerda"
+          onClick={() => onAiEdit?.(course)}
+          className="p-1.5 bg-gradient-to-r from-amber-500 to-rose-500 hover:brightness-110 text-white rounded-lg backdrop-blur-md transition-all shadow-lg"
+          title="Editar com IA"
         >
-          <ChevronLeft size={12} strokeWidth={2.5} />
+          <Sparkles size={14} />
         </button>
         <button 
-          type="button"
+          onClick={() => setViewingCourseId(course.id)}
+          className="p-1.5 bg-white/20 hover:bg-white text-white hover:text-black rounded-lg backdrop-blur-md transition-all shadow-lg"
+          title="Visualizar Grade"
+        >
+          <Eye size={14} />
+        </button>
+        <button 
+          onClick={() => { setEditingCourseId(course.id); setShowCourseEditor(true); }}
+          className="p-1.5 bg-white/20 hover:bg-white text-white hover:text-black rounded-lg backdrop-blur-md transition-all shadow-lg"
+          title="Editar Curso"
+        >
+          <Edit3 size={14} />
+        </button>
+        <button 
+          onClick={() => onDelete(course.id, course.title, !course.is_bonus && !course.is_free)}
+          className="p-1.5 bg-red-500/80 hover:bg-red-500 text-white rounded-lg backdrop-blur-md transition-all shadow-lg"
+          title="Excluir"
+        >
+          <Trash2 size={14} />
+        </button>
+      </div>
+
+      {/* Move arrows */}
+      <div className="absolute bottom-2 right-2 flex gap-1 opacity-100 transition-opacity">
+        <button 
+          onClick={(e) => { e.stopPropagation(); onMove(course.id, 'up'); }}
+          className="p-1 sm:p-1.5 bg-black/60 hover:bg-blue-600 text-white rounded-lg backdrop-blur-md transition-all border border-white/20 shadow-xl"
+          title="Mover para esquerda"
+        >
+          <ChevronLeft size={16} strokeWidth={3} />
+        </button>
+        <button 
           onClick={(e) => { e.stopPropagation(); onMove(course.id, 'down'); }}
-          className="p-1 bg-black/50 hover:bg-blue-600 text-white rounded backdrop-blur-sm transition-all border border-white/15 shadow-md active:scale-95 cursor-pointer"
+          className="p-1 sm:p-1.5 bg-black/60 hover:bg-blue-600 text-white rounded-lg backdrop-blur-md transition-all border border-white/20 shadow-xl"
           title="Mover para direita"
         >
-          <ChevronRight size={12} strokeWidth={2.5} />
+          <ChevronRight size={16} strokeWidth={3} />
         </button>
       </div>
     </div>
@@ -351,7 +323,6 @@ export default function AdminPanel({ user }: AdminPanelProps) {
   const [salesPaymentType, setSalesPaymentType] = useState<string>('all');
   const [salesSearch, setSalesSearch] = useState<string>('');
   const [salesDatePreset, setSalesDatePreset] = useState<string>('all');
-  const [visibleSalesCount, setVisibleSalesCount] = useState<number>(20);
 
   // Payload detail modal state
   const [selectedSaleDetail, setSelectedSaleDetail] = useState<any | null>(null);
@@ -422,11 +393,8 @@ export default function AdminPanel({ user }: AdminPanelProps) {
     }
   };
 
-  const fetchSalesData = async (resetPagination = false) => {
+  const fetchSalesData = async () => {
     setLoadingSales(true);
-    if (resetPagination) {
-      setVisibleSalesCount(20);
-    }
     try {
       const { data: { session } } = await supabase.auth.getSession();
       const queryParams = new URLSearchParams({
@@ -458,23 +426,26 @@ export default function AdminPanel({ user }: AdminPanelProps) {
   const applySalesDatePreset = (preset: string) => {
     setSalesDatePreset(preset);
     const now = new Date();
-    let start = '';
-    let end = '';
     if (preset === 'today') {
-      start = new Date(now.getFullYear(), now.getMonth(), now.getDate()).toISOString();
-      end = now.toISOString();
+      const start = new Date(now.getFullYear(), now.getMonth(), now.getDate()).toISOString();
+      setSalesStartDate(start);
+      setSalesEndDate(now.toISOString());
     } else if (preset === '7days') {
-      start = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000).toISOString();
-      end = now.toISOString();
+      const start = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000).toISOString();
+      setSalesStartDate(start);
+      setSalesEndDate(now.toISOString());
     } else if (preset === '30days') {
-      start = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000).toISOString();
-      end = now.toISOString();
+      const start = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000).toISOString();
+      setSalesStartDate(start);
+      setSalesEndDate(now.toISOString());
     } else if (preset === 'month') {
-      start = new Date(now.getFullYear(), now.getMonth(), 1).toISOString();
-      end = now.toISOString();
+      const start = new Date(now.getFullYear(), now.getMonth(), 1).toISOString();
+      setSalesStartDate(start);
+      setSalesEndDate(now.toISOString());
+    } else {
+      setSalesStartDate('');
+      setSalesEndDate('');
     }
-    setSalesStartDate(start);
-    setSalesEndDate(end);
   };
 
   const isAdminAuthorized = !settings?.admin_email || user.email?.toLowerCase() === settings?.admin_email?.toLowerCase();
@@ -488,9 +459,9 @@ export default function AdminPanel({ user }: AdminPanelProps) {
 
   useEffect(() => {
     if (activeTab === 'vendas') {
-      fetchSalesData(true);
+      fetchSalesData();
     }
-  }, [activeTab]);
+  }, [activeTab, salesStartDate, salesEndDate, salesProductId, salesProductType, salesStatus, salesPaymentType, salesSearch]);
 
   const fetchNotificationHistory = async () => {
     setLoadingHistory(true);
@@ -499,33 +470,11 @@ export default function AdminPanel({ user }: AdminPanelProps) {
       const data = await safeFetch('/api/v1/notifications?action=notification-history', {
         headers: { 'Authorization': `Bearer ${session?.access_token}` }
       });
-      if (Array.isArray(data) && data.length > 0) {
-        setNotificationHistory(data);
-        return;
-      }
-      
-      // Fallback robusto para buscar direto da tabela notification_history
-      const { data: directHist, error: directErr } = await supabase
-        .from('notification_history')
-        .select('*')
-        .order('created_at', { ascending: false })
-        .limit(200);
-
-      if (!directErr && directHist && directHist.length > 0) {
-        setNotificationHistory(directHist);
-      } else if (Array.isArray(data)) {
+      if (Array.isArray(data)) {
         setNotificationHistory(data);
       }
     } catch (e) {
       console.error('Error fetching history:', e);
-      try {
-        const { data: directHist } = await supabase
-          .from('notification_history')
-          .select('*')
-          .order('created_at', { ascending: false })
-          .limit(200);
-        if (directHist) setNotificationHistory(directHist);
-      } catch {}
     } finally {
       setLoadingHistory(false);
     }
@@ -1070,9 +1019,6 @@ export default function AdminPanel({ user }: AdminPanelProps) {
     setSimResult(null);
     try {
       const { data: { session } } = await supabase.auth.getSession();
-      const currentToken = customWebhookTokenInput.trim() || settings?.custom_texts?.['hotmart.webhook_token'] || '';
-      const currentTargetUrl = customWebhookInput.trim() || settings?.custom_texts?.['hotmart.webhook_url'] || '';
-
       const res = await safeFetch('/api/v1/admin?action=webhook-simulate', {
         method: 'POST',
         headers: {
@@ -1082,9 +1028,7 @@ export default function AdminPanel({ user }: AdminPanelProps) {
         body: JSON.stringify({
           buyer_email: simTestEmail.trim(),
           hotmart_product_id: simTestProductId.trim(),
-          event_type: simTestEvent,
-          webhook_token: currentToken,
-          target_url: currentTargetUrl
+          event_type: simTestEvent
         })
       });
 
@@ -7018,10 +6962,9 @@ export default function AdminPanel({ user }: AdminPanelProps) {
                       </div>
 
                       <button
-                        type="button"
-                        onClick={() => fetchSalesData(false)}
+                        onClick={fetchSalesData}
                         disabled={loadingSales}
-                        className="flex items-center gap-2 bg-emerald-600 hover:bg-emerald-500 text-white px-5 py-2.5 rounded-xl font-bold text-xs uppercase tracking-wider transition-all shadow-lg shadow-emerald-600/20 cursor-pointer"
+                        className="flex items-center gap-2 bg-emerald-600 hover:bg-emerald-500 text-white px-5 py-2.5 rounded-xl font-bold text-xs uppercase tracking-wider transition-all shadow-lg shadow-emerald-600/20"
                       >
                         <RefreshCw size={16} className={loadingSales ? 'animate-spin' : ''} />
                         Atualizar Vendas
@@ -7041,15 +6984,7 @@ export default function AdminPanel({ user }: AdminPanelProps) {
                         <div className="text-2xl font-black text-emerald-400">
                           R$ {(salesMetrics.totalRevenue || 0).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                         </div>
-                        <p className="text-[10px] font-semibold">
-                          {(salesMetrics.totalDeductions || (salesMetrics.refundedAmount || 0) + (salesMetrics.canceledAmount || 0)) > 0 ? (
-                            <span className="text-emerald-400/90 font-bold">
-                              Líquido: subtraídos R$ {Number(salesMetrics.totalDeductions || (salesMetrics.refundedAmount || 0) + (salesMetrics.canceledAmount || 0)).toLocaleString('pt-BR', { minimumFractionDigits: 2 })} de estornos/canc.
-                            </span>
-                          ) : (
-                            <span className="text-gray-500">Receita líquida total aprovada</span>
-                          )}
-                        </p>
+                        <p className="text-[10px] text-gray-500 font-semibold">Receita líquida total aprovada</p>
                       </div>
 
                       {/* Metric 2 */}
@@ -7088,13 +7023,8 @@ export default function AdminPanel({ user }: AdminPanelProps) {
                             <XCircle size={18} />
                           </div>
                         </div>
-                        <div className="text-2xl font-black text-red-400 flex items-baseline gap-1.5 flex-wrap">
-                          <span>{(salesMetrics.refundCount || 0) + (salesMetrics.cancelCount || 0)}</span>
-                          {(salesMetrics.totalDeductions || (salesMetrics.refundedAmount || 0) + (salesMetrics.canceledAmount || 0)) > 0 && (
-                            <span className="text-xs font-bold text-red-400/80">
-                              (-R$ {Number(salesMetrics.totalDeductions || (salesMetrics.refundedAmount || 0) + (salesMetrics.canceledAmount || 0)).toLocaleString('pt-BR', { minimumFractionDigits: 2 })})
-                            </span>
-                          )}
+                        <div className="text-2xl font-black text-red-400">
+                          {(salesMetrics.refundCount || 0) + (salesMetrics.cancelCount || 0)}
                         </div>
                         <p className="text-[10px] text-gray-500 font-semibold">
                           {salesMetrics.refundCount || 0} reembolsadas / {salesMetrics.cancelCount || 0} canceladas
@@ -7234,7 +7164,7 @@ export default function AdminPanel({ user }: AdminPanelProps) {
                         </div>
                       </div>
 
-                      {/* Search Bar, OK/Filter Button & Clear Button */}
+                      {/* Search Bar & Clear Button */}
                       <div className="flex flex-col sm:flex-row gap-3 pt-2">
                         <div className="flex-1 relative">
                           <Search size={16} className="absolute left-3 top-3 text-gray-500" />
@@ -7242,35 +7172,13 @@ export default function AdminPanel({ user }: AdminPanelProps) {
                             type="text"
                             value={salesSearch}
                             onChange={(e) => setSalesSearch(e.target.value)}
-                            onKeyDown={(e) => {
-                              if (e.key === 'Enter') {
-                                fetchSalesData(true);
-                              }
-                            }}
-                            placeholder="Buscar por nome do aluno, e-mail ou código HP... (pressione Enter ou OK)"
+                            placeholder="Buscar por nome do aluno, e-mail ou código HP..."
                             className="w-full bg-black border border-white/10 rounded-xl pl-9 pr-4 py-2.5 text-xs text-white focus:border-amber-500 outline-none"
                           />
                         </div>
 
-                        {/* Botão de OK / Aplicar Filtros com destaque */}
-                        <button
-                          type="button"
-                          onClick={() => fetchSalesData(true)}
-                          disabled={loadingSales}
-                          className="flex items-center justify-center gap-2 bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-400 hover:to-amber-500 active:scale-95 text-black px-6 py-2.5 rounded-xl font-black text-xs uppercase tracking-wider transition-all shadow-lg shadow-amber-500/20 cursor-pointer shrink-0"
-                          title="Aplicar todos os filtros selecionados"
-                        >
-                          {loadingSales ? (
-                            <Loader2 size={15} className="animate-spin text-black" />
-                          ) : (
-                            <Check size={15} strokeWidth={3} className="text-black" />
-                          )}
-                          <span>Aplicar Filtros (OK)</span>
-                        </button>
-
                         {(salesStartDate || salesEndDate || salesProductId !== 'all' || salesProductType !== 'all' || salesStatus !== 'all' || salesPaymentType !== 'all' || salesSearch || salesDatePreset !== 'all') && (
                           <button
-                            type="button"
                             onClick={() => {
                               setSalesStartDate('');
                               setSalesEndDate('');
@@ -7280,9 +7188,8 @@ export default function AdminPanel({ user }: AdminPanelProps) {
                               setSalesPaymentType('all');
                               setSalesSearch('');
                               setSalesDatePreset('all');
-                              setTimeout(() => fetchSalesData(true), 50);
                             }}
-                            className="bg-zinc-800 hover:bg-zinc-700 text-gray-300 border border-white/10 px-4 py-2.5 rounded-xl text-xs font-bold uppercase tracking-wider transition-all shrink-0 cursor-pointer"
+                            className="bg-zinc-800 hover:bg-zinc-700 text-gray-300 border border-white/10 px-4 py-2.5 rounded-xl text-xs font-bold uppercase tracking-wider transition-all"
                           >
                             Limpar Filtros
                           </button>
@@ -7361,26 +7268,10 @@ export default function AdminPanel({ user }: AdminPanelProps) {
                     {/* Sales Table */}
                     <div className="bg-zinc-900/50 rounded-2xl border border-white/10 overflow-hidden space-y-2">
                       <div className="p-4 border-b border-white/10 flex items-center justify-between">
-                        <div className="flex items-center gap-2">
-                          <span className="text-xs font-bold uppercase tracking-wider text-gray-300">
-                            Listagem de Transações
-                          </span>
-                          <span className="text-[11px] font-bold text-amber-400 bg-amber-500/10 px-2.5 py-0.5 rounded-full border border-amber-500/20">
-                            Exibindo {Math.min(visibleSalesCount, salesList.length)} de {salesList.length}
-                          </span>
-                        </div>
-                        <div className="flex items-center gap-2">
-                          <button
-                            type="button"
-                            onClick={() => fetchSalesData(false)}
-                            disabled={loadingSales}
-                            className="p-1.5 bg-zinc-800 hover:bg-zinc-700 text-gray-300 hover:text-white rounded-lg border border-white/10 transition-all cursor-pointer"
-                            title="Atualizar lista"
-                          >
-                            <RefreshCw size={14} className={loadingSales ? 'animate-spin' : ''} />
-                          </button>
-                          {loadingSales && <Loader2 className="animate-spin text-emerald-400" size={16} />}
-                        </div>
+                        <span className="text-xs font-bold uppercase tracking-wider text-gray-300">
+                          Listagem de Transações ({salesList.length})
+                        </span>
+                        {loadingSales && <Loader2 className="animate-spin text-emerald-400" size={16} />}
                       </div>
 
                       <div className="overflow-x-auto">
@@ -7405,7 +7296,7 @@ export default function AdminPanel({ user }: AdminPanelProps) {
                                 </td>
                               </tr>
                             ) : (
-                              salesList.slice(0, visibleSalesCount).map((sale) => {
+                              salesList.map((sale) => {
                                 const isAppr = sale.status === 'approved';
                                 const isRef = sale.status === 'refunded';
                                 const isCanc = sale.status === 'canceled';
@@ -7480,36 +7371,6 @@ export default function AdminPanel({ user }: AdminPanelProps) {
                             )}
                           </tbody>
                         </table>
-                      </div>
-
-                      {/* Paginação de 20 em 20 com botão de atualizar e carregar mais 20 */}
-                      <div className="p-4 border-t border-white/10 flex flex-col sm:flex-row items-center justify-between gap-3 bg-black/40">
-                        <div className="text-xs text-gray-400">
-                          Exibindo <span className="font-bold text-white">{Math.min(visibleSalesCount, salesList.length)}</span> de <span className="font-bold text-white">{salesList.length}</span> transações
-                        </div>
-
-                        <div className="flex items-center gap-2">
-                          <button
-                            type="button"
-                            onClick={() => fetchSalesData(false)}
-                            disabled={loadingSales}
-                            className="flex items-center gap-1.5 px-3 py-2 bg-zinc-800 hover:bg-zinc-700 active:bg-zinc-600 text-gray-300 hover:text-white rounded-xl text-xs font-bold transition-all border border-white/10 cursor-pointer"
-                            title="Atualizar lista de vendas"
-                          >
-                            <RefreshCw size={13} className={loadingSales ? 'animate-spin' : ''} />
-                            <span>Atualizar</span>
-                          </button>
-
-                          {visibleSalesCount < salesList.length && (
-                            <button
-                              type="button"
-                              onClick={() => setVisibleSalesCount(prev => prev + 20)}
-                              className="flex items-center gap-1.5 px-4 py-2 bg-gradient-to-r from-emerald-600 to-emerald-500 hover:from-emerald-500 hover:to-emerald-400 active:scale-95 text-white rounded-xl text-xs font-black uppercase tracking-wider shadow-md shadow-emerald-600/20 transition-all cursor-pointer"
-                            >
-                              <span>Carregar Mais 20 Transações (+20)</span>
-                            </button>
-                          )}
-                        </div>
                       </div>
                     </div>
 

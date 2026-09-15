@@ -33,18 +33,14 @@ class ErrorBoundary extends Component<Props, State> {
   public componentDidCatch(error: Error, errorInfo: ErrorInfo) {
     console.error('Uncaught error in ErrorBoundary:', error, errorInfo);
     
-    const lowerMsg = (error?.message || '').toLowerCase();
+    const errorMessage = error?.message || '';
     const errorName = error?.name || '';
     const isChunkOrNetworkError = 
-      lowerMsg.includes('failed to fetch dynamically imported module') ||
-      lowerMsg.includes('error loading dynamically imported module') ||
-      lowerMsg.includes('importing a module script failed') ||
-      lowerMsg.includes('failed to load module script') ||
-      lowerMsg.includes('dynamically imported module') ||
-      lowerMsg.includes('networkerror') ||
-      lowerMsg.includes('fetch resource') ||
-      lowerMsg.includes('failed to fetch') ||
-      lowerMsg.includes('loading chunk') ||
+      errorMessage.includes('Failed to fetch dynamically imported module') ||
+      errorMessage.includes('NetworkError') ||
+      errorMessage.includes('fetch resource') ||
+      errorMessage.includes('Failed to fetch') ||
+      errorMessage.includes('Loading chunk') ||
       errorName === 'ChunkLoadError';
 
     if (isChunkOrNetworkError && typeof window !== 'undefined') {

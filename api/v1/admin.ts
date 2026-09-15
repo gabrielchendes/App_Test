@@ -13,9 +13,7 @@ const isRevokedKey = (key?: string) => {
     trimmed === '' || 
     trimmed === 'undefined' || 
     trimmed === 'null' ||
-    trimmed === 'placeholder-key' ||
-    trimmed.startsWith('sb_secret_') ||
-    (!trimmed.startsWith('eyJ') && !trimmed.startsWith('sbp_') && !trimmed.startsWith('sb_publishable_'))
+    trimmed === 'placeholder-key'
   );
 };
 
@@ -44,65 +42,6 @@ const supabaseAdmin = createClient(
     }
   }
 );
-
-/**
- * Helper to get a Supabase client scoped to the authenticated caller's JWT token.
- * Passes the user's Bearer token so Postgres runs under the admin's identity with full RLS permissions.
- */
-function getScopedClient(req?: VercelRequest) {
-  if (req) {
-    const authHeader = req.headers?.authorization;
-    const token = authHeader?.startsWith('Bearer ') ? authHeader.split(' ')[1] : authHeader;
-    if (token && token !== 'undefined' && token !== 'null') {
-      return createClient(supabaseUrl || 'https://placeholder.supabase.co', supabaseAnonKey || 'placeholder-key', {
-        auth: { persistSession: false, autoRefreshToken: false, detectSessionInUrl: false },
-        global: {
-          headers: {
-            Authorization: `Bearer ${token}`
-          }
-        }
-      });
-    }
-  }
-  return supabaseAdmin;
-}
-
-// Safe helper to read app_settings with fallback to public anon client if admin key is invalid
-async function getAppSettingsSafe() {
-  try {
-    const { data, error } = await supabaseAdmin
-      .from('app_settings')
-      .select('custom_texts, admin_email, app_url')
-      .eq('id', 1)
-      .maybeSingle();
-
-    if (!error && data) return data;
-
-    if (supabaseAnonKey) {
-      const anonClient = createClient(supabaseUrl || 'https://placeholder.supabase.co', supabaseAnonKey);
-      const { data: anonData } = await anonClient
-        .from('app_settings')
-        .select('custom_texts, admin_email, app_url')
-        .eq('id', 1)
-        .maybeSingle();
-      if (anonData) return anonData;
-    }
-    return data || null;
-  } catch (err) {
-    if (supabaseAnonKey) {
-      try {
-        const anonClient = createClient(supabaseUrl || 'https://placeholder.supabase.co', supabaseAnonKey);
-        const { data: anonData } = await anonClient
-          .from('app_settings')
-          .select('custom_texts, admin_email, app_url')
-          .eq('id', 1)
-          .maybeSingle();
-        return anonData || null;
-      } catch {}
-    }
-    return null;
-  }
-}
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   res.setHeader('Access-Control-Allow-Origin', '*');
@@ -133,15 +72,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
     let user: any = null;
     try {
-      let { data, error: authError } = await supabaseAdmin.auth.getUser(token);
-      if ((authError || !data?.user) && supabaseAnonKey) {
-        const anonClient = createClient(supabaseUrl || 'https://placeholder.supabase.co', supabaseAnonKey);
-        const anonRes = await anonClient.auth.getUser(token);
-        if (anonRes.data?.user) {
-          data = anonRes.data;
-          authError = null;
-        }
-      }
+      const { data, error: authError } = await supabaseAdmin.auth.getUser(token);
       if (authError || !data?.user) {
         console.warn('[Admin API] auth.getUser warning:', authError?.message);
         return res.status(401).json({ error: 'Session expired or invalid token. Please log in again.' });
@@ -153,12 +84,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     }
 
     // Admin Verification (Double Check)
-    let profile: any = null;
-    try {
-      const pRes = await supabaseAdmin.from('profiles').select('email, is_admin').eq('id', user.id).maybeSingle();
-      profile = pRes.data;
-    } catch {}
-    const settings = await getAppSettingsSafe();
+    const { data: profile } = await supabaseAdmin.from('profiles').select('email, is_admin').eq('id', user.id).maybeSingle();
+    const { data: settings } = await supabaseAdmin.from('app_settings').select('admin_email, app_url').eq('id', 1).maybeSingle();
     
     const isHardcodedAdmin = user.email?.toLowerCase() === 'gabrielchendes@gmail.com';
     const isSuperAdmin = (settings?.admin_email && user.email?.toLowerCase() === settings.admin_email.toLowerCase()) || isHardcodedAdmin;
@@ -1585,26 +1512,19 @@ async function handleWebhookEventsList(req: VercelRequest, res: VercelResponse) 
 
 async function handleWebhookSimulate(req: VercelRequest, res: VercelResponse) {
   try {
-    const { buyer_email, hotmart_product_id, event_type, webhook_token, target_url } = req.body || {};
+    const { buyer_email, hotmart_product_id, event_type } = req.body;
     if (!buyer_email || !event_type) {
       return res.status(400).json({ error: 'Buyer email and event type are required.' });
     }
 
-    const settings = await getAppSettingsSafe();
+    const { data: settings } = await supabaseAdmin
+      .from('app_settings')
+      .select('custom_texts')
+      .eq('id', 1)
+      .maybeSingle();
 
-    const cleanToken = (t?: any) => t ? String(t).trim().replace(/^["']|["']$/g, '').trim() : '';
-
-    const providedToken = cleanToken(webhook_token);
-    const settingsToken = cleanToken(settings?.custom_texts?.['hotmart.webhook_token']);
-    const envToken = cleanToken(process.env.HOTMART_WEBHOOK_TOKEN);
-
-    // Prioritize explicit token sent by the Admin Panel UI, then env, then settings, then fallback
-    const configuredToken = providedToken || envToken || settingsToken || 'SIMULATION_TOKEN';
-
-    const providedTargetUrl = (target_url && typeof target_url === 'string') ? target_url.trim() : '';
-    const settingsTargetUrl = (settings?.custom_texts?.['hotmart.webhook_url'] && typeof settings.custom_texts['hotmart.webhook_url'] === 'string') ? settings.custom_texts['hotmart.webhook_url'].trim() : '';
-
-    let targetWebhookUrl = providedTargetUrl || settingsTargetUrl;
+    const configuredToken = process.env.HOTMART_WEBHOOK_TOKEN || settings?.custom_texts?.['hotmart.webhook_token'] || 'SIMULATION_TOKEN';
+    let targetWebhookUrl = settings?.custom_texts?.['hotmart.webhook_url'];
 
     // Fallback para URL do Supabase do ambiente se a URL configurada não for fornecida ou for um placeholder
     const envSupabaseUrl = process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL;
@@ -1730,7 +1650,6 @@ async function handleWebhookSimulate(req: VercelRequest, res: VercelResponse) {
         }
       },
       hottok: configuredToken,
-      token: configuredToken,
       is_simulation: true
     };
 
@@ -1803,31 +1722,19 @@ async function handleWebhookSimulate(req: VercelRequest, res: VercelResponse) {
       const controller = new AbortController();
       const timeoutId = setTimeout(() => controller.abort(), 8000);
 
-      let finalTargetUrl = targetWebhookUrl.trim();
-      try {
-        const parsedUrl = new URL(finalTargetUrl);
-        if (!parsedUrl.searchParams.has('hottok')) {
-          parsedUrl.searchParams.set('hottok', configuredToken);
-        }
-        if (!parsedUrl.searchParams.has('x-simulation')) {
-          parsedUrl.searchParams.set('x-simulation', 'true');
-        }
-        finalTargetUrl = parsedUrl.toString();
-      } catch {}
-
-      const keyToSend = supabaseServiceRoleKey || supabaseAnonKey;
+      const supabaseAnonKey = process.env.VITE_SUPABASE_ANON_KEY || process.env.SUPABASE_ANON_KEY || '';
       const headersToSend: Record<string, string> = {
         'Content-Type': 'application/json',
         'x-hotmart-hottok': configuredToken,
         'x-simulation': 'true'
       };
 
-      if (keyToSend) {
-        headersToSend['apikey'] = keyToSend;
-        headersToSend['Authorization'] = `Bearer ${keyToSend}`;
+      if (supabaseAnonKey) {
+        headersToSend['apikey'] = supabaseAnonKey;
+        headersToSend['Authorization'] = `Bearer ${supabaseAnonKey}`;
       }
 
-      const edgeRes = await fetch(finalTargetUrl, {
+      const edgeRes = await fetch(targetWebhookUrl.trim(), {
         method: 'POST',
         headers: headersToSend,
         body: JSON.stringify(mockPayload),
@@ -1889,13 +1796,11 @@ async function handleSalesList(req: VercelRequest, res: VercelResponse) {
     const paymentType = (req.query.paymentType as string) || (req.body?.paymentType as string) || 'all';
     const search = (req.query.search as string) || (req.body?.search as string) || '';
 
-    const client = getScopedClient(req);
     let salesData: any[] = [];
     let isFromEventsFallback = false;
 
-    // 1. Check sales table safely without throwing warning if table does not exist in schema cache
     try {
-      let query = client.from('sales').select('*').order('purchase_date', { ascending: false });
+      let query = supabaseAdmin.from('sales').select('*').order('purchase_date', { ascending: false });
 
       if (startDate) query = query.gte('purchase_date', startDate);
       if (endDate) query = query.lte('purchase_date', endDate);
@@ -1906,49 +1811,35 @@ async function handleSalesList(req: VercelRequest, res: VercelResponse) {
 
       const { data, error } = await query;
 
-      if (!error && data && data.length > 0) {
-        salesData = data;
-      } else {
+      if (error) {
+        console.warn('[Admin API] Sales query returned error, using hotmart_events fallback:', error);
         isFromEventsFallback = true;
+      } else {
+        salesData = data || [];
+        if (salesData.length === 0) {
+          isFromEventsFallback = true;
+        }
       }
-    } catch {
+    } catch (e: any) {
+      console.warn('[Admin API] Sales query exception, using hotmart_events fallback:', e);
       isFromEventsFallback = true;
     }
 
-    // 2. Primary fallback: hotmart_events table (which records all real incoming webhooks)
     if (isFromEventsFallback) {
       let configuredMainId = '';
       try {
-        const settingsRow = await getAppSettingsSafe();
+        const { data: settingsRow } = await supabaseAdmin.from('app_settings').select('custom_texts').eq('id', 1).maybeSingle();
         configuredMainId = settingsRow?.custom_texts?.['hotmart.main_product_id'] || settingsRow?.custom_texts?.['main_course_hotmart_id'] || '';
       } catch (err) {}
 
       let events: any[] = [];
       try {
-        let eventsQuery = client
+        const { data: eventsData } = await supabaseAdmin
           .from('hotmart_events')
           .select('*')
-          .order('processed_at', { ascending: false });
-
-        if (startDate) eventsQuery = eventsQuery.gte('processed_at', startDate);
-        if (endDate) eventsQuery = eventsQuery.lte('processed_at', endDate);
-        eventsQuery = eventsQuery.limit(1000);
-
-        const { data: eventsData, error: evErr } = await eventsQuery;
-        if (!evErr && eventsData) {
-          events = eventsData;
-        } else {
-          // Fallback to supabaseAdmin if scoped client lacked specific table privileges
-          let adminQuery = supabaseAdmin
-            .from('hotmart_events')
-            .select('*')
-            .order('processed_at', { ascending: false });
-
-          if (startDate) adminQuery = adminQuery.gte('processed_at', startDate);
-          if (endDate) adminQuery = adminQuery.lte('processed_at', endDate);
-          const { data: adminEvData } = await adminQuery.limit(1000);
-          events = adminEvData || [];
-        }
+          .order('processed_at', { ascending: false })
+          .limit(500);
+        events = eventsData || [];
       } catch (err) {}
 
       const mappedFromEvents: Map<string, any> = new Map();
@@ -2011,15 +1902,11 @@ async function handleSalesList(req: VercelRequest, res: VercelResponse) {
       );
     }
 
-    // Compute Metrics with proper subtraction of refunded/canceled/chargeback products
-    let grossRevenue = 0;
-    let refundedAmount = 0;
-    let canceledAmount = 0;
-    let chargebackAmount = 0;
-    let approvedCount = 0;
+    // Compute Metrics
+    let totalRevenue = 0;
+    let totalCount = 0;
     let refundCount = 0;
     let cancelCount = 0;
-    let chargebackCount = 0;
 
     const statusCounts: Record<string, { count: number; total: number }> = {};
     const productStats: Record<string, { name: string; type: string; count: number; total: number }> = {};
@@ -2034,8 +1921,8 @@ async function handleSalesList(req: VercelRequest, res: VercelResponse) {
       statusCounts[st].total += amt;
 
       if (st === 'approved') {
-        grossRevenue += amt;
-        approvedCount += 1;
+        totalRevenue += amt;
+        totalCount += 1;
 
         const prodKey = s.product_id || s.product_name;
         if (!productStats[prodKey]) {
@@ -2052,23 +1939,12 @@ async function handleSalesList(req: VercelRequest, res: VercelResponse) {
         paymentStats[payKey].total += amt;
       } else if (st === 'refunded') {
         refundCount += 1;
-        refundedAmount += amt;
       } else if (st === 'canceled') {
         cancelCount += 1;
-        canceledAmount += amt;
-      } else if (st === 'chargeback') {
-        chargebackCount += 1;
-        chargebackAmount += amt;
       }
     });
 
-    // O total vendido tem que ser subtraído dos produtos que foram estornados/reembolsados/assinaturas canceladas
-    const totalDeductions = refundedAmount + canceledAmount + chargebackAmount;
-    const totalRevenue = Math.max(0, grossRevenue - totalDeductions);
-    const totalCount = approvedCount;
-    const averageTicket = totalCount > 0 ? (grossRevenue / totalCount) : 0;
-    const netAverageTicket = totalCount > 0 ? (totalRevenue / totalCount) : 0;
-
+    const averageTicket = totalCount > 0 ? (totalRevenue / totalCount) : 0;
     const topProducts = Object.values(productStats)
       .sort((a, b) => b.total - a.total)
       .slice(0, 5);
@@ -2078,18 +1954,10 @@ async function handleSalesList(req: VercelRequest, res: VercelResponse) {
       sales: salesData,
       metrics: {
         totalRevenue,
-        grossRevenue,
-        totalDeductions,
-        refundedAmount,
-        canceledAmount,
-        chargebackAmount,
         totalCount,
-        approvedCount,
         averageTicket,
-        netAverageTicket,
         refundCount,
         cancelCount,
-        chargebackCount,
         statusDistribution: statusCounts,
         topProducts,
         paymentTypeDistribution: paymentStats

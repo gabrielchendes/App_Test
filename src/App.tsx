@@ -6,8 +6,9 @@ import { lazyWithRetry } from './lib/lazyWithRetry';
 import { safeFetch } from './lib/utils';
 import { toast } from 'sonner';
 import LoginPage from './pages/LoginPage';
-import Dashboard from './pages/Dashboard';
 import { GlowingSpinner } from './components/GlowingSpinner';
+
+const Dashboard = lazyWithRetry(() => import('./pages/Dashboard'));
 
 // Smooth hardware-accelerated Loading Screen
 function LoadingScreen() {
@@ -244,16 +245,6 @@ export default function App() {
   useEffect(() => {
     window.scrollTo(0, 0);
   }, [user]);
-
-  // Keep push notifications synced if user has granted permission
-  useEffect(() => {
-    if (!user?.id) return;
-    if (typeof window !== 'undefined' && 'Notification' in window && Notification.permission === 'granted') {
-      import('./lib/pushNotifications').then(({ initPushIfGranted }) => {
-        initPushIfGranted(user.id);
-      }).catch(() => {});
-    }
-  }, [user?.id]);
 
   // Google Tag Manager dynamic initialization
   useEffect(() => {

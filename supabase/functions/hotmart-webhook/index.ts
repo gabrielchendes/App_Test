@@ -71,44 +71,39 @@ serve(async (req) => {
       payload.hottok ||
       payload.token;
 
-    const cleanToken = (t?: string | null) => t ? String(t).trim().replace(/^["']|["']$/g, "").trim() : "";
-    const cleanReceived = cleanToken(receivedToken);
-
-    const configuredSecret = cleanToken(Deno.env.get("HOTMART_WEBHOOK_TOKEN"));
-    let settingsToken = "";
+    let configuredToken: string | null = Deno.env.get("HOTMART_WEBHOOK_TOKEN") || null;
     
-    // Sempre consultar token configurado em app_settings para sincronização imediata
-    try {
-      const { data: settings } = await supabaseAdmin
-        .from("app_settings")
-        .select("custom_texts")
-        .eq("id", 1)
-        .maybeSingle();
+    // Fallback: Buscar token configurado em app_settings se não estiver nas ENVs
+    if (!configuredToken) {
+      try {
+        const { data: settings } = await supabaseAdmin
+          .from("app_settings")
+          .select("custom_texts")
+          .eq("id", 1)
+          .maybeSingle();
 
-      if (settings?.custom_texts?.["hotmart.webhook_token"]) {
-        settingsToken = cleanToken(settings.custom_texts["hotmart.webhook_token"]);
+        if (settings?.custom_texts?.["hotmart.webhook_token"]) {
+          configuredToken = settings.custom_texts["hotmart.webhook_token"];
+        }
+      } catch (e) {
+        console.warn("[Hotmart Edge Function] Could not fetch settings token:", e);
       }
-    } catch (e) {
-      console.warn("[Hotmart Edge Function] Could not fetch settings token:", e);
     }
 
     const isSimulation =
       req.headers.get("x-simulation") === "true" ||
-      url.searchParams.get("x-simulation") === "true" ||
       payload.is_simulation === true ||
-      cleanReceived === "SIMULATION_TOKEN";
+      receivedToken === "SIMULATION_TOKEN";
 
     const authHeader = req.headers.get("Authorization") || "";
     const isServiceRoleAuth = authHeader.includes(Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") || "SERVICE_ROLE");
 
-    const expectedTokens = [configuredSecret, settingsToken].filter(Boolean) as string[];
-
-    if (expectedTokens.length > 0) {
-      const isTokenValid = expectedTokens.some(tok => tok === cleanReceived);
-      const isSimAuthorized = isSimulation && (isTokenValid || isServiceRoleAuth || cleanReceived === "SIMULATION_TOKEN");
+    if (configuredToken && configuredToken.trim()) {
+      const isTokenValid = receivedToken && receivedToken.trim() === configuredToken.trim();
+      const isSimAuthorized = isSimulation && (isTokenValid || isServiceRoleAuth || receivedToken === "SIMULATION_TOKEN");
 
       if (!isTokenValid && !isSimAuthorized) {
-        console.warn("[Hotmart Edge Function] Token Hottok mismatch:", { receivedToken: cleanReceived, expectedTokens });
+        console.warn("[Hotmart Edge Function] Token Hottok mismatch:", { receivedToken, configuredToken });
         return new Response(
           JSON.stringify({
             error: "Unauthorized: Token Hottok da Hotmart inválido.",

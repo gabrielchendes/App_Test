@@ -41,16 +41,10 @@ export async function safeFetch(url: string, options: RequestInit = {}) {
       return null;
     }
 
-    const trimmed = text.trim();
-    if (trimmed.startsWith('<!doctype') || trimmed.startsWith('<html') || trimmed.startsWith('<head')) {
-      console.warn('⚠️ Server returned HTML response instead of JSON for:', url);
-      return { error: 'Server returned HTML instead of JSON', isHtml: true };
-    }
-
     try {
       return JSON.parse(text);
     } catch (err) {
-      console.warn('🚨 Response is not valid JSON:', url, text.substring(0, 100));
+      console.error('🚨 Error parsing JSON:', text);
       return { error: 'Server response is not valid JSON' };
     }
   } catch (err: any) {

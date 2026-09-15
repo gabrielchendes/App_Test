@@ -131,6 +131,8 @@ async function startServer() {
         'v1/notification-clear': 'v1/notifications?action=notification-clear',
         'v1/notify-admin': 'v1/notifications?action=notify-admin',
         'v1/sub-topic': 'v1/notifications?action=sub-topic',
+        'v1/test-push': 'v1/notifications?action=test-push',
+        'v1/push-status': 'v1/notifications?action=push-status',
         'v1/generate-permanent-link': 'v1/admin?action=generate-permanent-link',
         'v1/hotmart-webhook': 'v1/hotmart-webhook',
         'v1/webhooks/hotmart': 'v1/hotmart-webhook',
@@ -147,12 +149,6 @@ async function startServer() {
       if (apiPath.startsWith('v1/ai/')) {
         const subAction = apiPath.replace('v1/ai/', '');
         apiPath = 'v1/ai';
-        req.query.action = subAction;
-      }
-
-      if (apiPath.startsWith('v1/notifications/')) {
-        const subAction = apiPath.replace('v1/notifications/', '');
-        apiPath = 'v1/notifications';
         req.query.action = subAction;
       }
 

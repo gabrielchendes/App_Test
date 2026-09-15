@@ -78,9 +78,9 @@ export default defineConfig(({mode}) => {
           ]
         },
         manifest: {
-          name: 'Missing Trigger',
-          short_name: 'Missing Trigger',
-          description: ' Exclusive members area with premium content.',
+          name: 'Premium App',
+          short_name: 'Premium App',
+          description: 'Plataforma exclusiva de cursos e conteúdos premium',
           theme_color: '#0f0f0f',
           background_color: '#0f0f0f',
           display: 'standalone',
