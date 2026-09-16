@@ -100,13 +100,16 @@ const AiCourseFactoryModal = lazyWithRetry(() => import('./AiCourseFactoryModal'
 const AiCourseEditModal = lazyWithRetry(() => import('./AiCourseEditModal').then(m => ({ default: m.AiCourseEditModal })));
 
 const CourseAdminCard = ({ course, courseStats, setViewingCourseId, setEditingCourseId, setShowCourseEditor, onDelete, onMove, onAiEdit }: any) => (
-  <div className="bg-zinc-900 border border-white/5 rounded-xl overflow-hidden group hover:border-blue-500/50 transition-all flex flex-col w-36 sm:w-44 shrink-0 shadow-2xl">
+  <div 
+    onClick={() => { setEditingCourseId(course.id); setShowCourseEditor(true); }}
+    className="bg-zinc-900 border border-white/5 rounded-xl overflow-hidden group hover:border-blue-500/50 transition-all flex flex-col w-36 sm:w-44 shrink-0 shadow-2xl cursor-pointer relative"
+  >
     <div className="relative aspect-[2/3] overflow-hidden shrink-0">
       {course.cover_url?.trim() ? (
         <img 
           src={course.cover_url.trim()} 
           alt={course.title} 
-          className="w-full h-full object-cover transition-transform duration-700 group-hover:scale-110" 
+          className="w-full h-full object-cover transition-transform duration-700 group-hover:scale-105" 
           referrerPolicy="no-referrer" 
         />
       ) : (
@@ -116,11 +119,66 @@ const CourseAdminCard = ({ course, courseStats, setViewingCourseId, setEditingCo
       )}
       <div className="absolute inset-0 bg-gradient-to-t from-black via-black/20 to-transparent opacity-80" />
       
-      <div className="absolute inset-x-0 bottom-0 p-3 space-y-1">
+      {/* Barra superior de controles: Botão Editar menor, bem encostado à esquerda e hiper-transparente */}
+      <div className="absolute top-1 left-1 right-1 z-20 flex items-center justify-between pointer-events-none">
+        {/* Botão de Editar Curso menor, encostado à esquerda e com alta transparência para visualizar a foto atrás */}
+        <button 
+          type="button"
+          onClick={(e) => { 
+            e.stopPropagation(); 
+            setEditingCourseId(course.id); 
+            setShowCourseEditor(true); 
+          }}
+          className="pointer-events-auto flex items-center gap-1 py-0.5 px-1.5 rounded-md bg-black/20 hover:bg-black/60 active:bg-blue-600/60 text-white/90 hover:text-white backdrop-blur-[1px] border border-white/15 hover:border-blue-400/40 font-bold text-[8.5px] sm:text-[9px] uppercase tracking-tight shadow-sm transition-all active:scale-95 cursor-pointer"
+          title="Editar Curso"
+        >
+          <Edit3 size={10} strokeWidth={2} className="shrink-0 text-white/80" />
+          <span>Editar</span>
+        </button>
+
+        {/* Botões secundários na fileira da direita (visíveis apenas no hover para deixar apenas o Editar visível) */}
+        <div className="pointer-events-auto flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity duration-200">
+          <button 
+            type="button"
+            onClick={(e) => { 
+              e.stopPropagation(); 
+              onAiEdit?.(course); 
+            }}
+            className="p-1 bg-black/30 hover:bg-amber-500 text-white/90 hover:text-white rounded backdrop-blur-sm transition-all border border-white/15 shadow-sm active:scale-95 cursor-pointer"
+            title="Editar com IA"
+          >
+            <Sparkles size={10} />
+          </button>
+          <button 
+            type="button"
+            onClick={(e) => { 
+              e.stopPropagation(); 
+              setViewingCourseId(course.id); 
+            }}
+            className="p-1 bg-black/30 hover:bg-white text-white/90 hover:text-black rounded backdrop-blur-sm transition-all border border-white/15 shadow-sm active:scale-95 cursor-pointer"
+            title="Visualizar Grade"
+          >
+            <Eye size={10} />
+          </button>
+          <button 
+            type="button"
+            onClick={(e) => { 
+              e.stopPropagation(); 
+              onDelete(course.id, course.title, !course.is_bonus && !course.is_free); 
+            }}
+            className="p-1 bg-black/30 hover:bg-red-600 text-white/90 hover:text-white rounded backdrop-blur-sm transition-all border border-white/15 shadow-sm active:scale-95 cursor-pointer"
+            title="Excluir"
+          >
+            <Trash2 size={10} />
+          </button>
+        </div>
+      </div>
+
+      <div className="absolute inset-x-0 bottom-0 p-3 space-y-1 z-10 pointer-events-none">
         <h4 className="font-black text-[10px] sm:text-xs text-white leading-tight line-clamp-2 drop-shadow-md uppercase italic">
           {course.title}
         </h4>
-        <div className="text-[8px] font-black text-blue-500 uppercase tracking-tighter drop-shadow-md flex items-center gap-1">
+        <div className="text-[8px] font-black text-blue-400 uppercase tracking-tighter drop-shadow-md flex items-center gap-1">
           {course.is_bonus ? 'BÔNUS 🎁' : course.is_free ? 'PRODUTO PRINCIPAL 💎' : 'PREMIUM'}
           {course.is_package_exclusive_bonus && (
              <div className={`${course.is_bonus ? 'bg-purple-600' : 'bg-emerald-600'} p-0.5 rounded shadow-sm border ${course.is_bonus ? 'border-purple-400/50' : 'border-emerald-400/50'}`} title="Liberado via Pacote">
@@ -130,53 +188,23 @@ const CourseAdminCard = ({ course, courseStats, setViewingCourseId, setEditingCo
         </div>
       </div>
 
-      {/* Admin floating controls */}
-      <div className="absolute top-2 right-2 flex flex-col gap-1 opacity-0 group-hover:opacity-100 transition-opacity z-10">
+      {/* Move arrows (visíveis no hover para não poluir a foto) */}
+      <div className="absolute bottom-1.5 right-1.5 flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity z-20">
         <button 
-          onClick={() => onAiEdit?.(course)}
-          className="p-1.5 bg-gradient-to-r from-amber-500 to-rose-500 hover:brightness-110 text-white rounded-lg backdrop-blur-md transition-all shadow-lg"
-          title="Editar com IA"
-        >
-          <Sparkles size={14} />
-        </button>
-        <button 
-          onClick={() => setViewingCourseId(course.id)}
-          className="p-1.5 bg-white/20 hover:bg-white text-white hover:text-black rounded-lg backdrop-blur-md transition-all shadow-lg"
-          title="Visualizar Grade"
-        >
-          <Eye size={14} />
-        </button>
-        <button 
-          onClick={() => { setEditingCourseId(course.id); setShowCourseEditor(true); }}
-          className="p-1.5 bg-white/20 hover:bg-white text-white hover:text-black rounded-lg backdrop-blur-md transition-all shadow-lg"
-          title="Editar Curso"
-        >
-          <Edit3 size={14} />
-        </button>
-        <button 
-          onClick={() => onDelete(course.id, course.title, !course.is_bonus && !course.is_free)}
-          className="p-1.5 bg-red-500/80 hover:bg-red-500 text-white rounded-lg backdrop-blur-md transition-all shadow-lg"
-          title="Excluir"
-        >
-          <Trash2 size={14} />
-        </button>
-      </div>
-
-      {/* Move arrows */}
-      <div className="absolute bottom-2 right-2 flex gap-1 opacity-100 transition-opacity">
-        <button 
+          type="button"
           onClick={(e) => { e.stopPropagation(); onMove(course.id, 'up'); }}
-          className="p-1 sm:p-1.5 bg-black/60 hover:bg-blue-600 text-white rounded-lg backdrop-blur-md transition-all border border-white/20 shadow-xl"
+          className="p-1 bg-black/50 hover:bg-blue-600 text-white rounded backdrop-blur-sm transition-all border border-white/15 shadow-md active:scale-95 cursor-pointer"
           title="Mover para esquerda"
         >
-          <ChevronLeft size={16} strokeWidth={3} />
+          <ChevronLeft size={12} strokeWidth={2.5} />
         </button>
         <button 
+          type="button"
           onClick={(e) => { e.stopPropagation(); onMove(course.id, 'down'); }}
-          className="p-1 sm:p-1.5 bg-black/60 hover:bg-blue-600 text-white rounded-lg backdrop-blur-md transition-all border border-white/20 shadow-xl"
+          className="p-1 bg-black/50 hover:bg-blue-600 text-white rounded backdrop-blur-sm transition-all border border-white/15 shadow-md active:scale-95 cursor-pointer"
           title="Mover para direita"
         >
-          <ChevronRight size={16} strokeWidth={3} />
+          <ChevronRight size={12} strokeWidth={2.5} />
         </button>
       </div>
     </div>
@@ -300,6 +328,11 @@ export default function AdminPanel({ user }: AdminPanelProps) {
   const [mainCheckoutUrlInput, setMainCheckoutUrlInput] = useState('');
   const [savingMainProduct, setSavingMainProduct] = useState(false);
 
+  // Visual Identity Icon Tabs & Preview States
+  const [visualIconTab, setVisualIconTab] = useState<'favicon' | 'app_icon'>('favicon');
+  const [faviconLoadError, setFaviconLoadError] = useState(false);
+  const [appIconLoadError, setAppIconLoadError] = useState(false);
+
   // Official Sales Dashboard states
   const [salesList, setSalesList] = useState<any[]>([]);
   const [salesMetrics, setSalesMetrics] = useState<any>({
@@ -323,6 +356,7 @@ export default function AdminPanel({ user }: AdminPanelProps) {
   const [salesPaymentType, setSalesPaymentType] = useState<string>('all');
   const [salesSearch, setSalesSearch] = useState<string>('');
   const [salesDatePreset, setSalesDatePreset] = useState<string>('all');
+  const [visibleSalesCount, setVisibleSalesCount] = useState<number>(20);
 
   // Payload detail modal state
   const [selectedSaleDetail, setSelectedSaleDetail] = useState<any | null>(null);
@@ -393,8 +427,11 @@ export default function AdminPanel({ user }: AdminPanelProps) {
     }
   };
 
-  const fetchSalesData = async () => {
+  const fetchSalesData = async (resetPagination = false) => {
     setLoadingSales(true);
+    if (resetPagination) {
+      setVisibleSalesCount(20);
+    }
     try {
       const { data: { session } } = await supabase.auth.getSession();
       const queryParams = new URLSearchParams({
@@ -426,26 +463,23 @@ export default function AdminPanel({ user }: AdminPanelProps) {
   const applySalesDatePreset = (preset: string) => {
     setSalesDatePreset(preset);
     const now = new Date();
+    let start = '';
+    let end = '';
     if (preset === 'today') {
-      const start = new Date(now.getFullYear(), now.getMonth(), now.getDate()).toISOString();
-      setSalesStartDate(start);
-      setSalesEndDate(now.toISOString());
+      start = new Date(now.getFullYear(), now.getMonth(), now.getDate()).toISOString();
+      end = now.toISOString();
     } else if (preset === '7days') {
-      const start = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000).toISOString();
-      setSalesStartDate(start);
-      setSalesEndDate(now.toISOString());
+      start = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000).toISOString();
+      end = now.toISOString();
     } else if (preset === '30days') {
-      const start = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000).toISOString();
-      setSalesStartDate(start);
-      setSalesEndDate(now.toISOString());
+      start = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000).toISOString();
+      end = now.toISOString();
     } else if (preset === 'month') {
-      const start = new Date(now.getFullYear(), now.getMonth(), 1).toISOString();
-      setSalesStartDate(start);
-      setSalesEndDate(now.toISOString());
-    } else {
-      setSalesStartDate('');
-      setSalesEndDate('');
+      start = new Date(now.getFullYear(), now.getMonth(), 1).toISOString();
+      end = now.toISOString();
     }
+    setSalesStartDate(start);
+    setSalesEndDate(end);
   };
 
   const isAdminAuthorized = !settings?.admin_email || user.email?.toLowerCase() === settings?.admin_email?.toLowerCase();
@@ -459,9 +493,9 @@ export default function AdminPanel({ user }: AdminPanelProps) {
 
   useEffect(() => {
     if (activeTab === 'vendas') {
-      fetchSalesData();
+      fetchSalesData(true);
     }
-  }, [activeTab, salesStartDate, salesEndDate, salesProductId, salesProductType, salesStatus, salesPaymentType, salesSearch]);
+  }, [activeTab]);
 
   const fetchNotificationHistory = async () => {
     setLoadingHistory(true);
@@ -470,11 +504,33 @@ export default function AdminPanel({ user }: AdminPanelProps) {
       const data = await safeFetch('/api/v1/notifications?action=notification-history', {
         headers: { 'Authorization': `Bearer ${session?.access_token}` }
       });
-      if (Array.isArray(data)) {
+      if (Array.isArray(data) && data.length > 0) {
+        setNotificationHistory(data);
+        return;
+      }
+      
+      // Fallback robusto para buscar direto da tabela notification_history
+      const { data: directHist, error: directErr } = await supabase
+        .from('notification_history')
+        .select('*')
+        .order('created_at', { ascending: false })
+        .limit(200);
+
+      if (!directErr && directHist && directHist.length > 0) {
+        setNotificationHistory(directHist);
+      } else if (Array.isArray(data)) {
         setNotificationHistory(data);
       }
     } catch (e) {
       console.error('Error fetching history:', e);
+      try {
+        const { data: directHist } = await supabase
+          .from('notification_history')
+          .select('*')
+          .order('created_at', { ascending: false })
+          .limit(200);
+        if (directHist) setNotificationHistory(directHist);
+      } catch {}
     } finally {
       setLoadingHistory(false);
     }
@@ -622,6 +678,8 @@ export default function AdminPanel({ user }: AdminPanelProps) {
       initialLocal.support_whatsapp_course_enabled = settings.support_whatsapp_course_enabled ?? true;
       initialLocal.support_email_course_enabled = settings.support_email_course_enabled ?? true;
       initialLocal.show_course_titles_home = settings.show_course_titles_home ?? (settings.custom_texts?.['config.show_course_titles_home'] === 'true');
+      initialLocal.favicon_url = settings.favicon_url || '';
+      initialLocal.pwa_icon_url = settings.pwa_icon_url || settings.favicon_url || '';
 
       setLocalSettings(initialLocal);
     }
@@ -677,7 +735,7 @@ export default function AdminPanel({ user }: AdminPanelProps) {
         chaptersData.forEach((ch: any) => {
           const courseId = ch.modules.course_id;
           if (!stats[courseId]) stats[courseId] = { lessons: 0, materials: 0 };
-          if (ch.content_type === 'video' || ch.content_type === 'audio') stats[courseId].lessons++;
+          if (ch.content_type === 'video' || ch.content_type === 'audio' || ch.content_type === 'html' || ch.content_type === 'html_app') stats[courseId].lessons++;
           else stats[courseId].materials++;
         });
         setCourseStats(stats);
@@ -1019,6 +1077,9 @@ export default function AdminPanel({ user }: AdminPanelProps) {
     setSimResult(null);
     try {
       const { data: { session } } = await supabase.auth.getSession();
+      const currentToken = customWebhookTokenInput.trim() || settings?.custom_texts?.['hotmart.webhook_token'] || '';
+      const currentTargetUrl = customWebhookInput.trim() || settings?.custom_texts?.['hotmart.webhook_url'] || '';
+
       const res = await safeFetch('/api/v1/admin?action=webhook-simulate', {
         method: 'POST',
         headers: {
@@ -1028,7 +1089,9 @@ export default function AdminPanel({ user }: AdminPanelProps) {
         body: JSON.stringify({
           buyer_email: simTestEmail.trim(),
           hotmart_product_id: simTestProductId.trim(),
-          event_type: simTestEvent
+          event_type: simTestEvent,
+          webhook_token: currentToken,
+          target_url: currentTargetUrl
         })
       });
 
@@ -1113,6 +1176,33 @@ export default function AdminPanel({ user }: AdminPanelProps) {
   const saveAuthSettings = async () => {
     try {
       const { data: { session } } = await supabase.auth.getSession();
+      const settingsPayload: any = {
+        admin_email: localSettings?.admin_email,
+        auth_method: localSettings?.auth_method,
+        app_url: localSettings?.app_url,
+        gtm_id: localSettings?.gtm_id,
+        support_whatsapp: localSettings?.support_whatsapp,
+        support_email: localSettings?.support_email
+      };
+
+      // 1. Direct update with authenticated user session using UPDATE (avoids INSERT RLS policy violation)
+      let directSaved = false;
+      try {
+        const { error: directErr } = await supabase
+          .from('app_settings')
+          .update(settingsPayload)
+          .eq('id', 1);
+
+        if (!directErr) {
+          directSaved = true;
+        } else {
+          console.warn('[AdminPanel] Direct app_settings update warning:', directErr);
+        }
+      } catch (directEx) {
+        console.warn('[AdminPanel] Direct update exception:', directEx);
+      }
+
+      // 2. Call backend endpoint for admin password update and server-side synchronization
       const response = await safeFetch('/api/v1/admin?action=update-settings', {
         method: 'POST',
         headers: {
@@ -1120,17 +1210,14 @@ export default function AdminPanel({ user }: AdminPanelProps) {
           'Authorization': `Bearer ${session?.access_token}`
         },
         body: JSON.stringify({
-          settings: {
-            admin_email: localSettings?.admin_email,
-            auth_method: localSettings?.auth_method,
-            app_url: localSettings?.app_url,
-            gtm_id: localSettings?.gtm_id
-          },
+          settings: settingsPayload,
           adminPassword: adminPassword || undefined
         })
       });
 
-      if (response && response.error) throw new Error(response.error);
+      if (response && response.error && !directSaved) {
+        throw new Error(response.error);
+      }
       
       // Safety: Ensure the current user who is performing this action is also an admin in their profile
       if (user?.id) {
@@ -1138,7 +1225,7 @@ export default function AdminPanel({ user }: AdminPanelProps) {
       }
 
       setAdminPassword(''); // Clear after save
-      toast.success('Configurações de autenticação salvas!');
+      toast.success('Configurações salvas com sucesso!');
       refreshSettings();
     } catch (err: any) {
       console.error('Error saving auth settings:', err);
@@ -1160,20 +1247,56 @@ export default function AdminPanel({ user }: AdminPanelProps) {
         payload.custom_texts['config.show_course_titles_home'] = String(!!payload.show_course_titles_home);
       }
 
-      const { error } = await supabase
+      if ('pwa_icon_url' in payload) {
+        if (!payload.custom_texts) payload.custom_texts = { ...(settings?.custom_texts || {}) };
+        payload.custom_texts['config.pwa_icon_url'] = payload.pwa_icon_url || '';
+      }
+
+      if ('favicon_url' in payload) {
+        if (!payload.custom_texts) payload.custom_texts = { ...(settings?.custom_texts || {}) };
+        payload.custom_texts['config.favicon_url'] = payload.favicon_url || '';
+      }
+
+      // Use update instead of upsert to only require UPDATE RLS permissions
+      let { error } = await supabase
         .from('app_settings')
-        .upsert({ id: 1, ...payload });
+        .update(payload)
+        .eq('id', 1);
+
+      if (error && (error.code === '42501' || error.message?.includes('policy'))) {
+        // If client-side update hit RLS constraint, proxy through admin API
+        const { data: { session } } = await supabase.auth.getSession();
+        const apiRes = await safeFetch('/api/v1/admin?action=update-settings', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${session?.access_token}`
+          },
+          body: JSON.stringify({ settings: payload })
+        });
+        if (apiRes?.success) {
+          error = null;
+        }
+      }
 
       if (error) {
-        if (error.message?.includes('show_course_titles_home')) {
+        if (error.message?.includes('show_course_titles_home') || error.message?.includes('pwa_icon_url')) {
           const fallbackPayload = { ...payload };
-          delete fallbackPayload.show_course_titles_home;
-          if (!fallbackPayload.custom_texts) fallbackPayload.custom_texts = { ...(settings?.custom_texts || {}) };
-          fallbackPayload.custom_texts['config.show_course_titles_home'] = String(!!newSettings.show_course_titles_home);
+          if (error.message?.includes('show_course_titles_home')) {
+            delete fallbackPayload.show_course_titles_home;
+            if (!fallbackPayload.custom_texts) fallbackPayload.custom_texts = { ...(settings?.custom_texts || {}) };
+            fallbackPayload.custom_texts['config.show_course_titles_home'] = String(!!newSettings.show_course_titles_home);
+          }
+          if (error.message?.includes('pwa_icon_url')) {
+            delete fallbackPayload.pwa_icon_url;
+            if (!fallbackPayload.custom_texts) fallbackPayload.custom_texts = { ...(settings?.custom_texts || {}) };
+            fallbackPayload.custom_texts['config.pwa_icon_url'] = newSettings.pwa_icon_url || '';
+          }
 
           const { error: fallbackErr } = await supabase
             .from('app_settings')
-            .upsert({ id: 1, ...fallbackPayload });
+            .update(fallbackPayload)
+            .eq('id', 1);
 
           if (fallbackErr) throw fallbackErr;
         } else if (error.message?.includes('banner_config')) {
@@ -4475,24 +4598,264 @@ export default function AdminPanel({ user }: AdminPanelProps) {
 
                       {/* Global Branding Settings */}
                       <div className="bg-zinc-900/50 rounded-2xl border border-white/10 p-6 space-y-6">
-                        <div className="flex items-center gap-3 mb-2">
-                          <div className="p-2 bg-amber-500/20 rounded-lg text-amber-500">
-                            <Palette size={20} />
+                        <div className="flex items-center justify-between flex-wrap gap-2 mb-2">
+                          <div className="flex items-center gap-3">
+                            <div className="p-2 bg-amber-500/20 rounded-lg text-amber-500">
+                              <Palette size={20} />
+                            </div>
+                            <div>
+                              <h4 className="font-bold text-white">Identidade Visual Global</h4>
+                              <p className="text-xs text-gray-400">Favicon do navegador, ícone do aplicativo mobile (PWA) e paleta de cores</p>
+                            </div>
                           </div>
-                          <h4 className="font-bold text-white">Identidade Visual Global</h4>
                         </div>
                         
                         <div className="space-y-4">
-                          <div className="space-y-2">
-                            <label className="text-xs font-black text-gray-500 uppercase tracking-widest">Favicon (URL)</label>
-                            <input 
-                              type="text" 
-                              value={localSettings?.favicon_url || ''}
-                              onChange={(e) => setLocalSettings({ ...localSettings, favicon_url: e.target.value })}
-                              className="w-full bg-black border border-white/10 rounded-xl px-4 py-3 text-white focus:border-blue-500 outline-none"
-                              placeholder="https://exemplo.com/favicon.png"
-                            />
-                            <p className="text-[10px] text-gray-600 mt-1">Este ícone aparecerá na aba do navegador e como ícone do app instalado.</p>
+                          {/* Abas para separar Favicon e Ícone do App */}
+                          <div className="space-y-3">
+                            <label className="text-xs font-black text-gray-400 uppercase tracking-widest block">Ícones da Aplicação</label>
+                            <div className="flex bg-black/60 p-1 rounded-xl border border-white/10 gap-1">
+                              <button
+                                type="button"
+                                onClick={() => setVisualIconTab('favicon')}
+                                className={`flex-1 flex items-center justify-center gap-2 py-2.5 px-3 rounded-lg text-xs font-bold transition-all ${
+                                  visualIconTab === 'favicon'
+                                    ? 'bg-blue-600 text-white shadow-lg shadow-blue-600/20'
+                                    : 'text-gray-400 hover:text-white hover:bg-white/5'
+                                }`}
+                              >
+                                <Globe size={15} />
+                                <span>Favicon (Navegador)</span>
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => setVisualIconTab('app_icon')}
+                                className={`flex-1 flex items-center justify-center gap-2 py-2.5 px-3 rounded-lg text-xs font-bold transition-all ${
+                                  visualIconTab === 'app_icon'
+                                    ? 'bg-blue-600 text-white shadow-lg shadow-blue-600/20'
+                                    : 'text-gray-400 hover:text-white hover:bg-white/5'
+                                }`}
+                              >
+                                <Smartphone size={15} />
+                                <span>Ícone do App (PWA / Mobile)</span>
+                              </button>
+                            </div>
+
+                            {/* Conteúdo da Aba com Preview ao lado */}
+                            <div className="grid grid-cols-1 lg:grid-cols-12 gap-5 p-4 bg-black/40 rounded-xl border border-white/5 items-start">
+                              {/* Lado Esquerdo: Campo de URL e Instruções */}
+                              <div className="lg:col-span-7 space-y-3">
+                                {visualIconTab === 'favicon' ? (
+                                  <>
+                                    <div className="flex items-center justify-between">
+                                      <label className="text-xs font-black text-gray-300 uppercase tracking-widest flex items-center gap-1.5">
+                                        <Globe size={13} className="text-blue-400" />
+                                        Favicon da Aba do Navegador
+                                      </label>
+                                      {localSettings?.favicon_url && (
+                                        <a
+                                          href={localSettings.favicon_url}
+                                          target="_blank"
+                                          rel="noopener noreferrer"
+                                          className="text-[11px] text-blue-400 hover:text-blue-300 flex items-center gap-1 transition-colors"
+                                        >
+                                          Abrir link <ExternalLink size={11} />
+                                        </a>
+                                      )}
+                                    </div>
+                                    <input 
+                                      type="url" 
+                                      value={localSettings?.favicon_url || ''}
+                                      onChange={(e) => {
+                                        setLocalSettings({ ...localSettings, favicon_url: e.target.value });
+                                        setFaviconLoadError(false);
+                                      }}
+                                      className="w-full bg-black border border-white/10 rounded-xl px-4 py-3 text-white text-sm focus:border-blue-500 outline-none transition-all placeholder:text-gray-600"
+                                      placeholder="https://exemplo.com/favicon.png"
+                                    />
+                                    <p className="text-[11px] text-gray-400 leading-relaxed">
+                                      Este ícone é exibido na aba do navegador ao lado do título da página e nos marcadores/favoritos.
+                                    </p>
+                                    <div className="flex flex-wrap items-center gap-2 pt-1">
+                                      <span className="text-[10px] bg-white/5 text-gray-400 px-2 py-0.5 rounded border border-white/10">
+                                        Proporção 1:1 (Quadrada)
+                                      </span>
+                                      <span className="text-[10px] bg-white/5 text-gray-400 px-2 py-0.5 rounded border border-white/10">
+                                        Recomendado: 32x32, 64x64 ou 128x128px (.png, .ico, .svg)
+                                      </span>
+                                      {localSettings?.pwa_icon_url && localSettings.pwa_icon_url !== localSettings.favicon_url && (
+                                        <button
+                                          type="button"
+                                          onClick={() => {
+                                            setLocalSettings({ ...localSettings, favicon_url: localSettings.pwa_icon_url });
+                                            setFaviconLoadError(false);
+                                          }}
+                                          className="text-[10px] text-amber-400 hover:text-amber-300 underline ml-auto"
+                                        >
+                                          Copiar URL do Ícone do App
+                                        </button>
+                                      )}
+                                    </div>
+                                  </>
+                                ) : (
+                                  <>
+                                    <div className="flex items-center justify-between">
+                                      <label className="text-xs font-black text-gray-300 uppercase tracking-widest flex items-center gap-1.5">
+                                        <Smartphone size={13} className="text-blue-400" />
+                                        Ícone do Aplicativo (PWA / Tela Inicial)
+                                      </label>
+                                      {localSettings?.pwa_icon_url && (
+                                        <a
+                                          href={localSettings.pwa_icon_url}
+                                          target="_blank"
+                                          rel="noopener noreferrer"
+                                          className="text-[11px] text-blue-400 hover:text-blue-300 flex items-center gap-1 transition-colors"
+                                        >
+                                          Abrir link <ExternalLink size={11} />
+                                        </a>
+                                      )}
+                                    </div>
+                                    <input 
+                                      type="url" 
+                                      value={localSettings?.pwa_icon_url || ''}
+                                      onChange={(e) => {
+                                        setLocalSettings({ ...localSettings, pwa_icon_url: e.target.value });
+                                        setAppIconLoadError(false);
+                                      }}
+                                      className="w-full bg-black border border-white/10 rounded-xl px-4 py-3 text-white text-sm focus:border-blue-500 outline-none transition-all placeholder:text-gray-600"
+                                      placeholder="https://exemplo.com/icone-app-512.png"
+                                    />
+                                    <p className="text-[11px] text-gray-400 leading-relaxed">
+                                      Este ícone é exibido na tela inicial do smartphone quando o aluno instala o aplicativo no celular (iOS e Android), além da tela de abertura (Splash Screen).
+                                    </p>
+                                    <div className="flex flex-wrap items-center gap-2 pt-1">
+                                      <span className="text-[10px] bg-white/5 text-gray-400 px-2 py-0.5 rounded border border-white/10">
+                                        Padrão PWA 512x512px
+                                      </span>
+                                      <span className="text-[10px] bg-white/5 text-gray-400 px-2 py-0.5 rounded border border-white/10">
+                                        Formatos: .png, .webp (sem cantos arredondados)
+                                      </span>
+                                      {localSettings?.favicon_url && localSettings.favicon_url !== localSettings.pwa_icon_url && (
+                                        <button
+                                          type="button"
+                                          onClick={() => {
+                                            setLocalSettings({ ...localSettings, pwa_icon_url: localSettings.favicon_url });
+                                            setAppIconLoadError(false);
+                                          }}
+                                          className="text-[10px] text-amber-400 hover:text-amber-300 underline ml-auto"
+                                        >
+                                          Copiar URL do Favicon
+                                        </button>
+                                      )}
+                                    </div>
+                                  </>
+                                )}
+                              </div>
+
+                              {/* Lado Direito: Preview da imagem em tempo real */}
+                              <div className="lg:col-span-5 flex flex-col items-center justify-center p-4 bg-zinc-950/80 rounded-xl border border-white/10 min-h-[170px] text-center relative overflow-hidden">
+                                <div className="absolute top-2.5 right-2.5 flex items-center gap-1.5 px-2 py-0.5 rounded-full bg-white/5 border border-white/10 text-[9px] font-bold text-gray-400 uppercase tracking-wider">
+                                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
+                                  Preview ao Vivo
+                                </div>
+
+                                {visualIconTab === 'favicon' ? (
+                                  <div className="w-full flex flex-col items-center gap-3 pt-2">
+                                    {/* Simulação da aba do navegador */}
+                                    <div className="w-full max-w-[240px] bg-zinc-900 border border-white/15 rounded-t-lg overflow-hidden shadow-md">
+                                      <div className="flex items-center gap-1.5 px-2.5 py-1 bg-zinc-950 border-b border-white/10">
+                                        <div className="w-2 h-2 rounded-full bg-red-500/80" />
+                                        <div className="w-2 h-2 rounded-full bg-yellow-500/80" />
+                                        <div className="w-2 h-2 rounded-full bg-green-500/80" />
+                                        <span className="text-[9px] text-gray-500 ml-1 font-mono">Navegador</span>
+                                      </div>
+                                      <div className="flex items-center gap-2 px-3 py-1.5 bg-zinc-800 text-left">
+                                        {localSettings?.favicon_url && !faviconLoadError ? (
+                                          <img 
+                                            src={localSettings.favicon_url} 
+                                            alt="Favicon preview" 
+                                            className="w-4 h-4 object-contain rounded-sm flex-shrink-0"
+                                            referrerPolicy="no-referrer"
+                                            onError={() => setFaviconLoadError(true)}
+                                          />
+                                        ) : (
+                                          <Globe size={14} className="text-gray-400 flex-shrink-0" />
+                                        )}
+                                        <span className="text-[11px] text-gray-200 font-medium truncate flex-1">
+                                          {localSettings?.app_name || settings?.app_name || 'Maternidade'}
+                                        </span>
+                                        <X size={10} className="text-gray-500 flex-shrink-0" />
+                                      </div>
+                                    </div>
+
+                                    {/* Caixa ampliada do Favicon */}
+                                    <div className="flex items-center gap-3">
+                                      <div className="w-14 h-14 rounded-lg bg-black border border-white/10 flex items-center justify-center p-2 shadow-inner">
+                                        {localSettings?.favicon_url && !faviconLoadError ? (
+                                          <img 
+                                            src={localSettings.favicon_url} 
+                                            alt="Favicon ampliado" 
+                                            className="w-full h-full object-contain"
+                                            referrerPolicy="no-referrer"
+                                            onError={() => setFaviconLoadError(true)}
+                                          />
+                                        ) : (
+                                          <Globe size={24} className="text-gray-600" />
+                                        )}
+                                      </div>
+                                      <div className="text-left text-[10px]">
+                                        {faviconLoadError ? (
+                                          <span className="text-red-400 font-semibold block">Erro ao carregar URL</span>
+                                        ) : localSettings?.favicon_url ? (
+                                          <>
+                                            <span className="text-emerald-400 font-semibold block">URL Carregada</span>
+                                            <span className="text-gray-500 block">Exibição 1:1 e na aba</span>
+                                          </>
+                                        ) : (
+                                          <>
+                                            <span className="text-gray-400 font-semibold block">Sem favicon</span>
+                                            <span className="text-gray-600 block">Insira a URL ao lado</span>
+                                          </>
+                                        )}
+                                      </div>
+                                    </div>
+                                  </div>
+                                ) : (
+                                  <div className="w-full flex flex-col items-center gap-2 pt-2">
+                                    {/* Simulação do Ícone na Tela Inicial do Celular */}
+                                    <div className="flex flex-col items-center">
+                                      <div className="w-16 h-16 rounded-[22%] bg-zinc-900 border border-white/20 shadow-2xl shadow-blue-500/10 flex items-center justify-center overflow-hidden p-0 relative transition-transform hover:scale-105">
+                                        {localSettings?.pwa_icon_url && !appIconLoadError ? (
+                                          <img 
+                                            src={localSettings.pwa_icon_url} 
+                                            alt="Ícone do App preview" 
+                                            className="w-full h-full object-cover"
+                                            referrerPolicy="no-referrer"
+                                            onError={() => setAppIconLoadError(true)}
+                                          />
+                                        ) : (
+                                          <Smartphone size={28} className="text-gray-600" />
+                                        )}
+                                        <div className="absolute inset-0 bg-gradient-to-tr from-transparent via-white/5 to-white/10 pointer-events-none" />
+                                      </div>
+                                      <span className="text-[11px] text-gray-300 font-medium mt-1.5 max-w-[110px] truncate">
+                                        {localSettings?.app_name || settings?.app_name || 'Maternidade'}
+                                      </span>
+                                    </div>
+
+                                    <div className="text-[10px] mt-1">
+                                      {appIconLoadError ? (
+                                        <span className="text-red-400 font-semibold">Erro ao carregar URL do ícone</span>
+                                      ) : localSettings?.pwa_icon_url ? (
+                                        <span className="text-emerald-400 font-semibold">Ícone pronto para instalação móvel</span>
+                                      ) : (
+                                        <span className="text-gray-500">Insira a URL do ícone de 512x512</span>
+                                      )}
+                                    </div>
+                                  </div>
+                                )}
+                              </div>
+                            </div>
                           </div>
 
                           <div className="space-y-4 pt-2 border-t border-white/5">
@@ -4554,14 +4917,14 @@ export default function AdminPanel({ user }: AdminPanelProps) {
                             onClick={async () => {
                               setIsSavingSettings(true);
                               await updateSettings({ 
-                                favicon_url: localSettings.favicon_url,
-                                pwa_icon_url: localSettings.favicon_url,
-                                primary_color: localSettings.primary_color,
-                                secondary_color: localSettings.secondary_color,
-                                background_color: localSettings.background_color,
-                                support_whatsapp: localSettings.support_whatsapp,
-                                support_email: localSettings.support_email,
-                                gtm_id: localSettings.gtm_id
+                                favicon_url: localSettings?.favicon_url || '',
+                                pwa_icon_url: localSettings?.pwa_icon_url || localSettings?.favicon_url || '',
+                                primary_color: localSettings?.primary_color,
+                                secondary_color: localSettings?.secondary_color,
+                                background_color: localSettings?.background_color,
+                                support_whatsapp: localSettings?.support_whatsapp,
+                                support_email: localSettings?.support_email,
+                                gtm_id: localSettings?.gtm_id
                               });
                               setIsSavingSettings(false);
                             }}
@@ -6962,9 +7325,10 @@ export default function AdminPanel({ user }: AdminPanelProps) {
                       </div>
 
                       <button
-                        onClick={fetchSalesData}
+                        type="button"
+                        onClick={() => fetchSalesData(false)}
                         disabled={loadingSales}
-                        className="flex items-center gap-2 bg-emerald-600 hover:bg-emerald-500 text-white px-5 py-2.5 rounded-xl font-bold text-xs uppercase tracking-wider transition-all shadow-lg shadow-emerald-600/20"
+                        className="flex items-center gap-2 bg-emerald-600 hover:bg-emerald-500 text-white px-5 py-2.5 rounded-xl font-bold text-xs uppercase tracking-wider transition-all shadow-lg shadow-emerald-600/20 cursor-pointer"
                       >
                         <RefreshCw size={16} className={loadingSales ? 'animate-spin' : ''} />
                         Atualizar Vendas
@@ -6984,7 +7348,15 @@ export default function AdminPanel({ user }: AdminPanelProps) {
                         <div className="text-2xl font-black text-emerald-400">
                           R$ {(salesMetrics.totalRevenue || 0).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                         </div>
-                        <p className="text-[10px] text-gray-500 font-semibold">Receita líquida total aprovada</p>
+                        <p className="text-[10px] font-semibold">
+                          {(salesMetrics.totalDeductions || (salesMetrics.refundedAmount || 0) + (salesMetrics.canceledAmount || 0)) > 0 ? (
+                            <span className="text-emerald-400/90 font-bold">
+                              Líquido: subtraídos R$ {Number(salesMetrics.totalDeductions || (salesMetrics.refundedAmount || 0) + (salesMetrics.canceledAmount || 0)).toLocaleString('pt-BR', { minimumFractionDigits: 2 })} de estornos/canc.
+                            </span>
+                          ) : (
+                            <span className="text-gray-500">Receita líquida total aprovada</span>
+                          )}
+                        </p>
                       </div>
 
                       {/* Metric 2 */}
@@ -7023,8 +7395,13 @@ export default function AdminPanel({ user }: AdminPanelProps) {
                             <XCircle size={18} />
                           </div>
                         </div>
-                        <div className="text-2xl font-black text-red-400">
-                          {(salesMetrics.refundCount || 0) + (salesMetrics.cancelCount || 0)}
+                        <div className="text-2xl font-black text-red-400 flex items-baseline gap-1.5 flex-wrap">
+                          <span>{(salesMetrics.refundCount || 0) + (salesMetrics.cancelCount || 0)}</span>
+                          {(salesMetrics.totalDeductions || (salesMetrics.refundedAmount || 0) + (salesMetrics.canceledAmount || 0)) > 0 && (
+                            <span className="text-xs font-bold text-red-400/80">
+                              (-R$ {Number(salesMetrics.totalDeductions || (salesMetrics.refundedAmount || 0) + (salesMetrics.canceledAmount || 0)).toLocaleString('pt-BR', { minimumFractionDigits: 2 })})
+                            </span>
+                          )}
                         </div>
                         <p className="text-[10px] text-gray-500 font-semibold">
                           {salesMetrics.refundCount || 0} reembolsadas / {salesMetrics.cancelCount || 0} canceladas
@@ -7164,7 +7541,7 @@ export default function AdminPanel({ user }: AdminPanelProps) {
                         </div>
                       </div>
 
-                      {/* Search Bar & Clear Button */}
+                      {/* Search Bar, OK/Filter Button & Clear Button */}
                       <div className="flex flex-col sm:flex-row gap-3 pt-2">
                         <div className="flex-1 relative">
                           <Search size={16} className="absolute left-3 top-3 text-gray-500" />
@@ -7172,13 +7549,35 @@ export default function AdminPanel({ user }: AdminPanelProps) {
                             type="text"
                             value={salesSearch}
                             onChange={(e) => setSalesSearch(e.target.value)}
-                            placeholder="Buscar por nome do aluno, e-mail ou código HP..."
+                            onKeyDown={(e) => {
+                              if (e.key === 'Enter') {
+                                fetchSalesData(true);
+                              }
+                            }}
+                            placeholder="Buscar por nome do aluno, e-mail ou código HP... (pressione Enter ou OK)"
                             className="w-full bg-black border border-white/10 rounded-xl pl-9 pr-4 py-2.5 text-xs text-white focus:border-amber-500 outline-none"
                           />
                         </div>
 
+                        {/* Botão de OK / Aplicar Filtros com destaque */}
+                        <button
+                          type="button"
+                          onClick={() => fetchSalesData(true)}
+                          disabled={loadingSales}
+                          className="flex items-center justify-center gap-2 bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-400 hover:to-amber-500 active:scale-95 text-black px-6 py-2.5 rounded-xl font-black text-xs uppercase tracking-wider transition-all shadow-lg shadow-amber-500/20 cursor-pointer shrink-0"
+                          title="Aplicar todos os filtros selecionados"
+                        >
+                          {loadingSales ? (
+                            <Loader2 size={15} className="animate-spin text-black" />
+                          ) : (
+                            <Check size={15} strokeWidth={3} className="text-black" />
+                          )}
+                          <span>Aplicar Filtros (OK)</span>
+                        </button>
+
                         {(salesStartDate || salesEndDate || salesProductId !== 'all' || salesProductType !== 'all' || salesStatus !== 'all' || salesPaymentType !== 'all' || salesSearch || salesDatePreset !== 'all') && (
                           <button
+                            type="button"
                             onClick={() => {
                               setSalesStartDate('');
                               setSalesEndDate('');
@@ -7188,8 +7587,9 @@ export default function AdminPanel({ user }: AdminPanelProps) {
                               setSalesPaymentType('all');
                               setSalesSearch('');
                               setSalesDatePreset('all');
+                              setTimeout(() => fetchSalesData(true), 50);
                             }}
-                            className="bg-zinc-800 hover:bg-zinc-700 text-gray-300 border border-white/10 px-4 py-2.5 rounded-xl text-xs font-bold uppercase tracking-wider transition-all"
+                            className="bg-zinc-800 hover:bg-zinc-700 text-gray-300 border border-white/10 px-4 py-2.5 rounded-xl text-xs font-bold uppercase tracking-wider transition-all shrink-0 cursor-pointer"
                           >
                             Limpar Filtros
                           </button>
@@ -7268,10 +7668,26 @@ export default function AdminPanel({ user }: AdminPanelProps) {
                     {/* Sales Table */}
                     <div className="bg-zinc-900/50 rounded-2xl border border-white/10 overflow-hidden space-y-2">
                       <div className="p-4 border-b border-white/10 flex items-center justify-between">
-                        <span className="text-xs font-bold uppercase tracking-wider text-gray-300">
-                          Listagem de Transações ({salesList.length})
-                        </span>
-                        {loadingSales && <Loader2 className="animate-spin text-emerald-400" size={16} />}
+                        <div className="flex items-center gap-2">
+                          <span className="text-xs font-bold uppercase tracking-wider text-gray-300">
+                            Listagem de Transações
+                          </span>
+                          <span className="text-[11px] font-bold text-amber-400 bg-amber-500/10 px-2.5 py-0.5 rounded-full border border-amber-500/20">
+                            Exibindo {Math.min(visibleSalesCount, salesList.length)} de {salesList.length}
+                          </span>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <button
+                            type="button"
+                            onClick={() => fetchSalesData(false)}
+                            disabled={loadingSales}
+                            className="p-1.5 bg-zinc-800 hover:bg-zinc-700 text-gray-300 hover:text-white rounded-lg border border-white/10 transition-all cursor-pointer"
+                            title="Atualizar lista"
+                          >
+                            <RefreshCw size={14} className={loadingSales ? 'animate-spin' : ''} />
+                          </button>
+                          {loadingSales && <Loader2 className="animate-spin text-emerald-400" size={16} />}
+                        </div>
                       </div>
 
                       <div className="overflow-x-auto">
@@ -7296,7 +7712,7 @@ export default function AdminPanel({ user }: AdminPanelProps) {
                                 </td>
                               </tr>
                             ) : (
-                              salesList.map((sale) => {
+                              salesList.slice(0, visibleSalesCount).map((sale) => {
                                 const isAppr = sale.status === 'approved';
                                 const isRef = sale.status === 'refunded';
                                 const isCanc = sale.status === 'canceled';
@@ -7371,6 +7787,36 @@ export default function AdminPanel({ user }: AdminPanelProps) {
                             )}
                           </tbody>
                         </table>
+                      </div>
+
+                      {/* Paginação de 20 em 20 com botão de atualizar e carregar mais 20 */}
+                      <div className="p-4 border-t border-white/10 flex flex-col sm:flex-row items-center justify-between gap-3 bg-black/40">
+                        <div className="text-xs text-gray-400">
+                          Exibindo <span className="font-bold text-white">{Math.min(visibleSalesCount, salesList.length)}</span> de <span className="font-bold text-white">{salesList.length}</span> transações
+                        </div>
+
+                        <div className="flex items-center gap-2">
+                          <button
+                            type="button"
+                            onClick={() => fetchSalesData(false)}
+                            disabled={loadingSales}
+                            className="flex items-center gap-1.5 px-3 py-2 bg-zinc-800 hover:bg-zinc-700 active:bg-zinc-600 text-gray-300 hover:text-white rounded-xl text-xs font-bold transition-all border border-white/10 cursor-pointer"
+                            title="Atualizar lista de vendas"
+                          >
+                            <RefreshCw size={13} className={loadingSales ? 'animate-spin' : ''} />
+                            <span>Atualizar</span>
+                          </button>
+
+                          {visibleSalesCount < salesList.length && (
+                            <button
+                              type="button"
+                              onClick={() => setVisibleSalesCount(prev => prev + 20)}
+                              className="flex items-center gap-1.5 px-4 py-2 bg-gradient-to-r from-emerald-600 to-emerald-500 hover:from-emerald-500 hover:to-emerald-400 active:scale-95 text-white rounded-xl text-xs font-black uppercase tracking-wider shadow-md shadow-emerald-600/20 transition-all cursor-pointer"
+                            >
+                              <span>Carregar Mais 20 Transações (+20)</span>
+                            </button>
+                          )}
+                        </div>
                       </div>
                     </div>
 

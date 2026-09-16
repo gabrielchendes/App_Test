@@ -40,7 +40,7 @@ export function isHtmlAppContent(content?: string | null): boolean {
  */
 export function isHtmlAppChapter(chapter?: Partial<Chapter> | null): boolean {
   if (!chapter) return false;
-  if (chapter.content_type === 'html_app') return true;
+  if (chapter.content_type === 'html' || chapter.content_type === 'html_app') return true;
   if (chapter.content_type === 'interactive' || chapter.content_type === 'text') {
     return isHtmlAppContent(chapter.rich_text);
   }
@@ -156,7 +156,7 @@ export function prepareChapterForDb(chapter: {
   rich_text: string;
 } {
   const isAudio = chapter.content_type === 'audio';
-  const isHtml = chapter.content_type === 'html_app';
+  const isHtml = chapter.content_type === 'html' || chapter.content_type === 'html_app';
 
   let dbContentType: 'video' | 'pdf' | 'text' | 'link' | 'checklist' | 'interactive' = 'video';
   if (isAudio) {
@@ -192,7 +192,7 @@ export function prepareChapterForDb(chapter: {
 /**
  * Maps a database chapter to frontend representation.
  * If the database stored an Audio Lesson with 'video' + marker, maps it to 'audio'.
- * If the database stored an HTML Mini App with 'interactive' + marker, maps it to 'html_app'.
+ * If the database stored an HTML Mini App with 'interactive' + marker, maps it to 'html'.
  */
 export function fromDbChapter<T extends Partial<Chapter>>(ch: T): T {
   if (isAudioChapter(ch)) {
@@ -205,7 +205,7 @@ export function fromDbChapter<T extends Partial<Chapter>>(ch: T): T {
   if (isHtmlAppChapter(ch)) {
     return {
       ...ch,
-      content_type: 'html_app',
+      content_type: 'html',
       rich_text: extractHtmlAppContent(ch.rich_text)
     };
   }

@@ -58,15 +58,15 @@ CREATE TABLE IF NOT EXISTS public.app_settings (
     show_course_titles_home BOOLEAN DEFAULT false,
     app_url TEXT DEFAULT 'https://app-maternidade2.vercel.app',
     custom_texts JSONB DEFAULT '{
-        "auth.welcome": "Bem-vinda de volta!",
-        "auth.subtitle": "Acesse sua área exclusiva para mamães",
-        "community.title": "Comunidade",
-        "community.subtitle": "Compartilhe sua jornada com outras mães",
-        "courses.title": "Meus Cursos",
-        "courses.subtitle": "Continue seu aprendizado",
-        "dashboard.courses_free": "Produtos Principais",
-        "dashboard.courses_paid": "Meus Treinamentos",
-        "dashboard.courses_bonus": "Meus Bônus"
+        "auth.welcome": "Welcome back!",
+        "auth.subtitle": "Access your exclusive area",
+        "community.title": "Community",
+        "community.subtitle": "Share your journey",
+        "courses.title": "My Courses",
+        "courses.subtitle": "Continue your learning",
+        "dashboard.courses_free": "Main Products",
+        "dashboard.courses_paid": "My Training Programs",
+        "dashboard.courses_bonus": "My Bonuses"
     }'::jsonb,
     banner_images TEXT[] DEFAULT ARRAY['https://picsum.photos/seed/maternity-banner-1/1200/600', 'https://picsum.photos/seed/maternity-banner-2/1200/600'],
     banner_interval INTEGER DEFAULT 5000,
@@ -509,6 +509,8 @@ DROP POLICY IF EXISTS "Permitir leitura para todos" ON public.app_settings;
 CREATE POLICY "Permitir leitura para todos" ON public.app_settings FOR SELECT USING (true);
 DROP POLICY IF EXISTS "Apenas admin pode atualizar" ON public.app_settings;
 CREATE POLICY "Apenas admin pode atualizar" ON public.app_settings FOR UPDATE USING (public.is_admin());
+DROP POLICY IF EXISTS "Apenas admin pode inserir" ON public.app_settings;
+CREATE POLICY "Apenas admin pode inserir" ON public.app_settings FOR INSERT WITH CHECK (public.is_admin());
 
 -- Políticas para profiles
 DROP POLICY IF EXISTS "Usuários podem ver seu próprio perfil" ON public.profiles;
@@ -938,5 +940,26 @@ supabase functions deploy hotmart-webhook --no-verify-jwt
    - `Assinatura Inativa`
    - `Chargeback`
 5. Salve a configuração. As liberações e bloqueios serão processados instantaneamente!
+
+---
+
+### Migração Rápida: Coluna `gtm_id` e Políticas de `app_settings`
+
+Se você já tinha o banco criado e adicionou a coluna `gtm_id` ou deseja garantir que qualquer atualização/inserção de configurações no painel administrativo funcione sem restrições de RLS, execute o seguinte comando no **SQL Editor** do Supabase:
+
+```sql
+-- 1. Garante que a coluna gtm_id existe na tabela app_settings
+ALTER TABLE public.app_settings ADD COLUMN IF NOT EXISTS gtm_id TEXT;
+
+-- 2. Garante as políticas de Leitura, Atualização e Inserção para app_settings
+DROP POLICY IF EXISTS "Permitir leitura para todos" ON public.app_settings;
+CREATE POLICY "Permitir leitura para todos" ON public.app_settings FOR SELECT USING (true);
+
+DROP POLICY IF EXISTS "Apenas admin pode atualizar" ON public.app_settings;
+CREATE POLICY "Apenas admin pode atualizar" ON public.app_settings FOR UPDATE USING (public.is_admin());
+
+DROP POLICY IF EXISTS "Apenas admin pode inserir" ON public.app_settings;
+CREATE POLICY "Apenas admin pode inserir" ON public.app_settings FOR INSERT WITH CHECK (public.is_admin());
+```
 
 

@@ -37,7 +37,8 @@ import {
   CheckSquare,
   Wand2,
   Puzzle,
-  Headphones
+  Headphones,
+  FileCode
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { Course, Module, Chapter, Checklist } from '../types/lms';
@@ -46,6 +47,7 @@ import { toast } from 'sonner';
 import CoursePreviewViewer from './CoursePreviewViewer';
 import { AdminChecklistEditor } from './AdminChecklistEditor';
 import { AdminHtmlAppEditor } from './AdminHtmlAppEditor';
+import HtmlAppViewer, { SAMPLE_SALES_MODAL_HTML, SAMPLE_SALES_PREVIEW_HTML } from './HtmlAppViewer';
 import { AiLessonGeneratorModal } from './AiLessonGeneratorModal';
 import { AiCourseGeneratorModal } from './AiCourseGeneratorModal';
 import { AiCourseEditModal } from './AiCourseEditModal';
@@ -136,7 +138,7 @@ const getButtonStyle = (color: string, style: string): React.CSSProperties => {
 
 const isAiCreatedLesson = (ch: Chapter | null | undefined): boolean => {
   if (!ch) return false;
-  if (ch.content_type === 'html_app' || isHtmlAppChapter(ch)) return false;
+  if (ch.content_type === 'html' || ch.content_type === 'html_app' || isHtmlAppChapter(ch)) return false;
   if (ch.content_type === 'interactive' && ch.rich_text) {
     try {
       const parsed = typeof ch.rich_text === 'string' ? JSON.parse(ch.rich_text) : ch.rich_text;
@@ -363,7 +365,9 @@ export default function CourseEditor({
     preview_link_url: '',
     preview_link_color: '#3b82f6',
     linked_package_id: '',
-    is_package_exclusive_bonus: false
+    is_package_exclusive_bonus: false,
+    modal_type: 'standard',
+    modal_html: ''
   });
 
   // Lesson State
@@ -555,7 +559,25 @@ export default function CourseEditor({
         .single();
       
       if (courseError) throw courseError;
-      setCourse(courseData);
+
+      const isModalHtml = courseData.benefits?.[0]?.startsWith('<!--__PWA_MODAL_HTML__-->') || courseData.modal_type === 'html';
+      const loadedModalHtml = isModalHtml
+        ? (courseData.modal_html || courseData.benefits?.[0]?.replace('<!--__PWA_MODAL_HTML__-->\n', '').replace('<!--__PWA_MODAL_HTML__-->', '') || '')
+        : (courseData.modal_html || '');
+      const loadedBenefits = isModalHtml ? [] : (courseData.benefits || []);
+      const isPreviewHtml = (courseData.preview_type === 'text' && courseData.preview_rich_text?.startsWith('<!--__PWA_HTML_APP__-->')) || courseData.preview_type === 'html';
+      const loadedPreviewRichText = isPreviewHtml
+        ? courseData.preview_rich_text?.replace('<!--__PWA_HTML_APP__-->', '') || ''
+        : (courseData.preview_rich_text || '');
+
+      setCourse({
+        ...courseData,
+        modal_type: isModalHtml ? 'html' : 'standard',
+        modal_html: loadedModalHtml,
+        benefits: loadedBenefits,
+        preview_type: isPreviewHtml ? 'html' : (courseData.preview_type || 'video'),
+        preview_rich_text: loadedPreviewRichText
+      });
 
       const { data: modulesData, error: modulesError } = await supabase
         .from('modules')
@@ -688,6 +710,19 @@ export default function CourseEditor({
         targetOrderIndex = await getNextCategoryOrderIndex(!!course.is_bonus, !course.is_bonus && !!course.is_free);
       }
 
+      const isModalHtml = course.modal_type === 'html';
+      const finalBenefits = isModalHtml
+        ? ['<!--__PWA_MODAL_HTML__-->\n' + (course.modal_html || '')]
+        : (course.benefits || []).filter(b => b.trim() !== '' && !b.startsWith('<!--__PWA_MODAL_HTML__-->'));
+
+      const isPreviewHtml = course.preview_type === 'html';
+      const finalPreviewType = isPreviewHtml ? 'text' : (course.preview_type || 'video');
+      const finalPreviewRichText = isPreviewHtml
+        ? (course.preview_rich_text?.startsWith('<!--__PWA_HTML_APP__-->') 
+            ? course.preview_rich_text 
+            : '<!--__PWA_HTML_APP__-->' + (course.preview_rich_text || ''))
+        : (course.preview_rich_text || '');
+
       const courseData = {
         title: course.title,
         description: course.description || '',
@@ -698,7 +733,7 @@ export default function CourseEditor({
         price: (course.is_free || course.is_bonus) ? 0 : course.price,
         old_price: course.old_price || 0,
         subtitle: course.subtitle || '',
-        benefits: (course.benefits || []).filter(b => b.trim() !== ''),
+        benefits: finalBenefits,
         cta_text: course.cta_text || '',
         preview_url: course.preview_url || '',
         preview_text: course.preview_text || '',
@@ -728,10 +763,10 @@ export default function CourseEditor({
         preview_bonus_title: course.preview_bonus_title || '',
         preview_title: course.preview_title || '',
         preview_subtitle: course.preview_subtitle || '',
-        preview_type: course.preview_type || 'video',
+        preview_type: finalPreviewType,
         preview_video_url: course.preview_video_url || '',
         preview_pdf_url: course.preview_pdf_url || '',
-        preview_rich_text: course.preview_rich_text || '',
+        preview_rich_text: finalPreviewRichText,
         preview_link_text: course.preview_link_text || '',
         preview_link_url: course.preview_link_url || '',
         preview_link_color: course.preview_link_color || '#3b82f6',
@@ -801,6 +836,19 @@ export default function CourseEditor({
 
         const nextOrder = await getNextCategoryOrderIndex(!!course.is_bonus, !course.is_bonus && !!course.is_free);
 
+        const isModalHtml = course.modal_type === 'html';
+        const finalBenefits = isModalHtml
+          ? ['<!--__PWA_MODAL_HTML__-->\n' + (course.modal_html || '')]
+          : (course.benefits || []).filter(b => b.trim() !== '' && !b.startsWith('<!--__PWA_MODAL_HTML__-->'));
+
+        const isPreviewHtml = course.preview_type === 'html';
+        const finalPreviewType = isPreviewHtml ? 'text' : (course.preview_type || 'video');
+        const finalPreviewRichText = isPreviewHtml
+          ? (course.preview_rich_text?.startsWith('<!--__PWA_HTML_APP__-->') 
+              ? course.preview_rich_text 
+              : '<!--__PWA_HTML_APP__-->' + (course.preview_rich_text || ''))
+          : (course.preview_rich_text || '');
+
         const courseData = {
           title: course.title,
           description: course.description || '',
@@ -811,7 +859,7 @@ export default function CourseEditor({
           price: (course.is_free || course.is_bonus) ? 0 : course.price,
           old_price: course.old_price || 0,
           subtitle: course.subtitle || '',
-          benefits: (course.benefits || []).filter(b => b.trim() !== ''),
+          benefits: finalBenefits,
           cta_text: course.cta_text || '',
           preview_url: course.preview_url || '',
           preview_text: course.preview_text || '',
@@ -841,10 +889,10 @@ export default function CourseEditor({
           preview_bonus_title: course.preview_bonus_title || '',
           preview_title: course.preview_title || '',
           preview_subtitle: course.preview_subtitle || '',
-          preview_type: course.preview_type || 'video',
+          preview_type: finalPreviewType,
           preview_video_url: course.preview_video_url || '',
           preview_pdf_url: course.preview_pdf_url || '',
-          preview_rich_text: course.preview_rich_text || '',
+          preview_rich_text: finalPreviewRichText,
           preview_link_text: course.preview_link_text || '',
           preview_link_url: course.preview_link_url || '',
           preview_link_color: course.preview_link_color || '#3b82f6',
@@ -1215,6 +1263,9 @@ export default function CourseEditor({
                       <p className="text-xs text-gray-200 font-semibold">
                         Tamanho de <span className="text-blue-300 font-black">1080 x 1440 px</span> (Proporção 3:4)
                       </p>
+                      <p className="text-xs text-gray-200 font-semibold">
+                        Dica: jogue no <span className="text-blue-300 font-black">Squoosh.app ou TinyPNG</span> para comprimir imagem baixo de 100 KB - 150 KB (.webp) / ou 600x800 pixels
+                      </p>
                     </div>
 
                     <div 
@@ -1418,17 +1469,82 @@ export default function CourseEditor({
               <div className="bg-zinc-900/40 rounded-[40px] border border-white/10 p-10 space-y-10 shadow-2xl relative overflow-hidden group">
                 <div className="absolute top-0 right-0 w-64 h-64 bg-amber-600/5 blur-[100px] pointer-events-none group-hover:bg-amber-600/10 transition-colors" />
                 
-                <div className="flex items-center justify-between">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-6 border-b border-white/5">
                   <div className="flex items-center gap-3">
-                    <div className="w-8 h-8 rounded-full bg-amber-500 text-black flex items-center justify-center font-black text-xs">1</div>
+                    <div className="w-8 h-8 rounded-full bg-amber-500 text-black flex items-center justify-center font-black text-xs shrink-0">1</div>
                     <div>
                       <h4 className="text-lg font-black uppercase italic tracking-tighter text-white">Configuração do Modal de Venda</h4>
                       <p className="text-[9px] font-bold text-gray-500 uppercase tracking-widest">Informações que aparecem ao clicar no curso bloqueado</p>
                     </div>
                   </div>
+
+                  {/* Mode Selector: Padrão vs HTML */}
+                  <div className="flex items-center bg-black/60 p-1 rounded-xl border border-white/10 gap-1 shrink-0">
+                    <button
+                      type="button"
+                      onClick={() => setCourse({ ...course, modal_type: 'standard' })}
+                      className={`px-4 py-2 rounded-lg font-black uppercase text-[10px] tracking-wider transition-all cursor-pointer ${
+                        (course.modal_type || 'standard') === 'standard'
+                          ? 'bg-amber-500 text-black shadow-lg shadow-amber-500/20'
+                          : 'text-gray-400 hover:text-white hover:bg-white/5'
+                      }`}
+                    >
+                      📦 Padrão (Bullets)
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setCourse({ ...course, modal_type: 'html' })}
+                      className={`px-4 py-2 rounded-lg font-black uppercase text-[10px] tracking-wider transition-all cursor-pointer ${
+                        course.modal_type === 'html'
+                          ? 'bg-amber-500 text-black shadow-lg shadow-amber-500/20'
+                          : 'text-gray-400 hover:text-white hover:bg-white/5'
+                      }`}
+                    >
+                      🌐 HTML Nativo
+                    </button>
+                  </div>
                 </div>
 
-                <div className="grid lg:grid-cols-2 gap-12">
+                {course.modal_type === 'html' ? (
+                  <div className="grid lg:grid-cols-2 gap-12 items-start">
+                    <div className="space-y-6">
+                      <AdminHtmlAppEditor
+                        htmlContent={course.modal_html || ''}
+                        onChange={val => setCourse({ ...course, modal_html: val })}
+                        themeColor="amber"
+                        title="Modal de Venda em HTML Customizado"
+                        subtitle="Cole aqui o código HTML completo da oferta do seu modal de vendas ou uma URL externa (https://). Dispare o evento window.parent.postMessage({ type: 'purchase' }, '*') no clique do botão de compra para abrir o checkout automaticamente."
+                        sampleButtonLabel="📋 Exemplo de Modal em HTML"
+                        sampleHtml={SAMPLE_SALES_MODAL_HTML}
+                        placeholder={`<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <title>Oferta Especial</title>
+</head>
+<body>
+  <!-- Conteúdo de venda do seu modal aqui -->
+  <button onclick="window.parent.postMessage({ type: 'purchase' }, '*')">
+    Comprar Agora
+  </button>
+</body>
+</html>`}
+                      />
+                    </div>
+
+                    <div className="space-y-4">
+                      <label className="text-[10px] font-black text-gray-500 uppercase tracking-widest ml-1 text-center block">Pré-visualização do Modal HTML</label>
+                      <div className="bg-zinc-950 rounded-[2.5rem] border border-white/10 overflow-hidden shadow-2xl relative max-w-[340px] mx-auto scale-95 origin-top p-3 max-h-[540px] overflow-y-auto custom-scrollbar">
+                        <HtmlAppViewer
+                          htmlContent={course.modal_html || SAMPLE_SALES_MODAL_HTML}
+                          title={course.title || 'Modal de Venda'}
+                          className="w-full"
+                        />
+                      </div>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="grid lg:grid-cols-2 gap-12">
                   <div className="space-y-8">
                     <div className="space-y-2">
                       <label className="text-[10px] font-black text-gray-500 uppercase tracking-widest ml-1">Subtítulo Emocional (Modal)</label>
@@ -1560,6 +1676,7 @@ export default function CourseEditor({
                     </div>
                   </div>
                 </div>
+                )}
               </div>
 
               {/* STEP 2: PÁGINA DE PREVIEW */}
@@ -1641,15 +1758,19 @@ export default function CourseEditor({
                            <span className="text-[10px] font-black text-zinc-500 uppercase tracking-widest">2. Conteúdo em Destaque (Mídia)</span>
                          </div>
                          <div className="flex bg-black/40 p-1 rounded-xl border border-white/5 gap-1 mb-4">
-                            {(['video', 'pdf', 'link', 'text'] as const).map(type => (
-                              <button
-                                key={type}
-                                onClick={() => setCourse({...course, preview_type: type})}
-                                className={`flex-1 py-1.5 rounded-lg text-root font-black uppercase text-[8px] tracking-widest transition-all ${course.preview_type === type ? 'bg-primary text-white' : 'text-gray-500 hover:text-white'}`}
-                              >
-                                {type === 'video' ? 'VÍDEO' : type === 'pdf' ? 'PDF' : type === 'link' ? 'LINK' : 'TEXTO'}
-                              </button>
-                            ))}
+                            {(['video', 'pdf', 'html', 'link'] as const).map(type => {
+                              const isSelected = (type === 'html' && (course.preview_type === 'html' || course.preview_type === 'text')) || course.preview_type === type;
+                              return (
+                                <button
+                                  key={type}
+                                  type="button"
+                                  onClick={() => setCourse({...course, preview_type: type})}
+                                  className={`flex-1 py-1.5 rounded-lg text-root font-black uppercase text-[8px] tracking-widest transition-all cursor-pointer ${isSelected ? 'bg-primary text-white shadow-md' : 'text-gray-500 hover:text-white hover:bg-white/5'}`}
+                                >
+                                  {type === 'video' ? 'VÍDEO' : type === 'pdf' ? 'PDF' : type === 'html' ? '🌐 HTML NATIVO' : 'LINK'}
+                                </button>
+                              );
+                            })}
                          </div>
 
                          {course.preview_type === 'video' && (
@@ -1718,20 +1839,30 @@ export default function CourseEditor({
                            </div>
                          )}
 
-                         {course.preview_type === 'text' && (
-                           <div className="p-6 bg-black/40 border border-white/10 rounded-2xl animate-in fade-in slide-in-from-top-4 duration-500">
-                              <div className="space-y-3">
-                                <div className="flex items-center justify-between">
-                                   <label className="text-[10px] font-black text-gray-500 uppercase tracking-widest ml-1">Texto Descritivo / HTML (Preview)</label>
-                                   <span className="px-2 py-0.5 rounded bg-primary/10 text-primary text-[8px] font-black uppercase tracking-widest">Modo Texto/HTML</span>
-                                </div>
-                                <textarea 
-                                  value={course.preview_rich_text || ''}
-                                  onChange={e => setCourse({...course, preview_rich_text: e.target.value})}
-                                  className="w-full bg-black/60 border border-white/10 rounded-2xl px-5 py-4 text-xs text-gray-300 focus:border-primary outline-none transition-all h-64 resize-none font-medium font-mono"
-                                  placeholder="Cole aqui o texto, depoimentos ou HTML da sua página de venda..."
-                                />
-                              </div>
+                         {(course.preview_type === 'html' || course.preview_type === 'text') && (
+                           <div className="p-4 bg-black/40 border border-white/10 rounded-2xl animate-in fade-in slide-in-from-top-4 duration-500">
+                             <AdminHtmlAppEditor
+                               htmlContent={course.preview_rich_text || ''}
+                               onChange={val => setCourse({...course, preview_rich_text: val, preview_type: 'html'})}
+                               themeColor="amber"
+                               title="Página de Preview / VSL em HTML"
+                               subtitle="Cole aqui o código HTML completo da sua página de apresentação, VSL com player embutido ou URL externa (https://). Dispare o evento window.parent.postMessage({ type: 'purchase' }, '*') no botão para acionar a compra automaticamente."
+                               sampleButtonLabel="📋 Exemplo de Página de Vendas em HTML"
+                               sampleHtml={SAMPLE_SALES_PREVIEW_HTML}
+                               placeholder={`<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <title>Página de Apresentação</title>
+</head>
+<body>
+  <!-- Conteúdo completo da sua página de preview / VSL aqui -->
+  <button onclick="window.parent.postMessage({ type: 'purchase' }, '*')">
+    Comprar Agora
+  </button>
+</body>
+</html>`}
+                             />
                            </div>
                          )}
                        </div>
@@ -2199,14 +2330,23 @@ export default function CourseEditor({
                           <div className="space-y-2">
                             <label className="text-[10px] font-black text-gray-500 uppercase tracking-widest ml-1">Tipo da Aula</label>
                             <div className="flex p-1 bg-black/60 rounded-xl border border-white/5 overflow-x-auto gap-1">
-                              {['video', 'audio', 'pdf', 'link', 'checklist', 'interactive', 'html_app'].map((type) => (
+                              {['video', 'audio', 'pdf', 'html', 'link', 'checklist', 'interactive'].map((type) => (
                                 <button 
                                   key={type}
                                   type="button"
                                   onClick={() => setEditingChapter({...editingChapter, content_type: type as any})}
-                                  className={`flex-1 py-3 px-2 rounded-lg text-[9px] sm:text-[10px] font-black transition-all uppercase whitespace-nowrap flex items-center justify-center gap-1 ${editingChapter.content_type === type ? 'bg-emerald-600 text-white shadow-lg' : 'text-gray-600 hover:text-gray-400'}`}
+                                  className={`flex-1 py-3 px-2 rounded-lg text-[9px] sm:text-[10px] font-black transition-all uppercase whitespace-nowrap flex items-center justify-center gap-1 ${
+                                    editingChapter.content_type === type || (type === 'html' && (editingChapter.content_type as any) === 'html_app')
+                                      ? 'bg-emerald-600 text-white shadow-lg' 
+                                      : 'text-gray-600 hover:text-gray-400'
+                                  }`}
                                 >
-                                  {type === 'audio' ? <><Headphones size={12} /> ÁUDIO </> : type === 'link' ? 'BOTAO' : type === 'interactive' ? 'IA' : type === 'html_app' ? '🧩 MINI APP' : type}
+                                  {type === 'audio' ? <><Headphones size={12} /> ÁUDIO</> : 
+                                   type === 'html' ? <><FileCode size={12} /> HTML</> : 
+                                   type === 'link' ? 'BOTAO' : 
+                                   type === 'interactive' ? 'IA' : 
+                                   type === 'checklist' ? 'CHECKLIST' : 
+                                   type.toUpperCase()}
                                 </button>
                               ))}
                             </div>
@@ -2230,7 +2370,7 @@ export default function CourseEditor({
                               onChange={setNewChecklist}
                             />
                           </div>
-                        ) : editingChapter.content_type === 'html_app' ? (
+                        ) : editingChapter.content_type === 'html' || editingChapter.content_type === 'html_app' ? (
                           <AdminHtmlAppEditor
                             htmlContent={editingChapter.rich_text || ''}
                             onChange={(val) => setEditingChapter({ ...editingChapter, rich_text: val })}
@@ -2591,8 +2731,8 @@ export default function CourseEditor({
                                         <Headphones size={16} className="text-primary drop-shadow-md" />
                                       ) : ch.content_type === 'checklist' ? (
                                         <CheckSquare size={16} className="text-emerald-400 drop-shadow-md" />
-                                      ) : ch.content_type === 'html_app' || isHtmlAppChapter(ch) ? (
-                                        <Puzzle size={16} className="text-purple-400 drop-shadow-md" />
+                                      ) : ch.content_type === 'html' || ch.content_type === 'html_app' || isHtmlAppChapter(ch) ? (
+                                        <FileCode size={16} className="text-amber-400 drop-shadow-md" />
                                       ) : (
                                         <FileText size={16} className="text-white drop-shadow-md" />
                                       )}
@@ -2608,7 +2748,7 @@ export default function CourseEditor({
                                     </h4>
                                     <div className="flex items-center gap-4 mt-1">
                                       <span className="text-[9px] font-black text-gray-500 uppercase tracking-widest flex items-center gap-1">
-                                        {ch.content_type === 'video' ? <Video size={10} /> : ch.content_type === 'audio' ? <Headphones size={10} className="text-primary" /> : ch.content_type === 'html_app' || isHtmlAppChapter(ch) ? <Puzzle size={10} className="text-purple-400" /> : <FileText size={10} />} {ch.content_type === 'audio' ? 'ÁUDIO' : ch.content_type === 'html_app' || isHtmlAppChapter(ch) ? 'MINI APP' : ch.content_type.toUpperCase()}
+                                        {ch.content_type === 'video' ? <Video size={10} /> : ch.content_type === 'audio' ? <Headphones size={10} className="text-primary" /> : ch.content_type === 'html' || ch.content_type === 'html_app' || isHtmlAppChapter(ch) ? <FileCode size={10} className="text-amber-400" /> : <FileText size={10} />} {ch.content_type === 'audio' ? 'ÁUDIO' : ch.content_type === 'html' || ch.content_type === 'html_app' || isHtmlAppChapter(ch) ? 'HTML' : ch.content_type.toUpperCase()}
                                       </span>
                                       <span className="text-[9px] font-black text-gray-500 uppercase tracking-widest flex items-center gap-1">
                                         <Clock size={10} /> {ch.duration_minutes || 0} MIN
@@ -2840,15 +2980,24 @@ export default function CourseEditor({
                                               </div>
                                               <div className="space-y-2">
                                                 <label className="text-[10px] font-black text-gray-500 uppercase tracking-widest ml-1">Tipo de Conteúdo</label>
-                                                <div className="flex p-1 bg-black/60 rounded-xl border border-white/5 overflow-x-auto">
-                                                  {['video', 'audio', 'pdf', 'link', 'checklist', 'interactive', 'html_app'].map((type) => (
+                                                <div className="flex p-1 bg-black/60 rounded-xl border border-white/5 overflow-x-auto gap-1">
+                                                  {['video', 'audio', 'pdf', 'html', 'link', 'checklist', 'interactive'].map((type) => (
                                                     <button 
                                                       key={type}
                                                       type="button"
                                                       onClick={() => setEditingExistingChapter(prev => prev ? ({ ...prev, content_type: type as any }) : ({ ...ch, content_type: type as any }))}
-                                                      className={`flex-1 py-2 px-2 text-[8px] font-black rounded-lg transition-all uppercase whitespace-nowrap ${draft.content_type === type ? 'bg-blue-600 text-white' : 'text-gray-600 hover:text-gray-400'}`}
+                                                      className={`flex-1 py-2 px-2 text-[8px] font-black rounded-lg transition-all uppercase whitespace-nowrap flex items-center justify-center gap-1 ${
+                                                        draft.content_type === type || (type === 'html' && (draft.content_type as any) === 'html_app')
+                                                          ? 'bg-blue-600 text-white' 
+                                                          : 'text-gray-600 hover:text-gray-400'
+                                                      }`}
                                                     >
-                                                      {type === 'audio' ? <><Headphones size={11} /> ÁUDIO </> : type === 'link' ? 'BOTAO' : type === 'interactive' ? 'IA' : type === 'html_app' ? '🧩 MINI APP' : type}
+                                                      {type === 'audio' ? <><Headphones size={11} /> ÁUDIO</> : 
+                                                       type === 'html' ? <><FileCode size={11} /> HTML</> : 
+                                                       type === 'link' ? 'BOTAO' : 
+                                                       type === 'interactive' ? 'IA' : 
+                                                       type === 'checklist' ? 'CHECKLIST' : 
+                                                       type.toUpperCase()}
                                                     </button>
                                                   ))}
                                                 </div>
@@ -2867,7 +3016,7 @@ export default function CourseEditor({
                                                   onChange={setEditingChecklist}
                                                 />
                                               </div>
-                                            ) : draft.content_type === 'html_app' ? (
+                                            ) : draft.content_type === 'html' || draft.content_type === 'html_app' ? (
                                               <AdminHtmlAppEditor
                                                 htmlContent={draft.rich_text || ''}
                                                 onChange={(val) => setEditingExistingChapter(prev => prev ? ({ ...prev, rich_text: val }) : ({ ...ch, rich_text: val }))}

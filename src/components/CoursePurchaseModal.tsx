@@ -1,6 +1,7 @@
 import { X, ShoppingBag, Star, Sparkles, CheckCircle2, PlayCircle, ShieldCheck, Zap, ArrowRight, Play, Check } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { memo } from 'react';
+import HtmlAppViewer from './HtmlAppViewer';
 
 interface CoursePurchaseModalProps {
   isOpen: boolean;
@@ -27,6 +28,8 @@ interface CoursePurchaseModalProps {
   paymentLabelText?: string;
   securePaymentLabel?: string;
   instantAccessLabel?: string;
+  modalType?: 'standard' | 'html';
+  modalHtml?: string;
 }
 
 const CoursePurchaseModal = memo(({
@@ -53,7 +56,9 @@ const CoursePurchaseModal = memo(({
   lifetimeBadgeText,
   paymentLabelText,
   securePaymentLabel,
-  instantAccessLabel
+  instantAccessLabel,
+  modalType,
+  modalHtml
 }: CoursePurchaseModalProps) => {
 
   const formatCurrency = (val: string | number) => {
@@ -62,6 +67,11 @@ const CoursePurchaseModal = memo(({
     }
     return val;
   };
+
+  const isHtmlModal = modalType === 'html' || benefits?.[0]?.startsWith('<!--__PWA_MODAL_HTML__-->');
+  const resolvedModalHtml = modalHtml || (benefits?.[0]?.startsWith('<!--__PWA_MODAL_HTML__-->')
+    ? benefits[0].replace('<!--__PWA_MODAL_HTML__-->\n', '').replace('<!--__PWA_MODAL_HTML__-->', '')
+    : '');
 
   const defaultBenefits = [
     { icon: <Zap size={18} />, text: 'Acesso Imediato' },
@@ -73,7 +83,7 @@ const CoursePurchaseModal = memo(({
   return (
     <AnimatePresence>
       {isOpen && (
-        <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 sm:p-6 overflow-y-auto">
+        <div className="fixed inset-0 z-[100] flex items-center justify-center p-3 sm:p-6 overflow-y-auto">
           {/* Backdrop */}
           <motion.div
             initial={{ opacity: 0 }}
@@ -82,7 +92,77 @@ const CoursePurchaseModal = memo(({
             onClick={onClose}
             className="fixed inset-0 bg-black/90 backdrop-blur-md"
           />
-          
+
+          {isHtmlModal && resolvedModalHtml ? (
+            <motion.div
+              initial={{ opacity: 0, scale: 0.95, y: 25 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.95, y: 25 }}
+              transition={{ type: 'spring', damping: 25, stiffness: 300 }}
+              className="relative w-full max-w-lg md:max-w-2xl bg-zinc-950 rounded-[2rem] sm:rounded-[2.5rem] overflow-hidden shadow-[0_0_80px_rgba(245,158,11,0.15)] border border-white/10 mx-auto my-auto max-h-[92vh] flex flex-col z-10"
+            >
+              {/* Close Button */}
+              <button
+                id="modal-html-close-btn"
+                onClick={onClose}
+                className="absolute top-4 right-4 z-50 p-2.5 bg-black/70 hover:bg-white/15 text-white/70 hover:text-white rounded-full transition-all border border-white/10 backdrop-blur-md shadow-lg cursor-pointer"
+                title="Fechar"
+              >
+                <X size={18} />
+              </button>
+
+              {/* HTML Content Body with scrolling */}
+              <div className="flex-1 overflow-y-auto custom-scrollbar p-2 sm:p-4">
+                <HtmlAppViewer
+                  htmlContent={resolvedModalHtml}
+                  title={title}
+                  className="w-full"
+                  onComplete={onPurchase}
+                />
+              </div>
+
+              {/* Bottom Quick Checkout Bar */}
+              <div className="p-3 sm:p-4 border-t border-white/10 bg-zinc-950/95 backdrop-blur-md flex items-center justify-between gap-3 shrink-0">
+                <div className="flex flex-col">
+                  <div className="flex items-center gap-2">
+                    {oldPrice ? (
+                      <span className="text-[11px] text-gray-500 line-through">
+                        {formatCurrency(oldPrice)}
+                      </span>
+                    ) : null}
+                    <span className="text-[8px] sm:text-[9px] font-black text-amber-400 uppercase tracking-widest bg-amber-500/10 px-2 py-0.5 rounded border border-amber-500/20">
+                      {paymentLabelText || 'Oferta'}
+                    </span>
+                  </div>
+                  <span className="text-lg sm:text-xl font-black text-white">{formatCurrency(price)}</span>
+                </div>
+
+                <div className="flex items-center gap-2">
+                  {previewEnabled && onPreview && (
+                    <button
+                      id="modal-html-preview-btn"
+                      type="button"
+                      onClick={onPreview}
+                      className="px-3 sm:px-4 py-2.5 bg-white/5 hover:bg-white/10 text-white rounded-xl text-[10px] font-black uppercase tracking-wider transition-all border border-white/10 flex items-center gap-1.5 cursor-pointer"
+                    >
+                      <PlayCircle size={14} className="text-amber-400" />
+                      <span className="hidden sm:inline">Prévia</span>
+                    </button>
+                  )}
+                  <button
+                    id="modal-html-purchase-btn"
+                    type="button"
+                    onClick={onPurchase}
+                    disabled={isLoading}
+                    className="px-4 sm:px-6 py-2.5 sm:py-3 bg-primary hover:bg-primary-hover text-white font-black rounded-xl text-xs uppercase tracking-wider transition-all shadow-lg active:scale-95 flex items-center gap-2 cursor-pointer"
+                  >
+                    <ShoppingBag size={15} />
+                    <span>{ctaText || 'Liberar Acesso'}</span>
+                  </button>
+                </div>
+              </div>
+            </motion.div>
+          ) : (
             <motion.div
               initial={{ opacity: 0, scale: 0.95, y: 30 }}
               animate={{ opacity: 1, scale: 1, y: 0 }}
@@ -253,6 +333,7 @@ const CoursePurchaseModal = memo(({
               </div>
             </div>
           </motion.div>
+          )}
         </div>
       )}
     </AnimatePresence>

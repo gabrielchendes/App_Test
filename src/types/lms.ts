@@ -38,7 +38,9 @@ export interface Course {
   preview_support_type?: 'floating' | 'box';
   preview_title?: string;
   preview_subtitle?: string;
-  preview_type?: 'video' | 'pdf' | 'text' | 'link';
+  preview_type?: 'video' | 'pdf' | 'text' | 'link' | 'html';
+  modal_type?: 'standard' | 'html';
+  modal_html?: string;
   preview_link_text?: string;
   preview_link_url?: string;
   preview_link_color?: string;
@@ -75,7 +77,7 @@ export interface Chapter {
   course_id?: string;
   title: string;
   description: string;
-  content_type: 'video' | 'audio' | 'pdf' | 'text' | 'link' | 'checklist' | 'interactive' | 'html_app';
+  content_type: 'video' | 'audio' | 'pdf' | 'text' | 'link' | 'checklist' | 'interactive' | 'html_app' | 'html';
   video_url?: string;
   pdf_url?: string;
   cover_url?: string;

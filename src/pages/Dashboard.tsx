@@ -444,7 +444,7 @@ export default function Dashboard({ user }: DashboardProps) {
             if (!chapterMap[courseId]) chapterMap[courseId] = [];
             
             chapterMap[courseId].push(ch.id);
-            if (ch.content_type === 'video' || ch.content_type === 'audio') stats[courseId].lessons++;
+            if (ch.content_type === 'video' || ch.content_type === 'audio' || ch.content_type === 'html' || ch.content_type === 'html_app') stats[courseId].lessons++;
             else stats[courseId].materials++;
           }
         });
@@ -993,6 +993,8 @@ export default function Dashboard({ user }: DashboardProps) {
           paymentLabelText={selectedCourse?.payment_label_text}
           securePaymentLabel={selectedCourse?.secure_payment_label}
           instantAccessLabel={selectedCourse?.instant_access_label}
+          modalType={selectedCourse?.modal_type}
+          modalHtml={selectedCourse?.modal_html}
           onPurchase={handleSimulatePurchase}
           onPreview={() => {
             if (selectedCourse) {

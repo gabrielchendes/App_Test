@@ -25,6 +25,7 @@ import SupportSection from './SupportSection';
 import FloatingWhatsApp from './FloatingWhatsApp';
 import CustomDirectVideoPlayer from './CustomDirectVideoPlayer';
 import { getCloudflareStreamEmbedUrl, isCloudflareStreamUrl, isDirectVideoUrl } from '../utils/videoUtils';
+import HtmlAppViewer from './HtmlAppViewer';
 
 interface CoursePreviewViewerProps {
   course: Course;
@@ -184,35 +185,17 @@ export default function CoursePreviewViewer({ course, onClose, onPurchase }: Cou
       );
     }
 
-    if (type === 'text') {
+    if (type === 'html' || type === 'text') {
+      const rawContent = course.preview_rich_text || '';
+      const htmlContent = rawContent.replace('<!--__PWA_HTML_APP__-->', '');
       return (
-        <div className="relative w-full aspect-[1/1.4] sm:aspect-[3/4] bg-white rounded-[2.5rem] border border-white/10 overflow-hidden shadow-2xl">
-           <iframe
-             srcDoc={`
-               <!DOCTYPE html>
-               <html>
-                 <head>
-                   <meta charset="utf-8">
-                   <meta name="viewport" content="width=device-width, initial-scale=1">
-                   <style>
-                     body { 
-                       margin: 0; 
-                       padding: 20px; 
-                       font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
-                       color: #1a1a1a;
-                       background: white;
-                     }
-                     img { max-width: 100%; height: auto; }
-                   </style>
-                 </head>
-                 <body>
-                   ${course.preview_rich_text || ''}
-                 </body>
-               </html>
-             `}
-             className="w-full h-full border-0"
-             title="HTML Preview"
-           />
+        <div className="w-full bg-zinc-950/90 rounded-[2.5rem] border border-white/10 overflow-hidden shadow-2xl p-2 sm:p-4">
+          <HtmlAppViewer
+            htmlContent={htmlContent}
+            title={course.preview_title || course.title}
+            className="w-full"
+            onComplete={onPurchase}
+          />
         </div>
       );
     }

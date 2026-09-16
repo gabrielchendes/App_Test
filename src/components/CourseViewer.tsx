@@ -21,7 +21,8 @@ import {
   ExternalLink,
   CheckSquare,
   Puzzle,
-  Headphones
+  Headphones,
+  FileCode
 } from 'lucide-react';
 import WhatsAppIcon from './WhatsAppIcon';
 import { motion, AnimatePresence } from 'motion/react';
@@ -716,7 +717,7 @@ export default function CourseViewer({ courseId, userId, onClose, initialCourse,
                       <div className="grid grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-x-3 gap-y-6 sm:gap-x-8 sm:gap-y-12">
                         {moduleChapters.map((chapter, idx) => {
                           const isCompleted = progress.find(p => p.chapter_id === chapter.id)?.completed;
-                          const isChapterHtmlApp = chapter.content_type === 'html_app' || isHtmlAppChapter(chapter);
+                          const isChapterHtmlApp = chapter.content_type === 'html' || chapter.content_type === 'html_app' || isHtmlAppChapter(chapter);
                           
                           return (
                             <motion.button
@@ -750,7 +751,7 @@ export default function CourseViewer({ courseId, userId, onClose, initialCourse,
                               ) : (
                                 <div className="w-full h-full bg-zinc-900 flex items-center justify-center text-white/30 group-hover:text-primary transition-colors">
                                   {isChapterHtmlApp ? (
-                                    <Puzzle className="w-10 h-10 sm:w-12 sm:h-12 text-purple-400/80" />
+                                    <FileCode className="w-10 h-10 sm:w-12 sm:h-12 text-amber-400/80" />
                                   ) : chapter.content_type === 'audio' ? (
                                     <Headphones className="w-10 h-10 sm:w-12 sm:h-12 text-primary/80" />
                                   ) : (
@@ -767,13 +768,13 @@ export default function CourseViewer({ courseId, userId, onClose, initialCourse,
                                   isCompleted 
                                     ? 'bg-emerald-500/90 border-emerald-400 text-white scale-90 shadow-[0_0_15px_rgba(16,185,129,0.5)]' 
                                     : isChapterHtmlApp
-                                    ? 'bg-purple-950/70 border-purple-500/40 text-purple-300 group-hover:bg-purple-600 group-hover:border-purple-400 group-hover:text-white group-hover:scale-110 group-hover:shadow-[0_0_20px_rgba(168,85,247,0.6)]'
+                                    ? 'bg-amber-950/70 border-amber-500/40 text-amber-300 group-hover:bg-amber-600 group-hover:border-amber-400 group-hover:text-white group-hover:scale-110 group-hover:shadow-[0_0_20px_rgba(245,158,11,0.6)]'
                                     : 'bg-black/50 border-white/30 text-white group-hover:bg-primary group-hover:border-primary group-hover:scale-110 group-hover:shadow-[0_0_20px_rgba(244,63,94,0.6)]'
                                 }`}>
                                   {isCompleted ? (
                                     <CheckCircle2 className="w-6 h-6 sm:w-7 sm:h-7 text-white" />
                                   ) : isChapterHtmlApp ? (
-                                    <Puzzle className="w-5 h-5 sm:w-6 sm:h-6 text-white drop-shadow-md" />
+                                    <FileCode className="w-5 h-5 sm:w-6 sm:h-6 text-white drop-shadow-md" />
                                   ) : chapter.content_type === 'audio' ? (
                                     <Headphones className="w-5 h-5 sm:w-6 sm:h-6 text-white drop-shadow-md" />
                                   ) : (
@@ -797,7 +798,7 @@ export default function CourseViewer({ courseId, userId, onClose, initialCourse,
                             <div className="space-y-0.5 px-2">
                               <div className="flex items-center gap-2">
                                 <span className="text-[10px] font-black text-primary uppercase tracking-[0.2em] italic leading-none">
-                                  {chapter.content_type === 'video' ? '' : chapter.content_type === 'audio' ? 'Podcast' : chapter.content_type === 'pdf' ? '' : isChapterHtmlApp ? 'Mini App' : (t('course.reading') || 'Leitura')}
+                                  {chapter.content_type === 'video' ? '' : chapter.content_type === 'audio' ? 'Podcast' : chapter.content_type === 'pdf' ? '' : isChapterHtmlApp ? 'HTML' : (t('course.reading') || 'Leitura')}
                                 </span>
                                 {isCompleted && <div className="w-1 h-1 rounded-full bg-green-500" />}
                               </div>
@@ -825,43 +826,50 @@ export default function CourseViewer({ courseId, userId, onClose, initialCourse,
               exit={{ opacity: 0 }}
               className="min-h-full w-full bg-bg-main flex flex-col overflow-y-auto custom-scrollbar"
             >
-              {/* Header Info */}
-              <div className={`${activeChapter?.content_type === 'pdf' ? 'max-w-3xl' : 'max-w-4xl'} mx-auto w-full px-6 pt-20 pb-12 text-center space-y-6`}>
-                <motion.div
-                  initial={{ opacity: 0, y: 20 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  transition={{ delay: 0.1 }}
-                >
-                  <h1 className="text-4xl md:text-6xl font-serif font-black leading-tight text-white mb-4">
-                    {activeChapter?.title}
-                  </h1>
-                  <p className="text-gray-500 text-lg md:text-xl font-medium max-w-2xl mx-auto whitespace-pre-line">
-                    {activeChapter?.description || course?.description}
-                  </p>
-                </motion.div>
-              </div>
+              {/* Header Info - Omitted for full-page HTML lessons to feel completely native */}
+              {!(activeChapter?.content_type === 'html' || activeChapter?.content_type === 'html_app' || isHtmlAppChapter(activeChapter)) && (
+                <div className={`${activeChapter?.content_type === 'pdf' ? 'max-w-3xl' : 'max-w-4xl'} mx-auto w-full px-6 pt-20 pb-12 text-center space-y-6`}>
+                  <motion.div
+                    initial={{ opacity: 0, y: 20 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    transition={{ delay: 0.1 }}
+                  >
+                    <h1 className="text-4xl md:text-6xl font-serif font-black leading-tight text-white mb-4">
+                      {activeChapter?.title}
+                    </h1>
+                    <p className="text-gray-500 text-lg md:text-xl font-medium max-w-2xl mx-auto whitespace-pre-line">
+                      {activeChapter?.description || course?.description}
+                    </p>
+                  </motion.div>
+                </div>
+              )}
 
               {/* Media Player Section with Elegant Frame */}
               {(() => {
-                const isCurrentHtmlApp = activeChapter?.content_type === 'html_app' || isHtmlAppChapter(activeChapter);
+                const isCurrentHtmlApp = activeChapter?.content_type === 'html' || activeChapter?.content_type === 'html_app' || isHtmlAppChapter(activeChapter);
                 return (
-                  <div className={`mx-auto w-full px-4 sm:px-6 relative flex justify-center ${activeChapter?.content_type === 'checklist' || activeChapter?.content_type === 'interactive' || activeChapter?.content_type === 'text' || isCurrentHtmlApp ? 'max-w-5xl' : activeChapter?.content_type === 'pdf' ? 'max-w-3xl' : 'max-w-5xl'}`}>
+                  <div className={`mx-auto w-full relative flex justify-center ${isCurrentHtmlApp ? 'w-full px-0' : activeChapter?.content_type === 'checklist' || activeChapter?.content_type === 'interactive' || activeChapter?.content_type === 'text' ? 'max-w-5xl px-4 sm:px-6' : activeChapter?.content_type === 'pdf' ? 'max-w-3xl px-4 sm:px-6' : 'max-w-5xl px-4 sm:px-6'}`}>
                     {isCurrentHtmlApp ? (
                       <motion.div
-                        initial={{ opacity: 0, y: 10 }}
-                        animate={{ opacity: 1, y: 0 }}
-                        transition={{ delay: 0.2 }}
-                        className="w-full max-w-4xl mx-auto flex flex-col items-center justify-center"
+                        initial={{ opacity: 0 }}
+                        animate={{ opacity: 1 }}
+                        transition={{ duration: 0.2 }}
+                        className="w-full flex flex-col items-center justify-start"
                       >
                         <Suspense fallback={
-                          <div className="w-full py-16 flex items-center justify-center">
+                          <div className="w-full py-20 flex items-center justify-center">
                             <Loader2 className="w-8 h-8 animate-spin text-white/30" />
                           </div>
                         }>
                           <HtmlAppViewer
                             htmlContent={extractHtmlAppContent(activeChapter?.rich_text)}
                             title={activeChapter?.title}
-                            className="w-full flex flex-col items-center justify-center"
+                            className="w-full"
+                            onComplete={() => {
+                              if (activeChapter && !isCurrentChapterCompleted) {
+                                toggleCompletion(activeChapter.id);
+                              }
+                            }}
                           />
                         </Suspense>
                       </motion.div>
