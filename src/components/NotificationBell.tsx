@@ -116,7 +116,7 @@ export default function NotificationBell({ user }: NotificationBellProps) {
       setNotifications(mergedList);
       setUnreadCount(mergedList.filter(n => !n.is_read && !n.read).length);
     } catch (error) {
-      console.error('[NotificationBell] Error fetching notifications:', error);
+      console.warn('[NotificationBell] Notice fetching notifications:', error);
     } finally {
       setLoading(false);
     }
@@ -127,6 +127,9 @@ export default function NotificationBell({ user }: NotificationBellProps) {
 
     // Periodic polling every 20s to ensure internal notifications appear reliably
     const pollInterval = setInterval(() => {
+      if (typeof document !== 'undefined' && document.visibilityState !== 'visible') {
+        return;
+      }
       fetchNotifications();
     }, 20000);
 

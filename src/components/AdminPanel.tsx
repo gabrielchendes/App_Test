@@ -62,6 +62,7 @@ import {
   Shield,
   ShieldCheck,
   Smartphone,
+  Download,
   Monitor,
   Apple,
   ImageOff,
@@ -81,12 +82,14 @@ import {
   PlayCircle,
   RotateCcw,
   EyeOff,
+  MessageSquareQuote,
   Lock
 } from 'lucide-react';
 import WhatsAppIcon from './WhatsAppIcon';
 import { toast } from 'sonner';
 import { useSettings } from '../contexts/SettingsContext';
 import { useI18n } from '../contexts/I18nContext';
+import { AdminTestimonials } from './AdminTestimonials';
 import { safeParse, safeFetch } from '../lib/utils';
 import { dataCache } from '../lib/cache';
 import { lazyWithRetry } from '../lib/lazyWithRetry';
@@ -238,7 +241,7 @@ export default function AdminPanel({ user }: AdminPanelProps) {
   const { settings, refreshSettings } = useSettings();
   const { t } = useI18n();
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
-  const [activeTab, setActiveTab] = useState<'users' | 'courses' | 'community' | 'notifications' | 'texts' | 'settings' | 'security' | 'pages' | 'vendas' | 'packages' | 'languages' | 'questions' | 'ai_expert' | 'central_produtos'>('central_produtos');
+  const [activeTab, setActiveTab] = useState<'users' | 'courses' | 'community' | 'notifications' | 'texts' | 'settings' | 'security' | 'pages' | 'vendas' | 'packages' | 'languages' | 'questions' | 'ai_expert' | 'central_produtos' | 'testimonials'>('central_produtos');
   const [activePageTab, setActivePageTab] = useState<'home' | 'community' | 'profile' | 'login' | 'nav' | 'course' | 'lesson' | 'push' | 'pwa' | 'support'>('home');
   const [loading, setLoading] = useState(true);
   
@@ -295,6 +298,7 @@ export default function AdminPanel({ user }: AdminPanelProps) {
   const [notificationExclusionCourseId, setNotificationExclusionCourseId] = useState<string | null>(null);
   const [notificationType, setNotificationType] = useState<'in_app' | 'push' | 'both'>('both');
   const [notificationSubTab, setNotificationSubTab] = useState<'send' | 'history'>('send');
+  const [unreadTestimonialsCount, setUnreadTestimonialsCount] = useState<number>(0);
   const [notificationTitle, setNotificationTitle] = useState('');
   const [notificationBody, setNotificationBody] = useState('');
   const [sendingNotification, setSendingNotification] = useState(false);
@@ -492,6 +496,39 @@ export default function AdminPanel({ user }: AdminPanelProps) {
   }, [activeTab]);
 
   useEffect(() => {
+    const fetchUnreadTestimonials = async () => {
+      try {
+        const res = await fetch('/api/v1/testimonials?all=true');
+        if (res.ok) {
+          const data = await res.json();
+          if (Array.isArray(data)) {
+            setUnreadTestimonialsCount(data.filter((t: any) => !t.is_read).length);
+            return;
+          }
+        }
+      } catch (e) {}
+      try {
+        const { count, error } = await supabase
+          .from('testimonials')
+          .select('*', { count: 'exact', head: true })
+          .eq('is_read', false);
+        if (!error && typeof count === 'number') {
+          setUnreadTestimonialsCount(count);
+          return;
+        }
+      } catch (e) {}
+      try {
+        const local = localStorage.getItem('app_testimonials_cache');
+        if (local) {
+          const parsed = JSON.parse(local);
+          setUnreadTestimonialsCount(parsed.filter((t: any) => !t.is_read).length);
+        }
+      } catch {}
+    };
+    fetchUnreadTestimonials();
+  }, []);
+
+  useEffect(() => {
     if (activeTab === 'vendas') {
       fetchSalesData(true);
     }
@@ -678,6 +715,7 @@ export default function AdminPanel({ user }: AdminPanelProps) {
       initialLocal.support_whatsapp_course_enabled = settings.support_whatsapp_course_enabled ?? true;
       initialLocal.support_email_course_enabled = settings.support_email_course_enabled ?? true;
       initialLocal.show_course_titles_home = settings.show_course_titles_home ?? (settings.custom_texts?.['config.show_course_titles_home'] === 'true');
+      initialLocal.enable_testimonials = settings.enable_testimonials ?? (settings.custom_texts?.['home.enable_testimonials'] !== 'false');
       initialLocal.favicon_url = settings.favicon_url || '';
       initialLocal.pwa_icon_url = settings.pwa_icon_url || settings.favicon_url || '';
 
@@ -702,6 +740,39 @@ export default function AdminPanel({ user }: AdminPanelProps) {
 
   useEffect(() => {
     fetchData();
+
+    // Fetch unread testimonials count for badge
+    const fetchUnreadTestimonials = async () => {
+      try {
+        const res = await fetch('/api/v1/testimonials?all=true');
+        if (res.ok) {
+          const data = await res.json();
+          if (Array.isArray(data)) {
+            setUnreadTestimonialsCount(data.filter((t: any) => !t.is_read).length);
+            return;
+          }
+        }
+      } catch (e) {}
+      try {
+        const { count, error } = await supabase
+          .from('testimonials')
+          .select('*', { count: 'exact', head: true })
+          .eq('is_read', false);
+
+        if (!error && typeof count === 'number') {
+          setUnreadTestimonialsCount(count);
+        } else {
+          const local = localStorage.getItem('app_testimonials_cache');
+          if (local) {
+            const parsed = JSON.parse(local);
+            const unread = parsed.filter((t: any) => !t.is_read).length;
+            setUnreadTestimonialsCount(unread);
+          }
+        }
+      } catch (e) {}
+    };
+
+    fetchUnreadTestimonials();
   }, [activeTab]);
 
   const fetchCourses = async (showToast: boolean = false) => {
@@ -1247,6 +1318,11 @@ export default function AdminPanel({ user }: AdminPanelProps) {
         payload.custom_texts['config.show_course_titles_home'] = String(!!payload.show_course_titles_home);
       }
 
+      if ('enable_testimonials' in payload) {
+        if (!payload.custom_texts) payload.custom_texts = { ...(settings?.custom_texts || {}) };
+        payload.custom_texts['home.enable_testimonials'] = String(payload.enable_testimonials !== false);
+      }
+
       if ('pwa_icon_url' in payload) {
         if (!payload.custom_texts) payload.custom_texts = { ...(settings?.custom_texts || {}) };
         payload.custom_texts['config.pwa_icon_url'] = payload.pwa_icon_url || '';
@@ -1280,12 +1356,17 @@ export default function AdminPanel({ user }: AdminPanelProps) {
       }
 
       if (error) {
-        if (error.message?.includes('show_course_titles_home') || error.message?.includes('pwa_icon_url')) {
+        if (error.message?.includes('show_course_titles_home') || error.message?.includes('pwa_icon_url') || error.message?.includes('enable_testimonials')) {
           const fallbackPayload = { ...payload };
           if (error.message?.includes('show_course_titles_home')) {
             delete fallbackPayload.show_course_titles_home;
             if (!fallbackPayload.custom_texts) fallbackPayload.custom_texts = { ...(settings?.custom_texts || {}) };
             fallbackPayload.custom_texts['config.show_course_titles_home'] = String(!!newSettings.show_course_titles_home);
+          }
+          if (error.message?.includes('enable_testimonials')) {
+            delete fallbackPayload.enable_testimonials;
+            if (!fallbackPayload.custom_texts) fallbackPayload.custom_texts = { ...(settings?.custom_texts || {}) };
+            fallbackPayload.custom_texts['home.enable_testimonials'] = String(newSettings.enable_testimonials !== false);
           }
           if (error.message?.includes('pwa_icon_url')) {
             delete fallbackPayload.pwa_icon_url;
@@ -1928,6 +2009,13 @@ export default function AdminPanel({ user }: AdminPanelProps) {
             onClick={() => { setActiveTab('community'); setIsMobileMenuOpen(false); }} 
           />
           <SidebarItem 
+            icon={<MessageSquareQuote size={20} className="text-amber-400" />} 
+            label="Depoimentos" 
+            active={activeTab === 'testimonials'} 
+            onClick={() => { setActiveTab('testimonials'); setIsMobileMenuOpen(false); }} 
+            badge={unreadTestimonialsCount > 0 ? unreadTestimonialsCount : undefined}
+          />
+          <SidebarItem 
             icon={<Bell size={20} />} 
             label="Notificações" 
             active={activeTab === 'notifications'} 
@@ -1991,6 +2079,7 @@ export default function AdminPanel({ user }: AdminPanelProps) {
                activeTab === 'central_produtos' ? 'Central de Produtos' :
                activeTab === 'pages' ? 'Páginas' :
                activeTab === 'community' ? 'Comunidade' :
+               activeTab === 'testimonials' ? 'Depoimentos' :
                activeTab === 'notifications' ? 'Notificações' :
                activeTab === 'languages' ? 'Idiomas / Textos' :
                activeTab === 'ai_expert' ? 'IA Expert' :
@@ -2148,13 +2237,13 @@ export default function AdminPanel({ user }: AdminPanelProps) {
                                             
                                             if (!notifyRes.ok) {
                                               const errData = await notifyRes.json().catch(() => ({}));
-                                              console.error('Failed to notify user:', notifyRes.status, errData);
+                                              console.warn('Failed to notify user:', notifyRes.status, errData);
                                             } else {
                                               console.log('✅ Aluno notificado com sucesso');
                                             }
                                           }
                                         } catch (notifyErr) {
-                                          console.error('Error notifying user:', notifyErr);
+                                          console.warn('Error notifying user:', notifyErr);
                                         }
 
                                         toast.success('Resposta salva!');
@@ -2885,7 +2974,7 @@ export default function AdminPanel({ user }: AdminPanelProps) {
                         <div className="flex p-1 bg-black rounded-xl border border-white/10 w-fit">
                           <button 
                             onClick={() => setNotificationSubTab('send')}
-                            className={`px-6 py-2 rounded-lg text-[10px] font-black transition-all uppercase tracking-widest ${notificationSubTab === 'send' ? 'bg-blue-600 text-white' : 'text-gray-500 hover:text-white'}`}
+                            className={`px-5 py-2 rounded-lg text-[10px] font-black transition-all uppercase tracking-widest ${notificationSubTab === 'send' ? 'bg-blue-600 text-white' : 'text-gray-500 hover:text-white'}`}
                           >
                             Enviar Nova
                           </button>
@@ -2894,7 +2983,7 @@ export default function AdminPanel({ user }: AdminPanelProps) {
                               setNotificationSubTab('history');
                               fetchNotificationHistory();
                             }}
-                            className={`px-6 py-2 rounded-lg text-[10px] font-black transition-all uppercase tracking-widest ${notificationSubTab === 'history' ? 'bg-blue-600 text-white' : 'text-gray-500 hover:text-white'}`}
+                            className={`px-5 py-2 rounded-lg text-[10px] font-black transition-all uppercase tracking-widest ${notificationSubTab === 'history' ? 'bg-blue-600 text-white' : 'text-gray-500 hover:text-white'}`}
                           >
                             Histórico
                           </button>
@@ -3454,6 +3543,14 @@ export default function AdminPanel({ user }: AdminPanelProps) {
                         </div>
                       )}
                     </AnimatePresence>
+                  </div>
+                )}
+
+                {activeTab === 'testimonials' && (
+                  <div className="max-w-6xl space-y-8 pb-20">
+                    <AdminTestimonials 
+                      onTestimonialCountChange={(count) => setUnreadTestimonialsCount(count)} 
+                    />
                   </div>
                 )}
 
@@ -5099,13 +5196,13 @@ export default function AdminPanel({ user }: AdminPanelProps) {
                                 <div className="space-y-6">
                                   {/* 1. Estilo Botão Instalar */}
                                   <div className="space-y-2">
-                                    <label className="text-xs font-black text-gray-500 uppercase tracking-widest">Estilo Botão Instalar</label>
+                                    <label className="text-xs font-black text-gray-500 uppercase tracking-widest">Estilo Botão Instalar (Login)</label>
                                     <div className="flex p-1 bg-black rounded-xl border border-white/10 font-sans">
                                       <button 
                                         onClick={() => setLocalSettings({ ...localSettings, login_install_button_pulsing: 'pulsing' })}
                                         className={`flex-1 py-1.5 rounded-lg text-bold text-[10px] transition-all ${localSettings?.login_install_button_pulsing === 'pulsing' || localSettings?.login_install_button_pulsing === true ? 'bg-blue-600 text-white' : 'text-gray-500'}`}
                                       >
-                                        PULSANTE
+                                        SUBINDO E DESCENDO
                                       </button>
                                       <button 
                                         onClick={() => setLocalSettings({ ...localSettings, login_install_button_pulsing: 'static' })}
@@ -5251,7 +5348,7 @@ export default function AdminPanel({ user }: AdminPanelProps) {
                                     { key: 'auth.whatsapp_label', label: 'Label do WhatsApp' },
                                     { key: 'auth.email_label', label: 'Label do E-mail Suporte' },
                                     { key: 'auth.disclaimer', label: 'Disclaimer (Rodapé)', type: 'textarea' },
-                                    { key: 'auth.fill_this_field', label: 'Mensagem: Preencha este campo' },
+                                    { key: 'auth.fill_this_field', label: 'Mensagem: Fill in this field' },
                                     { key: 'auth.invalid_email', label: 'Mensagem: E-mail inválido' },
                                     { key: 'auth.restricted_access', label: 'Título: Acesso Restrito' },
                                     { key: 'auth.restricted_access_msg', label: 'Mensagem de Acesso Restrito' },
@@ -5266,16 +5363,16 @@ export default function AdminPanel({ user }: AdminPanelProps) {
                                       <label className="text-xs font-black text-gray-500 uppercase tracking-widest">{field.label}</label>
                                       {field.type === 'textarea' ? (
                                         <textarea 
-                                          value={draftCustomTexts[field.key] !== undefined ? draftCustomTexts[field.key] : (settings.custom_texts?.[field.key] || languagePresets.pt[field.key] || '')}
-                                          placeholder={field.label}
+                                          value={draftCustomTexts[field.key] !== undefined ? draftCustomTexts[field.key] : (settings.custom_texts?.[field.key] || languagePresets.en[field.key] || '')}
+                                          placeholder={languagePresets.en[field.key] || field.label}
                                           onChange={(e) => setDraftCustomTexts({ ...draftCustomTexts, [field.key]: e.target.value })}
                                           className="w-full bg-black border border-white/10 rounded-xl px-4 py-3 text-sm text-white focus:border-blue-500 outline-none min-h-[80px]"
                                         />
                                       ) : (
                                         <input 
                                           type="text" 
-                                          value={draftCustomTexts[field.key] !== undefined ? draftCustomTexts[field.key] : (settings.custom_texts?.[field.key] || languagePresets.pt[field.key] || '')}
-                                          placeholder={field.label}
+                                          value={draftCustomTexts[field.key] !== undefined ? draftCustomTexts[field.key] : (settings.custom_texts?.[field.key] || languagePresets.en[field.key] || '')}
+                                          placeholder={languagePresets.en[field.key] || field.label}
                                           onChange={(e) => setDraftCustomTexts({ ...draftCustomTexts, [field.key]: e.target.value })}
                                           className="w-full bg-black border border-white/10 rounded-xl px-4 py-3 text-sm text-white focus:border-blue-500 outline-none"
                                         />
@@ -5296,10 +5393,37 @@ export default function AdminPanel({ user }: AdminPanelProps) {
                                     <div className="relative z-10 flex flex-col items-center gap-6 h-full pt-10">
                                        {/* PWA Install Button Preview */}
                                        {(localSettings.login_install_button_pulsing !== 'hidden') && (
-                                         <div className={`flex items-center gap-2 px-3 py-1.5 border border-primary/20 rounded-full text-[8px] font-black text-black uppercase tracking-widest italic shadow-lg shadow-primary/20 scale-90 ${localSettings.login_install_button_pulsing === 'pulsing' || localSettings.login_install_button_pulsing === true ? 'animate-bounce' : ''}`}
-                                              style={{ backgroundColor: localSettings.primary_color || settings.primary_color }}>
-                                           <Smartphone size={10} />
-                                           {draftCustomTexts['pwa.install_app'] || settings.custom_texts?.['pwa.install_app'] || languagePresets.pt['pwa.install_app'] || 'Instalar App'}
+                                         <div 
+                                           className={`w-full max-w-[240px] p-[1.2px] rounded-xl shadow-md ${(localSettings.login_install_button_pulsing === 'pulsing' || localSettings.login_install_button_pulsing === true) ? 'animate-float-smooth' : ''}`}
+                                           style={{
+                                             background: 'linear-gradient(135deg, #fbbf24 0%, #ffffff 50%, #f43f5e 100%)'
+                                           }}
+                                         >
+                                           <div 
+                                             className="w-full px-3 py-1.5 rounded-[11px] flex items-center justify-center gap-2.5 border border-amber-300/25 relative overflow-hidden"
+                                             style={{
+                                               background: 'linear-gradient(135deg, #2a2012 0%, #3c2e19 50%, #22190d 100%)'
+                                             }}
+                                           >
+                                             <div className="absolute top-0 inset-x-0 h-[1px] bg-gradient-to-r from-transparent via-amber-300/60 to-transparent pointer-events-none" />
+                                             <div className="relative w-5 h-5 rounded-md bg-[#0f111c] border border-amber-300/70 shadow-[0_0_8px_rgba(251,191,36,0.4)] flex items-center justify-center shrink-0">
+                                               <Smartphone size={10} className="text-white" />
+                                               <div 
+                                                 className="absolute -bottom-0.5 -right-0.5 w-2 h-2 rounded-full flex items-center justify-center text-black"
+                                                 style={{ background: 'linear-gradient(135deg, #fef08a 0%, #fbbf24 100%)' }}
+                                               >
+                                                 <Download size={4.5} strokeWidth={3.5} />
+                                               </div>
+                                             </div>
+                                             <div className="flex flex-col text-left min-w-0">
+                                               <span className="text-[7.5px] font-black uppercase tracking-wider text-white truncate">
+                                                 {(draftCustomTexts['pwa.install_app'] || settings.custom_texts?.['pwa.install_app'] || languagePresets.pt['pwa.install_app'] || 'Instalar App').replace(/^[\p{Emoji}\p{Extended_Pictographic}\s]+/u, '').trim() || 'Instalar App'}
+                                               </span>
+                                               <span className="text-[6px] text-zinc-300 font-medium truncate leading-tight">
+                                                 {draftCustomTexts['pwa.tap_to_add'] || settings.custom_texts?.['pwa.tap_to_add'] || languagePresets.pt['pwa.tap_to_add'] || 'Toque para adicionar à tela de início'}
+                                               </span>
+                                             </div>
+                                           </div>
                                          </div>
                                        )}
 
@@ -5324,33 +5448,33 @@ export default function AdminPanel({ user }: AdminPanelProps) {
                                              </h2>
                                            )}
                                            <p className="text-[9px] text-gray-500 mt-1 font-medium">
-                                             {draftCustomTexts['auth.subtitle'] || settings.custom_texts?.['auth.subtitle'] || languagePresets.pt['auth.subtitle']}
+                                             {draftCustomTexts['auth.subtitle'] || settings.custom_texts?.['auth.subtitle'] || languagePresets.en['auth.subtitle']}
                                            </p>
                                          </div>
 
                                          <div className="space-y-3">
                                            <div className="w-full h-10 bg-white/5 border border-white/10 rounded-xl flex items-center px-4 text-[10px] text-gray-600 text-left">
-                                             {draftCustomTexts['auth.email'] || settings.custom_texts?.['auth.email'] || languagePresets.pt['auth.email'] || 'E-mail'}
+                                             {draftCustomTexts['auth.email'] || settings.custom_texts?.['auth.email'] || languagePresets.en['auth.email'] || 'Email'}
                                            </div>
                                            <div className="w-full h-10 bg-white/5 border border-white/10 rounded-xl flex items-center px-4 text-[10px] text-gray-600 text-left">
-                                             {draftCustomTexts['auth.password'] || settings.custom_texts?.['auth.password'] || languagePresets.pt['auth.password'] || 'Senha'}
+                                             {draftCustomTexts['auth.password'] || settings.custom_texts?.['auth.password'] || languagePresets.en['auth.password'] || 'Password'}
                                            </div>
                                            <div className="w-full h-10 rounded-xl flex items-center justify-center text-[10px] font-black text-white uppercase tracking-widest shadow-xl" style={{ backgroundColor: localSettings?.primary_color || settings.primary_color }}>
-                                             {draftCustomTexts['auth.login'] || settings.custom_texts?.['auth.login'] || languagePresets.pt['auth.login'] || 'Entrar'}
+                                             {draftCustomTexts['auth.login'] || settings.custom_texts?.['auth.login'] || languagePresets.en['auth.login'] || 'Sign In'}
                                              <ArrowRight size={14} className="ml-2" />
                                            </div>
                                          </div>
 
                                          <div className="pt-4 border-t border-white/5">
                                            <p className="text-[8px] text-gray-500 font-bold uppercase tracking-widest mb-3 text-center">
-                                             {draftCustomTexts['auth.support_box'] || settings.custom_texts?.['auth.support_box'] || languagePresets.pt['auth.support_box'] || 'Suporte'}
+                                             {draftCustomTexts['auth.support_box'] || settings.custom_texts?.['auth.support_box'] || languagePresets.en['auth.support_box'] || 'Support'}
                                            </p>
                                            <div className="grid grid-cols-2 gap-2">
                                              <div className="flex items-center justify-center gap-1.5 py-2 bg-green-500/10 border border-green-500/20 rounded-lg text-green-500 text-[8px] font-black uppercase">
-                                               <WhatsAppIcon size={10} /> {draftCustomTexts['auth.whatsapp_label'] || settings.custom_texts?.['auth.whatsapp_label'] || languagePresets.pt['auth.whatsapp_label'] || 'Whats'}
+                                               <WhatsAppIcon size={10} /> {draftCustomTexts['auth.whatsapp_label'] || settings.custom_texts?.['auth.whatsapp_label'] || languagePresets.en['auth.whatsapp_label'] || 'WhatsApp'}
                                              </div>
                                              <div className="flex items-center justify-center gap-1.5 py-2 bg-blue-500/10 border border-blue-500/20 rounded-lg text-blue-500 text-[8px] font-black uppercase">
-                                               <Mail size={10} /> {draftCustomTexts['auth.email_label'] || settings.custom_texts?.['auth.email_label'] || languagePresets.pt['auth.email_label'] || 'Email'}
+                                               <Mail size={10} /> {draftCustomTexts['auth.email_label'] || settings.custom_texts?.['auth.email_label'] || languagePresets.en['auth.email_label'] || 'Email'}
                                              </div>
                                            </div>
                                          </div>
@@ -5358,7 +5482,7 @@ export default function AdminPanel({ user }: AdminPanelProps) {
 
                                        <div className="mt-auto px-4 pb-4">
                                          <p className="text-[8px] text-gray-600 text-center leading-tight">
-                                           {draftCustomTexts['auth.disclaimer'] || settings.custom_texts?.['auth.disclaimer'] || languagePresets.pt['auth.disclaimer'] || '© 2026 Maternidade Premium'}
+                                           {draftCustomTexts['auth.disclaimer'] || settings.custom_texts?.['auth.disclaimer'] || languagePresets.en['auth.disclaimer'] || 'By signing in, you agree to our Terms of Use and Privacy Policy.'}
                                          </p>
                                        </div>
                                     </div>
@@ -5504,6 +5628,69 @@ export default function AdminPanel({ user }: AdminPanelProps) {
                               <span
                                 className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${
                                   localSettings?.show_course_titles_home ? 'translate-x-6' : 'translate-x-1'
+                                }`}
+                              />
+                            </button>
+                          </div>
+                        </div>
+
+                        {/* Depoimentos na Home */}
+                        <div className="bg-zinc-900/50 rounded-2xl border border-white/10 p-8 space-y-6">
+                          <div className="flex items-center justify-between flex-wrap gap-4">
+                            <div className="flex items-center gap-3">
+                              <div className="p-2 bg-amber-500/20 rounded-lg text-amber-400">
+                                <Sparkles size={20} />
+                              </div>
+                              <div>
+                                <h4 className="font-bold text-white">Botão de Depoimentos na Home</h4>
+                                <p className="text-xs text-gray-400">
+                                  Permite que as alunas enviem seus depoimentos e resultados no final da tela inicial.
+                                </p>
+                              </div>
+                            </div>
+                            <button 
+                              type="button"
+                              onClick={async () => {
+                                setIsSavingSettings(true);
+                                await updateSettings({ 
+                                  enable_testimonials: localSettings?.enable_testimonials !== false
+                                });
+                                setIsSavingSettings(false);
+                              }}
+                              disabled={isSavingSettings}
+                              className="flex items-center gap-2 bg-amber-500 hover:bg-amber-600 text-black px-6 py-2.5 rounded-xl font-bold text-xs transition-all shadow-lg shadow-amber-500/20 cursor-pointer"
+                            >
+                              {isSavingSettings ? <Loader2 className="animate-spin text-black" size={18} /> : <Save size={18} />}
+                              Salvar Configuração
+                            </button>
+                          </div>
+
+                          <div className="flex items-center justify-between p-6 bg-zinc-900/30 border border-white/5 rounded-2xl flex-wrap gap-4">
+                            <div className="space-y-1">
+                              <h6 className="text-sm font-bold text-white uppercase italic tracking-tighter">
+                                Exibir Card de Depoimentos na Home
+                              </h6>
+                              <p className="text-[10px] text-gray-500 font-bold uppercase italic tracking-widest leading-relaxed">
+                                {localSettings?.enable_testimonials !== false
+                                  ? 'O botão de depoimentos está HABILITADO na tela início (Padrão).' 
+                                  : 'O botão de depoimentos está DESABILITADO na tela início.'}
+                              </p>
+                            </div>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setLocalSettings({ 
+                                  ...localSettings, 
+                                  enable_testimonials: localSettings?.enable_testimonials === false ? true : false
+                                });
+                              }}
+                              className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors focus:outline-none cursor-pointer ${
+                                localSettings?.enable_testimonials !== false ? 'bg-amber-500' : 'bg-zinc-700'
+                              }`}
+                            >
+                              <span
+                                className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${
+                                  localSettings?.enable_testimonials !== false ? 'translate-x-6' : 'translate-x-1'
                                 }`}
                               />
                             </button>
@@ -6990,6 +7177,7 @@ export default function AdminPanel({ user }: AdminPanelProps) {
                                   <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                                     {[
                                       { key: 'pwa.install_app', label: 'Texto do Botão Flutuante (Login)' },
+                                      { key: 'pwa.tap_to_add', label: 'Texto Secundário do Botão (Login)' },
                                       { key: 'pwa.install_title', label: 'Título do Modal' },
                                       { key: 'pwa.mobile_header', label: 'Título Auxiliar (Versão Celular)' },
                                       { key: 'pwa.install_desc', label: 'Descrição Principal' },

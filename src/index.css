@@ -144,6 +144,22 @@ body {
   animation: glowingBorder 7s ease infinite;
 }
 
+/* Silky Smooth GPU-Accelerated Floating Animation */
+@keyframes floatSmooth {
+  0%, 100% {
+    transform: translate3d(0, -6px, 0);
+  }
+  50% {
+    transform: translate3d(0, 6px, 0);
+  }
+}
+
+.animate-float-smooth {
+  animation: floatSmooth 1.6s cubic-bezier(0.45, 0.05, 0.55, 0.95) infinite;
+  will-change: transform;
+  backface-visibility: hidden;
+}
+
 .skeleton-shimmer {
   background: linear-gradient(
     90deg,

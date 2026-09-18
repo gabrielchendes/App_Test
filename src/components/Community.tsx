@@ -124,7 +124,7 @@ export default function Community({ user, isImportMode = false }: CommunityProps
         })
       }).catch(e => console.warn('[Community] Erro ao notificar admin:', e));
     } catch (e) {
-      console.error('Error notifying admin:', e);
+      console.warn('Notice notifying admin:', e);
     }
   };
 

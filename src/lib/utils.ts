@@ -9,52 +9,56 @@ export function cn(...inputs: ClassValue[]) {
  * Safely parses a JSON string, returning null if parsing fails or value is invalid.
  */
 export function safeParse(value: any) {
-  console.log("Valor recebido para parse:", value);
   try {
     if (!value || value === "undefined" || typeof value !== 'string') {
       return null;
     }
     return JSON.parse(value);
   } catch (err) {
-    console.error("Erro ao fazer parse do JSON:", err);
     return null;
   }
 }
 
-export async function safeFetch(url: string, options: RequestInit = {}) {
-  try {
-    const response = await fetch(url, options);
-    const text = await response.text();
-
-    console.log('📡 Resposta da API:', url, text);
-
-    if (!response.ok) {
-      try {
-        const errorJson = JSON.parse(text);
-        return { error: errorJson.error || `API Error ${response.status}: ${text.substring(0, 50)}`, status: response.status };
-      } catch (e) {
-        return { error: `API Error ${response.status}`, status: response.status };
-      }
-    }
-
-    if (!text || text === "undefined") {
-      return null;
-    }
-
-    const trimmed = text.trim();
-    if (trimmed.startsWith('<!doctype') || trimmed.startsWith('<html') || trimmed.startsWith('<head')) {
-      console.warn('⚠️ Server returned HTML response instead of JSON for:', url);
-      return { error: 'Server returned HTML instead of JSON', isHtml: true };
-    }
-
+export async function safeFetch(url: string, options: RequestInit = {}, retries = 1): Promise<any> {
+  for (let attempt = 0; attempt <= retries; attempt++) {
     try {
-      return JSON.parse(text);
-    } catch (err) {
-      console.warn('🚨 Response is not valid JSON:', url, text.substring(0, 100));
-      return { error: 'Server response is not valid JSON' };
+      const response = await fetch(url, options);
+      const text = await response.text();
+
+      if (!response.ok) {
+        try {
+          const errorJson = JSON.parse(text);
+          return { error: errorJson.error || `API Error ${response.status}: ${text.substring(0, 50)}`, status: response.status };
+        } catch (e) {
+          return { error: `API Error ${response.status}`, status: response.status };
+        }
+      }
+
+      if (!text || text === "undefined") {
+        return null;
+      }
+
+      const trimmed = text.trim();
+      if (trimmed.startsWith('<!doctype') || trimmed.startsWith('<html') || trimmed.startsWith('<head')) {
+        return { error: 'Server returned HTML instead of JSON', isHtml: true };
+      }
+
+      try {
+        return JSON.parse(text);
+      } catch (err) {
+        return { error: 'Server response is not valid JSON' };
+      }
+    } catch (err: any) {
+      if (err?.name === 'AbortError') {
+        return { error: 'Request aborted' };
+      }
+      if (attempt < retries) {
+        await new Promise(resolve => setTimeout(resolve, 600));
+        continue;
+      }
+      console.warn('[safeFetch] Request notice:', url, err?.message || err);
+      return { error: 'Server connection notice: ' + (err?.message || 'Failed to fetch') };
     }
-  } catch (err: any) {
-    console.error('🚨 Fetch request error:', url, err);
-    return { error: 'Server connection error: ' + err.message };
   }
+  return { error: 'Network request failed' };
 }

@@ -8,6 +8,9 @@ import Carousel from '../components/Carousel';
 import ProductCard from '../components/ProductCard';
 import FloatingWhatsApp from '../components/FloatingWhatsApp';
 import SupportSection from '../components/SupportSection';
+import { HomeTestimonialCard } from '../components/HomeTestimonialCard';
+import { TestimonialPage } from '../components/TestimonialPage';
+import { InspiringStoriesPage } from '../components/InspiringStoriesPage';
 import PullToRefresh from '../components/PullToRefresh';
 import WhatsAppIcon from '../components/WhatsAppIcon';
 import SmartHomeHeader from '../components/SmartHomeHeader';
@@ -23,6 +26,7 @@ import { dataCache } from '../lib/cache';
 import { cn } from '../lib/utils';
 import { lazyWithRetry } from '../lib/lazyWithRetry';
 import { GlowingSpinner } from '../components/GlowingSpinner';
+import { parseCourseHtmlFunnel } from '../utils/courseFunnel';
 
 // Lazy load heavy components and modals
 const Profile = lazyWithRetry(() => import('../components/Profile'));
@@ -71,6 +75,8 @@ export default function Dashboard({ user }: DashboardProps) {
   const [previewCourse, setPreviewCourse] = useState<Course | null>(null);
   const [showProgressModal, setShowProgressModal] = useState(false);
   const [isAiModalOpen, setIsAiModalOpen] = useState(false);
+  const [isWritingTestimonial, setIsWritingTestimonial] = useState(false);
+  const [isViewingTestimonials, setIsViewingTestimonials] = useState(false);
 
   // Lifecycles and deduplication refs
   const fetchInProgressRef = useRef(false);
@@ -417,9 +423,11 @@ export default function Dashboard({ user }: DashboardProps) {
       const mainCheckoutUrl = settings?.custom_texts?.['main_checkout_url'] || '';
 
       const processedCourses = fetchedCoursesData.map(c => {
+        const funnelParsed = parseCourseHtmlFunnel(c);
         const isMainCourse = !!c.is_free && !c.is_bonus;
         return {
           ...c,
+          ...funnelParsed,
           price: isMainCourse ? mainPrice : c.price,
           checkout_url: isMainCourse ? mainCheckoutUrl : (courseToPackageCheckout[c.id] || c.checkout_url)
         };
@@ -745,6 +753,34 @@ export default function Dashboard({ user }: DashboardProps) {
     return <GlowingSpinner fullScreen size="lg" />;
   }
 
+  if (isViewingTestimonials) {
+    return (
+      <InspiringStoriesPage
+        settings={settings}
+        onBack={() => setIsViewingTestimonials(false)}
+        onWriteStory={() => {
+          setIsViewingTestimonials(false);
+          setIsWritingTestimonial(true);
+        }}
+      />
+    );
+  }
+
+  if (isWritingTestimonial) {
+    return (
+      <TestimonialPage 
+        user={user} 
+        courses={courses} 
+        settings={settings} 
+        onBack={() => setIsWritingTestimonial(false)} 
+        onViewStories={() => {
+          setIsWritingTestimonial(false);
+          setIsViewingTestimonials(true);
+        }}
+      />
+    );
+  }
+
   return (
     <div className="min-h-screen pb-20 bg-[#0b0c10]">
       <AnimatePresence>
@@ -938,6 +974,13 @@ export default function Dashboard({ user }: DashboardProps) {
                         </div>
                       )}
                     </Carousel>
+
+                    <HomeTestimonialCard
+                      settings={settings}
+                      t={t}
+                      onOpenTestimonial={() => setIsWritingTestimonial(true)}
+                      onViewTestimonials={() => setIsViewingTestimonials(true)}
+                    />
 
                     <SupportSection page="home" settings={settings} t={t} />
                   </div>

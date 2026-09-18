@@ -62,6 +62,24 @@ export interface Course {
   tenant_id: string;
 }
 
+export interface Testimonial {
+  id: string;
+  user_id?: string;
+  user_name: string;
+  user_email?: string;
+  user_avatar?: string;
+  course_title?: string;
+  rating: number;
+  headline?: string;
+  content: string;
+  image_url?: string;
+  status: 'pending' | 'approved' | 'rejected';
+  is_read: boolean;
+  consent: boolean;
+  created_at: string;
+  updated_at?: string;
+}
+
 export interface Module {
   id: string;
   course_id: string;

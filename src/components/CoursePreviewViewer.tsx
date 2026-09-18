@@ -27,15 +27,25 @@ import CustomDirectVideoPlayer from './CustomDirectVideoPlayer';
 import { getCloudflareStreamEmbedUrl, isCloudflareStreamUrl, isDirectVideoUrl } from '../utils/videoUtils';
 import HtmlAppViewer from './HtmlAppViewer';
 
+import { parseCourseHtmlFunnel } from '../utils/courseFunnel';
+
 interface CoursePreviewViewerProps {
   course: Course;
   onClose: () => void;
   onPurchase: () => void;
 }
 
-export default function CoursePreviewViewer({ course, onClose, onPurchase }: CoursePreviewViewerProps) {
+export default function CoursePreviewViewer({ course: rawCourse, onClose, onPurchase }: CoursePreviewViewerProps) {
+  const course = parseCourseHtmlFunnel(rawCourse) as Course;
   const { settings } = useSettings();
   const { t } = useI18n();
+
+  const isHtmlPreview = course.preview_type === 'html' || 
+    Boolean(course.preview_rich_text && /^\s*<(!DOCTYPE|html|div|main|section|body)/i.test(course.preview_rich_text)) ||
+    Boolean(course.preview_rich_text && (course.preview_rich_text.includes('<!--__PWA_HTML_APP__-->') || course.preview_rich_text.includes('<html') || course.preview_rich_text.includes('<body')));
+
+  const rawHtmlContent = course.preview_rich_text || '';
+  const htmlContent = rawHtmlContent.replace('<!--__PWA_HTML_APP__-->\n', '').replace('<!--__PWA_HTML_APP__-->', '');
 
   const formatCurrency = (val: number) => {
     return (val / 100).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
@@ -202,6 +212,69 @@ export default function CoursePreviewViewer({ course, onClose, onPurchase }: Cou
 
     return null;
   };
+
+  // Se o preview for HTML, cobrir a página inteira deixando apenas cabeçalho com botões e suporte no rodapé
+  if (isHtmlPreview) {
+    return (
+      <motion.div 
+        initial={{ opacity: 0 }}
+        animate={{ opacity: 1 }}
+        exit={{ opacity: 0 }}
+        className="fixed inset-0 z-[300] bg-zinc-950 overflow-y-auto overflow-x-hidden pt-safe flex flex-col justify-between"
+      >
+        {/* Header Sticky Container */}
+        <div className="sticky top-0 z-[60] w-full px-4 sm:px-6 py-3.5 sm:py-4 flex items-center justify-between bg-zinc-950/90 backdrop-blur-xl border-b border-white/10 shrink-0">
+          <button 
+            onClick={onClose}
+            className="w-10 h-10 flex items-center justify-center bg-white/5 hover:bg-white/10 rounded-xl text-gray-400 hover:text-white transition-all border border-white/5 group cursor-pointer"
+            title="Voltar"
+          >
+            <ArrowLeft size={18} className="group-hover:-translate-x-1 transition-transform" />
+          </button>
+          
+          <div className="flex flex-col items-center justify-center min-w-0">
+            <div className="flex items-center gap-2 bg-primary/10 border border-primary/20 px-3 py-1 rounded-full mb-0.5 shadow-lg shadow-primary/10">
+              <Sparkles size={10} className="text-primary animate-pulse" />
+              <span className="text-[8px] lg:text-[10px] font-black text-primary uppercase tracking-[0.2em] leading-none">
+                {settings.custom_texts?.['course.preview_badge'] || t('course.preview_badge') || 'PREVIEW'}
+              </span>
+            </div>
+            <span className="text-[10px] lg:text-xs font-black text-white/70 uppercase tracking-tighter truncate max-w-[180px] sm:max-w-[320px] text-center italic">
+              {course.preview_title || course.title}
+            </span>
+          </div>
+
+          <button 
+            onClick={onClose}
+            className="w-10 h-10 flex items-center justify-center bg-white/5 hover:bg-white/10 rounded-xl text-gray-400 hover:text-white transition-all border border-white/5 cursor-pointer"
+            title="Fechar"
+          >
+            <X size={18} />
+          </button>
+        </div>
+
+        {/* Conteúdo HTML cobrindo a página inteira */}
+        <div className="w-full flex-1 flex flex-col">
+          <HtmlAppViewer
+            htmlContent={htmlContent}
+            title={course.preview_title || course.title}
+            className="w-full flex-1"
+            minHeight="85vh"
+            onComplete={onPurchase}
+          />
+        </div>
+
+        {/* Opção de suporte embaixo da página */}
+        <div className="w-full bg-zinc-950/60 border-t border-white/5 shrink-0 mt-auto">
+          <div className="max-w-4xl mx-auto w-full px-4 sm:px-6 py-10 pb-20">
+            <SupportSection page="preview" settings={settings} t={t} />
+          </div>
+        </div>
+
+        <FloatingWhatsApp page="preview" />
+      </motion.div>
+    );
+  }
 
   return (
     <motion.div 

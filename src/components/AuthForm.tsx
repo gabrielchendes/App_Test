@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Mail, Lock, ArrowRight, Key, ShieldAlert, MessageSquare, Smartphone } from 'lucide-react';
+import { Mail, Lock, ArrowRight, Key, ShieldAlert, MessageSquare, Smartphone, Download, ArrowDownToLine, ArrowDown, ChevronRight } from 'lucide-react';
 import { GlowingSpinner } from './GlowingSpinner';
 import WhatsAppIcon from './WhatsAppIcon';
 import { supabase } from '../lib/supabase';
@@ -201,19 +201,117 @@ export default function AuthForm() {
   };
 
   const showInstallButton = settings.login_install_button_pulsing !== 'hidden' && (settings.custom_texts?.['pwa.enable_button'] !== 'false');
+  const isPulsing = settings.login_install_button_pulsing === 'pulsing' || settings.login_install_button_pulsing === true;
+  const rawInstallText = settings.custom_texts?.['pwa.install_app'] || t('pwa.install_app') || 'Instalar App';
+  const cleanInstallText = rawInstallText.replace(/^[\p{Emoji}\p{Extended_Pictographic}\s]+/u, '').trim() || 'Instalar App';
 
   return (
     <div className="flex flex-col items-center gap-6 w-full max-w-md">
-      {/* PWA Install Button at the top */}
+      {/* Luxury PWA Install Hero Capsule at the top */}
       {(showInstallButton && (isInstallable || import.meta.env.DEV)) && !isInstalled && (
-        <button
-          type="button"
-          onClick={handleInstallClick}
-          className={`flex items-center gap-2 px-4 py-2 bg-primary group border border-primary/20 rounded-full text-[10px] font-black text-black uppercase tracking-widest italic shadow-lg shadow-primary/20 transition-all hover:scale-105 active:scale-95 duration-200 animate-in fade-in slide-in-from-top-3 ${settings.login_install_button_pulsing === 'pulsing' || settings.login_install_button_pulsing === true ? 'animate-bounce' : ''}`}
+        <div 
+          className={`w-full max-w-[320px] sm:max-w-[340px] mx-auto relative group ${isPulsing ? 'animate-float-smooth' : ''}`}
         >
-          <Smartphone size={12} className="group-hover:scale-110 transition-transform" />
-          {settings.custom_texts?.['pwa.install_app'] || t('pwa.install_app') || '📲 Instalar App'}
-        </button>
+          {/* Distinct Warm Gold & Brand Radiant Aura */}
+          <div 
+            className="absolute -inset-1 rounded-[22px] opacity-80 blur-md group-hover:opacity-100 transition-opacity duration-500 pointer-events-none" 
+            style={{
+              background: settings.primary_color
+                ? `linear-gradient(135deg, rgba(245, 158, 11, 0.7), ${settings.primary_color}, rgba(245, 158, 11, 0.7))`
+                : 'linear-gradient(135deg, rgba(245, 158, 11, 0.75), rgba(244, 63, 94, 0.6), rgba(245, 158, 11, 0.75))'
+            }}
+          />
+
+          <button
+            type="button"
+            onClick={handleInstallClick}
+            className="relative w-full rounded-[20px] p-[1.5px] shadow-[0_12px_30px_rgba(0,0,0,0.7),0_0_22px_rgba(245,158,11,0.3)] text-left cursor-pointer transition-all duration-300 group-hover:scale-[1.02] active:scale-[0.98] overflow-hidden"
+            style={{
+              background: 'linear-gradient(135deg, #fbbf24 0%, #ffffff 45%, #f43f5e 100%)'
+            }}
+          >
+            <div 
+              className="w-full py-2.5 px-4 backdrop-blur-2xl rounded-[18.5px] flex items-center justify-center gap-3.5 relative overflow-hidden transition-all duration-300 border border-amber-300/25"
+              style={{
+                background: 'linear-gradient(135deg, #2a2012 0%, #3c2e19 50%, #22190d 100%)'
+              }}
+            >
+              {/* Top Golden Light Reflex */}
+              <div className="absolute top-0 inset-x-0 h-[1px] bg-gradient-to-r from-transparent via-amber-300/60 to-transparent pointer-events-none" />
+              <div className="absolute inset-0 bg-gradient-to-b from-amber-400/15 via-transparent to-black/30 pointer-events-none" />
+
+              {/* Dynamic Light Sheen Sweep Effect on hover */}
+              <div className="absolute inset-0 bg-gradient-to-r from-transparent via-white/15 to-transparent -translate-x-full group-hover:translate-x-full transition-transform duration-1000 pointer-events-none" />
+
+              {/* 3D App Squircle Emblem */}
+              <div className="relative flex items-center justify-center shrink-0">
+                {/* Luminous Ambient Halo */}
+                <div 
+                  className="absolute -inset-1 rounded-xl blur-md opacity-85 group-hover:opacity-100 transition-opacity duration-300 animate-pulse"
+                  style={{ 
+                    background: settings.primary_color 
+                      ? `radial-gradient(circle, #fbbf24 0%, ${settings.primary_color} 60%, transparent 80%)`
+                      : 'radial-gradient(circle, #fbbf24 0%, #f59e0b 60%, transparent 80%)'
+                  }}
+                />
+
+                {/* Metallic Radiant Frame (Slimmer w-9 h-9) */}
+                <div 
+                  className="relative w-9 h-9 rounded-xl p-[1.5px] shadow-[0_4px_16px_rgba(251,191,36,0.35)] transition-transform duration-300 group-hover:scale-105"
+                  style={{
+                    background: 'linear-gradient(135deg, #fef08a 0%, #fbbf24 35%, #ffffff 65%, #f59e0b 100%)'
+                  }}
+                >
+                  {/* Glossy Jewel Core */}
+                  <div 
+                    className="w-full h-full rounded-[9px] flex items-center justify-center relative overflow-hidden"
+                    style={{
+                      background: 'radial-gradient(circle at 45% 25%, rgba(251, 191, 36, 0.35) 0%, rgba(24, 21, 36, 0.98) 60%, rgba(12, 14, 24, 1) 100%)'
+                    }}
+                  >
+                    {/* Top Specular Arc Reflex */}
+                    <div className="absolute top-0 inset-x-0 h-2 bg-gradient-to-b from-white/35 via-white/10 to-transparent pointer-events-none" />
+                    
+                    {/* Smartphone Device Symbol */}
+                    <Smartphone 
+                      size={17} 
+                      className="relative z-10 text-white stroke-[2.3] drop-shadow-[0_1px_4px_rgba(0,0,0,0.8)] group-hover:scale-105 transition-transform" 
+                    />
+                    
+                    {/* Animated descending micro-arrow */}
+                    <motion.div 
+                      className="absolute inset-0 flex items-center justify-center pointer-events-none z-20"
+                      animate={{ y: [-2, 1, -2], opacity: [0.7, 1, 0.7] }}
+                      transition={{ repeat: Infinity, duration: 1.5, ease: "easeInOut" }}
+                    >
+                      <ArrowDown size={9} className="text-yellow-300 drop-shadow-[0_1px_3px_rgba(0,0,0,0.9)] stroke-[3]" />
+                    </motion.div>
+                  </div>
+
+                  {/* High-Visibility Download Corner Badge */}
+                  <div 
+                    className="absolute -bottom-1 -right-1 w-4 h-4 rounded-full flex items-center justify-center text-black font-black shadow-md border border-[#0f111c] z-30 transition-transform duration-300 group-hover:scale-110"
+                    style={{
+                      background: 'linear-gradient(135deg, #fef08a 0%, #fbbf24 100%)'
+                    }}
+                  >
+                    <Download size={8} strokeWidth={3.5} className="text-black" />
+                  </div>
+                </div>
+              </div>
+
+              {/* Centered Typography / Action Copy */}
+              <div className="flex flex-col text-left min-w-0">
+                <h3 className="text-xs sm:text-[13px] font-black text-white tracking-wider uppercase group-hover:text-amber-300 transition-colors truncate drop-shadow-sm">
+                  {cleanInstallText || 'Instalar Aplicativo'}
+                </h3>
+                <p className="text-[10px] sm:text-[11px] text-zinc-300 font-medium group-hover:text-white transition-colors truncate leading-tight mt-0.5">
+                  {settings.custom_texts?.['pwa.tap_to_add'] || t('pwa.tap_to_add') || 'Toque para adicionar à tela de início'}
+                </p>
+              </div>
+            </div>
+          </button>
+        </div>
       )}
 
       {/* Main Login Card with Luxury Luminous Border */}

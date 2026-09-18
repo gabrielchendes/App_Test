@@ -54,6 +54,7 @@ import { AiCourseEditModal } from './AiCourseEditModal';
 import { AiCourseFactoryModal } from './AiCourseFactoryModal';
 import { fetchChecklistByChapterId, saveChecklistToDatabase } from '../services/checklistService';
 import { formatHtmlAppContent, fromDbChapter, isHtmlAppChapter, prepareChapterForDb } from '../utils/htmlAppHelper';
+import { parseCourseHtmlFunnel, serializeCourseHtmlFunnel } from '../utils/courseFunnel';
 import ImageCropperModal from './ImageCropperModal';
 import { dataCache } from '../lib/cache';
 
@@ -475,7 +476,8 @@ export default function CourseEditor({
       if (initialCourseData) {
         setCourse(prev => ({
           ...prev,
-          ...initialCourseData
+          ...initialCourseData,
+          ...parseCourseHtmlFunnel(initialCourseData)
         }));
       }
       if (initialModulesData && Array.isArray(initialModulesData) && initialModulesData.length > 0) {
@@ -560,23 +562,15 @@ export default function CourseEditor({
       
       if (courseError) throw courseError;
 
-      const isModalHtml = courseData.benefits?.[0]?.startsWith('<!--__PWA_MODAL_HTML__-->') || courseData.modal_type === 'html';
-      const loadedModalHtml = isModalHtml
-        ? (courseData.modal_html || courseData.benefits?.[0]?.replace('<!--__PWA_MODAL_HTML__-->\n', '').replace('<!--__PWA_MODAL_HTML__-->', '') || '')
-        : (courseData.modal_html || '');
-      const loadedBenefits = isModalHtml ? [] : (courseData.benefits || []);
-      const isPreviewHtml = (courseData.preview_type === 'text' && courseData.preview_rich_text?.startsWith('<!--__PWA_HTML_APP__-->')) || courseData.preview_type === 'html';
-      const loadedPreviewRichText = isPreviewHtml
-        ? courseData.preview_rich_text?.replace('<!--__PWA_HTML_APP__-->', '') || ''
-        : (courseData.preview_rich_text || '');
+      const funnelParsed = parseCourseHtmlFunnel(courseData);
 
       setCourse({
         ...courseData,
-        modal_type: isModalHtml ? 'html' : 'standard',
-        modal_html: loadedModalHtml,
-        benefits: loadedBenefits,
-        preview_type: isPreviewHtml ? 'html' : (courseData.preview_type || 'video'),
-        preview_rich_text: loadedPreviewRichText
+        modal_type: funnelParsed.modal_type,
+        modal_html: funnelParsed.modal_html,
+        benefits: funnelParsed.benefits,
+        preview_type: funnelParsed.preview_type,
+        preview_rich_text: funnelParsed.preview_rich_text
       });
 
       const { data: modulesData, error: modulesError } = await supabase
@@ -710,18 +704,7 @@ export default function CourseEditor({
         targetOrderIndex = await getNextCategoryOrderIndex(!!course.is_bonus, !course.is_bonus && !!course.is_free);
       }
 
-      const isModalHtml = course.modal_type === 'html';
-      const finalBenefits = isModalHtml
-        ? ['<!--__PWA_MODAL_HTML__-->\n' + (course.modal_html || '')]
-        : (course.benefits || []).filter(b => b.trim() !== '' && !b.startsWith('<!--__PWA_MODAL_HTML__-->'));
-
-      const isPreviewHtml = course.preview_type === 'html';
-      const finalPreviewType = isPreviewHtml ? 'text' : (course.preview_type || 'video');
-      const finalPreviewRichText = isPreviewHtml
-        ? (course.preview_rich_text?.startsWith('<!--__PWA_HTML_APP__-->') 
-            ? course.preview_rich_text 
-            : '<!--__PWA_HTML_APP__-->' + (course.preview_rich_text || ''))
-        : (course.preview_rich_text || '');
+      const { finalBenefits, finalPreviewType, finalPreviewRichText } = serializeCourseHtmlFunnel(course);
 
       const courseData = {
         title: course.title,
@@ -800,7 +783,11 @@ export default function CourseEditor({
           throw error;
         }
         setCourseId(data.id);
-        setCourse(data);
+        setCourse(prev => ({
+          ...prev,
+          ...data,
+          ...parseCourseHtmlFunnel(data)
+        }));
         dataCache.invalidate();
         toast.success('Curso criado!');
       }
@@ -836,18 +823,7 @@ export default function CourseEditor({
 
         const nextOrder = await getNextCategoryOrderIndex(!!course.is_bonus, !course.is_bonus && !!course.is_free);
 
-        const isModalHtml = course.modal_type === 'html';
-        const finalBenefits = isModalHtml
-          ? ['<!--__PWA_MODAL_HTML__-->\n' + (course.modal_html || '')]
-          : (course.benefits || []).filter(b => b.trim() !== '' && !b.startsWith('<!--__PWA_MODAL_HTML__-->'));
-
-        const isPreviewHtml = course.preview_type === 'html';
-        const finalPreviewType = isPreviewHtml ? 'text' : (course.preview_type || 'video');
-        const finalPreviewRichText = isPreviewHtml
-          ? (course.preview_rich_text?.startsWith('<!--__PWA_HTML_APP__-->') 
-              ? course.preview_rich_text 
-              : '<!--__PWA_HTML_APP__-->' + (course.preview_rich_text || ''))
-          : (course.preview_rich_text || '');
+        const { finalBenefits, finalPreviewType, finalPreviewRichText } = serializeCourseHtmlFunnel(course);
 
         const courseData = {
           title: course.title,
@@ -1709,147 +1685,83 @@ export default function CourseEditor({
                 </div>
 
                 {course.preview_enabled && (
-                  <div className="grid lg:grid-cols-2 gap-12 animate-in fade-in zoom-in-95 duration-300">
-                    <div className="space-y-8">
-                       {/* 1. SEÇÃO HERO */}
-                       <div className="space-y-4">
-                         <div className="flex items-center gap-2 mb-2">
-                           <Monitor size={14} className="text-primary" />
-                           <span className="text-[10px] font-black text-zinc-500 uppercase tracking-widest">1. Topo da Página (Hero)</span>
-                         </div>
-                         <div className="grid grid-cols-2 gap-4">
-                           <div className="space-y-2">
-                             <label className="text-[10px] font-black text-gray-500 uppercase tracking-widest ml-1">Headline Principal</label>
-                             <input 
-                               type="text" 
-                               value={course.preview_title || ''}
-                               onChange={e => setCourse({...course, preview_title: e.target.value})}
-                               className="w-full bg-black/40 border border-white/10 rounded-2xl px-6 py-4 text-white focus:border-primary outline-none transition-all placeholder:text-gray-700"
-                               placeholder="Título principal..."
-                             />
-                           </div>
-                           <div className="space-y-2">
-                             <label className="text-[10px] font-black text-gray-500 uppercase tracking-widest ml-1">Subheadline</label>
-                             <input 
-                               type="text" 
-                               value={course.preview_subtitle || ''}
-                               onChange={e => setCourse({...course, preview_subtitle: e.target.value})}
-                               className="w-full bg-black/40 border border-white/10 rounded-2xl px-6 py-4 text-white focus:border-primary outline-none transition-all placeholder:text-gray-700"
-                               placeholder="Promessa principal..."
-                             />
-                           </div>
-                         </div>
-                         <div className="space-y-2">
-                            <label className="text-[10px] font-black text-gray-500 uppercase tracking-widest ml-1 italic">Texto de Avaliação (Ex: 4.98 Avaliação)</label>
-                            <input 
-                              type="text" 
-                              value={course.preview_rating || ''}
-                              onChange={e => setCourse({...course, preview_rating: e.target.value})}
-                              className="w-full bg-black/40 border border-white/10 rounded-2xl px-6 py-4 text-white focus:border-primary outline-none transition-all"
-                              placeholder="4.98 Avaliação"
-                            />
-                         </div>
-                       </div>
+                  <div className="space-y-8 animate-in fade-in zoom-in-95 duration-300">
+                    {/* Seletor de Formato da Página de Preview - HTML é a PRIMEIRA opção */}
+                    <div className="p-4 sm:p-5 bg-black/40 border border-white/10 rounded-2xl space-y-3">
+                      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                        <div className="flex items-center gap-2">
+                          <PlayCircle size={15} className="text-primary" />
+                          <span className="text-[11px] font-black text-white uppercase tracking-widest">
+                            Formato do Conteúdo de Preview
+                          </span>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => setShowLivePreview(true)}
+                          className="px-3.5 py-1.5 rounded-xl bg-white/5 hover:bg-white/10 text-white text-[9px] font-black uppercase tracking-widest transition-all flex items-center gap-2 cursor-pointer border border-white/10 self-start sm:self-auto"
+                        >
+                          <Eye size={13} className="text-primary" />
+                          👁️ Visualizar Prévia ao Vivo
+                        </button>
+                      </div>
 
-                       {/* 2. SEÇÃO DE CONTEÚDO (MÍDIA) */}
-                       <div className="space-y-4 pt-4 border-t border-white/5">
-                         <div className="flex items-center gap-2 mb-2">
-                           <PlayCircle size={14} className="text-primary" />
-                           <span className="text-[10px] font-black text-zinc-500 uppercase tracking-widest">2. Conteúdo em Destaque (Mídia)</span>
-                         </div>
-                         <div className="flex bg-black/40 p-1 rounded-xl border border-white/5 gap-1 mb-4">
-                            {(['video', 'pdf', 'html', 'link'] as const).map(type => {
-                              const isSelected = (type === 'html' && (course.preview_type === 'html' || course.preview_type === 'text')) || course.preview_type === type;
-                              return (
-                                <button
-                                  key={type}
-                                  type="button"
-                                  onClick={() => setCourse({...course, preview_type: type})}
-                                  className={`flex-1 py-1.5 rounded-lg text-root font-black uppercase text-[8px] tracking-widest transition-all cursor-pointer ${isSelected ? 'bg-primary text-white shadow-md' : 'text-gray-500 hover:text-white hover:bg-white/5'}`}
-                                >
-                                  {type === 'video' ? 'VÍDEO' : type === 'pdf' ? 'PDF' : type === 'html' ? '🌐 HTML NATIVO' : 'LINK'}
-                                </button>
-                              );
-                            })}
-                         </div>
+                      <div className="flex bg-black/60 p-1.5 rounded-xl border border-white/5 gap-1.5">
+                        {(['html', 'video', 'pdf', 'link'] as const).map(type => {
+                          const isSelected = (type === 'html' && (course.preview_type === 'html' || course.preview_type === 'text')) || course.preview_type === type;
+                          return (
+                            <button
+                              key={type}
+                              type="button"
+                              onClick={() => setCourse({ ...course, preview_type: type })}
+                              className={`flex-1 py-2.5 px-2 rounded-lg font-black uppercase text-[9px] tracking-wider transition-all cursor-pointer flex items-center justify-center gap-1.5 ${
+                                isSelected ? 'bg-primary text-white shadow-lg shadow-primary/20' : 'text-gray-400 hover:text-white hover:bg-white/5'
+                              }`}
+                            >
+                              {type === 'html' && <FileCode size={14} />}
+                              {type === 'video' && <Video size={14} />}
+                              {type === 'pdf' && <FileText size={14} />}
+                              {type === 'link' && <Link size={14} />}
+                              <span>
+                                {type === 'html' ? '🌐 HTML NATIVO' : type === 'video' ? 'VÍDEO' : type === 'pdf' ? 'PDF' : 'LINK'}
+                              </span>
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </div>
 
-                         {course.preview_type === 'video' && (
-                           <div className="p-6 bg-black/40 border border-white/10 rounded-2xl space-y-4">
-                              <div className="space-y-2">
-                                <label className="text-[10px] font-black text-gray-500 uppercase tracking-widest ml-1">URL do Vídeo (YouTube/Vimeo)</label>
-                                <input 
-                                  type="text" 
-                                  value={course.preview_video_url || ''}
-                                  onChange={e => setCourse({...course, preview_video_url: e.target.value})}
-                                  className="w-full bg-black/60 border border-white/10 rounded-xl px-4 py-3 text-xs text-primary focus:border-primary outline-none transition-all font-mono"
-                                  placeholder="https://youtube.com/watch?v=..."
-                                />
-                              </div>
-                           </div>
-                         )}
+                    {/* SE FOR HTML: Abre SOMENTE o espaço de colar o código HTML, SEM as outras opções */}
+                    {(course.preview_type === 'html' || course.preview_type === 'text') ? (
+                      <div className="p-5 sm:p-7 bg-black/40 border border-white/10 rounded-3xl animate-in fade-in slide-in-from-top-4 duration-300 space-y-5">
+                        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-4 border-b border-white/5">
+                          <div>
+                            <h4 className="text-sm font-black text-white uppercase tracking-wider flex items-center gap-2">
+                              <span className="w-2.5 h-2.5 rounded-full bg-amber-500 animate-pulse" />
+                              Código HTML da Página de Preview (VSL / Landing Page)
+                            </h4>
+                            <p className="text-[11px] text-gray-400 mt-1 leading-relaxed">
+                              No formato HTML, a página cobrirá a tela inteira com layout responsivo nativo, mantendo apenas o cabeçalho e o suporte embaixo da página.
+                            </p>
+                          </div>
+                          <button
+                            type="button"
+                            onClick={() => setShowLivePreview(true)}
+                            className="px-4 py-2.5 bg-primary/20 hover:bg-primary text-white rounded-xl text-[10px] font-black uppercase tracking-widest border border-primary/30 flex items-center gap-2 self-start sm:self-auto cursor-pointer transition-all shadow-lg shadow-primary/10"
+                          >
+                            <Monitor size={14} />
+                            Testar em Tela Cheia
+                          </button>
+                        </div>
 
-                         {course.preview_type === 'pdf' && (
-                           <div className="p-6 bg-black/40 border border-white/10 rounded-2xl space-y-4">
-                              <div className="space-y-2">
-                                <label className="text-[10px] font-black text-gray-500 uppercase tracking-widest ml-1">URL do Material PDF</label>
-                                <input 
-                                  type="text" 
-                                  value={course.preview_pdf_url || ''}
-                                  onChange={e => setCourse({...course, preview_pdf_url: e.target.value})}
-                                  className="w-full bg-black/60 border border-white/10 rounded-xl px-4 py-3 text-xs text-primary focus:border-primary outline-none transition-all font-mono"
-                                  placeholder="https://domain.com/material.pdf"
-                                />
-                              </div>
-                           </div>
-                         )}
-
-                         {course.preview_type === 'link' && (
-                           <div className="p-6 bg-black/40 border border-white/10 rounded-2xl space-y-4">
-                             <div className="grid grid-cols-2 gap-4">
-                               <div className="space-y-2">
-                                 <label className="text-[10px] font-black text-gray-500 uppercase tracking-widest ml-1">Texto do Botão</label>
-                                 <input 
-                                   type="text" 
-                                   value={course.preview_link_text || ''}
-                                   onChange={e => setCourse({...course, preview_link_text: e.target.value})}
-                                   className="w-full bg-black/60 border border-white/10 rounded-xl px-4 py-3 text-xs text-white focus:border-primary outline-none transition-all"
-                                   placeholder="CLIQUE AQUI"
-                                 />
-                               </div>
-                               <div className="space-y-2">
-                                 <label className="text-[10px] font-black text-gray-500 uppercase tracking-widest ml-1">Cor do Botão</label>
-                                 <input 
-                                   type="color" 
-                                   value={course.preview_link_color || '#3b82f6'}
-                                   onChange={e => setCourse({...course, preview_link_color: e.target.value})}
-                                   className="w-full bg-black/60 border border-white/10 rounded-xl h-[42px] p-1 cursor-pointer"
-                                 />
-                               </div>
-                             </div>
-                             <div className="space-y-2">
-                               <label className="text-[10px] font-black text-gray-500 uppercase tracking-widest ml-1">Link de Destino</label>
-                               <input 
-                                 type="text" 
-                                 value={course.preview_link_url || ''}
-                                 onChange={e => setCourse({...course, preview_link_url: e.target.value})}
-                                 className="w-full bg-black/60 border border-white/10 rounded-xl px-4 py-3 text-xs text-white focus:border-primary outline-none transition-all font-mono"
-                                 placeholder="https://..."
-                                />
-                             </div>
-                           </div>
-                         )}
-
-                         {(course.preview_type === 'html' || course.preview_type === 'text') && (
-                           <div className="p-4 bg-black/40 border border-white/10 rounded-2xl animate-in fade-in slide-in-from-top-4 duration-500">
-                             <AdminHtmlAppEditor
-                               htmlContent={course.preview_rich_text || ''}
-                               onChange={val => setCourse({...course, preview_rich_text: val, preview_type: 'html'})}
-                               themeColor="amber"
-                               title="Página de Preview / VSL em HTML"
-                               subtitle="Cole aqui o código HTML completo da sua página de apresentação, VSL com player embutido ou URL externa (https://). Dispare o evento window.parent.postMessage({ type: 'purchase' }, '*') no botão para acionar a compra automaticamente."
-                               sampleButtonLabel="📋 Exemplo de Página de Vendas em HTML"
-                               sampleHtml={SAMPLE_SALES_PREVIEW_HTML}
-                               placeholder={`<!DOCTYPE html>
+                        <AdminHtmlAppEditor
+                          htmlContent={course.preview_rich_text || ''}
+                          onChange={val => setCourse({ ...course, preview_rich_text: val, preview_type: 'html' })}
+                          themeColor="amber"
+                          title="Editor de Código HTML (Página Completa / VSL)"
+                          subtitle="Cole aqui o código HTML completo da sua página de apresentação ou VSL com player embutido. Dispare window.parent.postMessage({ type: 'purchase' }, '*') no botão para acionar a compra automaticamente."
+                          sampleButtonLabel="📋 Exemplo de Página de Vendas Completa em HTML"
+                          sampleHtml={SAMPLE_SALES_PREVIEW_HTML}
+                          placeholder={`<!DOCTYPE html>
 <html lang="pt-BR">
 <head>
   <meta charset="UTF-8">
@@ -1862,180 +1774,297 @@ export default function CourseEditor({
   </button>
 </body>
 </html>`}
-                             />
+                        />
+                      </div>
+                    ) : (
+                      /* SE NÃO FOR HTML: Abre as outras opções (Hero, Mídia, Módulos, Prova Social, Garantia, etc.) */
+                      <div className="grid lg:grid-cols-2 gap-12 animate-in fade-in zoom-in-95 duration-300">
+                        <div className="space-y-8">
+                           {/* 1. SEÇÃO HERO */}
+                           <div className="space-y-4">
+                             <div className="flex items-center gap-2 mb-2">
+                               <Monitor size={14} className="text-primary" />
+                               <span className="text-[10px] font-black text-zinc-500 uppercase tracking-widest">1. Topo da Página (Hero)</span>
+                             </div>
+                             <div className="grid grid-cols-2 gap-4">
+                               <div className="space-y-2">
+                                 <label className="text-[10px] font-black text-gray-500 uppercase tracking-widest ml-1">Headline Principal</label>
+                                 <input 
+                                   type="text" 
+                                   value={course.preview_title || ''}
+                                   onChange={e => setCourse({...course, preview_title: e.target.value})}
+                                   className="w-full bg-black/40 border border-white/10 rounded-2xl px-6 py-4 text-white focus:border-primary outline-none transition-all placeholder:text-gray-700"
+                                   placeholder="Título principal..."
+                                 />
+                               </div>
+                               <div className="space-y-2">
+                                 <label className="text-[10px] font-black text-gray-500 uppercase tracking-widest ml-1">Subheadline</label>
+                                 <input 
+                                   type="text" 
+                                   value={course.preview_subtitle || ''}
+                                   onChange={e => setCourse({...course, preview_subtitle: e.target.value})}
+                                   className="w-full bg-black/40 border border-white/10 rounded-2xl px-6 py-4 text-white focus:border-primary outline-none transition-all placeholder:text-gray-700"
+                                   placeholder="Promessa principal..."
+                                 />
+                               </div>
+                             </div>
+                             <div className="space-y-2">
+                                <label className="text-[10px] font-black text-gray-500 uppercase tracking-widest ml-1 italic">Texto de Avaliação (Ex: 4.98 Avaliação)</label>
+                                <input 
+                                  type="text" 
+                                  value={course.preview_rating || ''}
+                                  onChange={e => setCourse({...course, preview_rating: e.target.value})}
+                                  className="w-full bg-black/40 border border-white/10 rounded-2xl px-6 py-4 text-white focus:border-primary outline-none transition-all"
+                                  placeholder="4.98 Avaliação"
+                                />
+                             </div>
                            </div>
-                         )}
-                       </div>
 
-                       {/* 3. SEÇÃO DE MÓDULOS */}
-                       <div className="space-y-4 pt-4 border-t border-white/5">
-                         <div className="flex items-center gap-2 mb-2">
-                           <Layers size={14} className="text-primary" />
-                           <span className="text-[10px] font-black text-zinc-500 uppercase tracking-widest">3. Seção de Módulos (Conteúdo)</span>
-                         </div>
-                         <div className="space-y-2">
-                            <label className="text-[10px] font-black text-gray-500 uppercase tracking-widest ml-1 italic">Título da Seção de Módulos</label>
-                            <input 
-                              type="text" 
-                              value={course.preview_modules_label || ''}
-                              onChange={e => setCourse({...course, preview_modules_label: e.target.value})}
-                              className="w-full bg-black/40 border border-white/10 rounded-2xl px-6 py-4 text-white focus:border-primary outline-none transition-all"
-                              placeholder="O que te espera lá dentro"
-                            />
-                         </div>
-                       </div>
-                    </div>
-
-                    <div className="space-y-8">
-                       {/* 4. SEÇÃO STATS / PROVA SOCIAL */}
-                       <div className="space-y-6">
-                          <div className="flex items-center gap-2 mb-2">
-                            <Users size={14} className="text-amber-500" />
-                            <span className="text-[10px] font-black text-zinc-500 uppercase tracking-widest">4. Marcadores e Prova Social</span>
-                          </div>
-                          
-                          <div className="grid grid-cols-1 gap-4">
-                             <div className="p-5 bg-white/5 rounded-3xl border border-white/5 space-y-3">
-                                <span className="text-[10px] font-black text-zinc-400 uppercase tracking-widest block mb-2">Bloco 1 (Total de Alunos)</span>
-                                <div className="grid grid-cols-2 gap-3">
-                                   <input 
-                                     type="text" 
-                                     value={course.preview_students_label || ''}
-                                     onChange={e => setCourse({...course, preview_students_label: e.target.value})}
-                                     className="bg-black/40 border border-white/10 rounded-xl px-4 py-3 text-xs text-white focus:border-amber-500 outline-none transition-all"
-                                     placeholder="Valor: 1.2k+"
-                                   />
-                                   <input 
-                                     type="text" 
-                                     value={course.preview_students_tag || ''}
-                                     onChange={e => setCourse({...course, preview_students_tag: e.target.value})}
-                                     className="bg-black/40 border border-white/10 rounded-xl px-4 py-3 text-xs text-white focus:border-amber-500 outline-none transition-all"
-                                     placeholder="Tag: Alunos"
-                                   />
-                                </div>
+                           {/* 2. SEÇÃO DE CONTEÚDO (MÍDIA) */}
+                           <div className="space-y-4 pt-4 border-t border-white/5">
+                             <div className="flex items-center gap-2 mb-2">
+                               <PlayCircle size={14} className="text-primary" />
+                               <span className="text-[10px] font-black text-zinc-500 uppercase tracking-widest">2. Conteúdo em Destaque (Mídia)</span>
                              </div>
 
-                             <div className="p-5 bg-white/5 rounded-3xl border border-white/5 space-y-3">
-                                <span className="text-[10px] font-black text-zinc-400 uppercase tracking-widest block mb-2">Bloco 2 (Configuração de Garantia)</span>
-                                <div className="grid grid-cols-2 gap-3">
+                             {course.preview_type === 'video' && (
+                               <div className="p-6 bg-black/40 border border-white/10 rounded-2xl space-y-4">
+                                  <div className="space-y-2">
+                                    <label className="text-[10px] font-black text-gray-500 uppercase tracking-widest ml-1">URL do Vídeo (YouTube/Vimeo)</label>
+                                    <input 
+                                      type="text" 
+                                      value={course.preview_video_url || ''}
+                                      onChange={e => setCourse({...course, preview_video_url: e.target.value})}
+                                      className="w-full bg-black/60 border border-white/10 rounded-xl px-4 py-3 text-xs text-primary focus:border-primary outline-none transition-all font-mono"
+                                      placeholder="https://youtube.com/watch?v=..."
+                                    />
+                                  </div>
+                               </div>
+                             )}
+
+                             {course.preview_type === 'pdf' && (
+                               <div className="p-6 bg-black/40 border border-white/10 rounded-2xl space-y-4">
+                                  <div className="space-y-2">
+                                    <label className="text-[10px] font-black text-gray-500 uppercase tracking-widest ml-1">URL do Material PDF</label>
+                                    <input 
+                                      type="text" 
+                                      value={course.preview_pdf_url || ''}
+                                      onChange={e => setCourse({...course, preview_pdf_url: e.target.value})}
+                                      className="w-full bg-black/60 border border-white/10 rounded-xl px-4 py-3 text-xs text-primary focus:border-primary outline-none transition-all font-mono"
+                                      placeholder="https://domain.com/material.pdf"
+                                    />
+                                  </div>
+                               </div>
+                             )}
+
+                             {course.preview_type === 'link' && (
+                               <div className="p-6 bg-black/40 border border-white/10 rounded-2xl space-y-4">
+                                 <div className="grid grid-cols-2 gap-4">
+                                   <div className="space-y-2">
+                                     <label className="text-[10px] font-black text-gray-500 uppercase tracking-widest ml-1">Texto do Botão</label>
+                                     <input 
+                                       type="text" 
+                                       value={course.preview_link_text || ''}
+                                       onChange={e => setCourse({...course, preview_link_text: e.target.value})}
+                                       className="w-full bg-black/60 border border-white/10 rounded-xl px-4 py-3 text-xs text-white focus:border-primary outline-none transition-all"
+                                       placeholder="CLIQUE AQUI"
+                                     />
+                                   </div>
+                                   <div className="space-y-2">
+                                     <label className="text-[10px] font-black text-gray-500 uppercase tracking-widest ml-1">Cor do Botão</label>
+                                     <input 
+                                       type="color" 
+                                       value={course.preview_link_color || '#3b82f6'}
+                                       onChange={e => setCourse({...course, preview_link_color: e.target.value})}
+                                       className="w-full bg-black/60 border border-white/10 rounded-xl h-[42px] p-1 cursor-pointer"
+                                     />
+                                   </div>
+                                 </div>
+                                 <div className="space-y-2">
+                                   <label className="text-[10px] font-black text-gray-500 uppercase tracking-widest ml-1">Link de Destino</label>
                                    <input 
                                      type="text" 
-                                     value={course.preview_guarantee_label || ''}
-                                     onChange={e => setCourse({...course, preview_guarantee_label: e.target.value})}
-                                     className="bg-black/40 border border-white/10 rounded-xl px-4 py-3 text-xs text-white focus:border-amber-500 outline-none transition-all"
-                                     placeholder="Valor: 7 Dias"
-                                   />
-                                   <input 
-                                     type="text" 
-                                     value={course.preview_risk_zero_label || ''}
-                                     onChange={e => setCourse({...course, preview_risk_zero_label: e.target.value})}
-                                     className="bg-black/40 border border-white/10 rounded-xl px-4 py-3 text-xs text-white focus:border-amber-500 outline-none transition-all"
-                                     placeholder="Tag: Risque Zero"
-                                   />
-                                </div>
+                                     value={course.preview_link_url || ''}
+                                     onChange={e => setCourse({...course, preview_link_url: e.target.value})}
+                                     className="w-full bg-black/60 border border-white/10 rounded-xl px-4 py-3 text-xs text-white focus:border-primary outline-none transition-all font-mono"
+                                     placeholder="https://..."
+                                    />
+                                 </div>
+                               </div>
+                             )}
+                           </div>
+
+                           {/* 3. SEÇÃO DE MÓDULOS */}
+                           <div className="space-y-4 pt-4 border-t border-white/5">
+                             <div className="flex items-center gap-2 mb-2">
+                               <Layers size={14} className="text-primary" />
+                               <span className="text-[10px] font-black text-zinc-500 uppercase tracking-widest">3. Seção de Módulos (Conteúdo)</span>
                              </div>
-
-                             <div className="p-5 bg-white/5 rounded-3xl border border-white/5 space-y-3">
-                                <span className="text-[10px] font-black text-zinc-400 uppercase tracking-widest block mb-2">Bloco 3 (Configuração de Suporte)</span>
-                                <div className="grid grid-cols-2 gap-3">
-                                   <input 
-                                     type="text" 
-                                     value={course.preview_support_vip_label || ''}
-                                     onChange={e => setCourse({...course, preview_support_vip_label: e.target.value})}
-                                     className="bg-black/40 border border-white/10 rounded-xl px-4 py-3 text-xs text-white focus:border-amber-500 outline-none transition-all"
-                                     placeholder="Valor: 24/7"
-                                   />
-                                   <input 
-                                     type="text" 
-                                     value={course.preview_support_label || ''}
-                                     onChange={e => setCourse({...course, preview_support_label: e.target.value})}
-                                     className="bg-black/40 border border-white/10 rounded-xl px-4 py-3 text-xs text-white focus:border-amber-500 outline-none transition-all"
-                                     placeholder="Tag: Acompanhamento"
-                                   />
-                                </div>
+                             <div className="space-y-2">
+                                <label className="text-[10px] font-black text-gray-500 uppercase tracking-widest ml-1 italic">Título da Seção de Módulos</label>
+                                <input 
+                                  type="text" 
+                                  value={course.preview_modules_label || ''}
+                                  onChange={e => setCourse({...course, preview_modules_label: e.target.value})}
+                                  className="w-full bg-black/40 border border-white/10 rounded-2xl px-6 py-4 text-white focus:border-primary outline-none transition-all"
+                                  placeholder="O que te espera lá dentro"
+                                />
                              </div>
-                          </div>
-                       </div>
+                           </div>
+                        </div>
 
-                       {/* 5. SEÇÃO GARANTIA DETALHADA */}
-                       <div className="space-y-6 pt-4 border-t border-white/5">
-                          <div className="flex items-center gap-2 mb-2">
-                            <ShieldCheck size={14} className="text-emerald-500" />
-                            <span className="text-[10px] font-black text-zinc-500 uppercase tracking-widest">5. Garantia Incondicional</span>
-                          </div>
-                          <div className="space-y-3">
-                             <label className="text-[10px] font-black text-gray-500 uppercase tracking-widest ml-1">Título do Selo</label>
-                             <input 
-                               type="text" 
-                               value={course.preview_guarantee_title || ''}
-                               onChange={e => setCourse({...course, preview_guarantee_title: e.target.value})}
-                               className="w-full bg-black/40 border border-white/10 rounded-2xl px-6 py-4 text-white focus:border-primary outline-none transition-all"
-                               placeholder="Garantia Incondicional de 7 Dias"
-                             />
-                          </div>
-                          <div className="space-y-3">
-                             <label className="text-[10px] font-black text-gray-500 uppercase tracking-widest ml-1">Subtítulo de Satisfação</label>
-                             <input 
-                               type="text" 
-                               value={course.preview_guarantee_subtitle || ''}
-                               onChange={e => setCourse({...course, preview_guarantee_subtitle: e.target.value})}
-                               className="w-full bg-black/40 border border-white/10 rounded-2xl px-6 py-4 text-white focus:border-primary outline-none transition-all"
-                               placeholder="Sua satisfação ou seu dinheiro de volta"
-                             />
-                          </div>
-                          <div className="space-y-3">
-                             <label className="text-[10px] font-black text-gray-500 uppercase tracking-widest ml-1">Texto de Descrição da Garantia</label>
-                             <textarea 
-                               value={course.preview_guarantee_description || ''}
-                               onChange={e => setCourse({...course, preview_guarantee_description: e.target.value})}
-                               className="w-full bg-black/40 border border-white/10 rounded-2xl px-6 py-4 text-xs text-white focus:border-primary outline-none transition-all h-24 resize-none"
-                               placeholder="Eu tiro todo o risco das suas costas..."
-                             />
-                          </div>
-                       </div>
+                        <div className="space-y-8">
+                           {/* 4. SEÇÃO STATS / PROVA SOCIAL */}
+                           <div className="space-y-6">
+                              <div className="flex items-center gap-2 mb-2">
+                                <Users size={14} className="text-amber-500" />
+                                <span className="text-[10px] font-black text-zinc-500 uppercase tracking-widest">4. Marcadores e Prova Social</span>
+                              </div>
+                              
+                              <div className="grid grid-cols-1 gap-4">
+                                 <div className="p-5 bg-white/5 rounded-3xl border border-white/5 space-y-3">
+                                    <span className="text-[10px] font-black text-zinc-400 uppercase tracking-widest block mb-2">Bloco 1 (Total de Alunos)</span>
+                                    <div className="grid grid-cols-2 gap-3">
+                                       <input 
+                                         type="text" 
+                                         value={course.preview_students_label || ''}
+                                         onChange={e => setCourse({...course, preview_students_label: e.target.value})}
+                                         className="bg-black/40 border border-white/10 rounded-xl px-4 py-3 text-xs text-white focus:border-amber-500 outline-none transition-all"
+                                         placeholder="Valor: 1.2k+"
+                                       />
+                                       <input 
+                                         type="text" 
+                                         value={course.preview_students_tag || ''}
+                                         onChange={e => setCourse({...course, preview_students_tag: e.target.value})}
+                                         className="bg-black/40 border border-white/10 rounded-xl px-4 py-3 text-xs text-white focus:border-amber-500 outline-none transition-all"
+                                         placeholder="Tag: Alunos"
+                                       />
+                                    </div>
+                                 </div>
 
-                       {/* 6. SEÇÃO RODAPÉ / CTA FINAL */}
-                       <div className="space-y-6 pt-4 border-t border-white/5">
-                          <div className="flex items-center gap-2 mb-2">
-                             <Sparkles size={14} className="text-primary" />
-                             <span className="text-[10px] font-black text-zinc-500 uppercase tracking-widest">6. Rodapé e Oferta Final</span>
-                          </div>
-                          <div className="space-y-3">
-                             <label className="text-[10px] font-black text-gray-500 uppercase tracking-widest ml-1">Frase de Oferta Final (Acima do Botão)</label>
-                             <input 
-                               type="text" 
-                               value={course.preview_footer_cta || ''}
-                               onChange={e => setCourse({...course, preview_footer_cta: e.target.value})}
-                               className="w-full bg-black/40 border border-white/10 rounded-2xl px-6 py-4 text-white focus:border-primary outline-none transition-all italic font-bold"
-                               placeholder="Ex: Aproveite as condições especiais de lançamento"
-                             />
-                          </div>
+                                 <div className="p-5 bg-white/5 rounded-3xl border border-white/5 space-y-3">
+                                    <span className="text-[10px] font-black text-zinc-400 uppercase tracking-widest block mb-2">Bloco 2 (Configuração de Garantia)</span>
+                                    <div className="grid grid-cols-2 gap-3">
+                                       <input 
+                                         type="text" 
+                                         value={course.preview_guarantee_label || ''}
+                                         onChange={e => setCourse({...course, preview_guarantee_label: e.target.value})}
+                                         className="bg-black/40 border border-white/10 rounded-xl px-4 py-3 text-xs text-white focus:border-amber-500 outline-none transition-all"
+                                         placeholder="Valor: 7 Dias"
+                                       />
+                                       <input 
+                                         type="text" 
+                                         value={course.preview_risk_zero_label || ''}
+                                         onChange={e => setCourse({...course, preview_risk_zero_label: e.target.value})}
+                                         className="bg-black/40 border border-white/10 rounded-xl px-4 py-3 text-xs text-white focus:border-amber-500 outline-none transition-all"
+                                         placeholder="Tag: Risque Zero"
+                                       />
+                                    </div>
+                                 </div>
 
-                          <div className="grid grid-cols-2 gap-4 mt-6">
-                             <button
-                               onClick={() => setCourse({...course, preview_show_social_proof: course.preview_show_social_proof === false ? true : false})}
-                               className={`p-4 rounded-2xl border transition-all flex flex-col items-center gap-2 ${course.preview_show_social_proof !== false ? 'bg-amber-500/10 border-amber-500/30 text-amber-500' : 'bg-white/5 border-white/5 text-zinc-600'}`}
-                             >
-                               <Users size={16} />
-                               <span className="text-[8px] font-black uppercase tracking-widest">Prova Social</span>
-                             </button>
-                             <button
-                               onClick={() => setCourse({...course, preview_show_trust: !course.preview_show_trust})}
-                               className={`p-4 rounded-2xl border transition-all flex flex-col items-center gap-2 ${course.preview_show_trust !== false ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-500' : 'bg-white/5 border-white/5 text-zinc-600'}`}
-                             >
-                               <ShieldCheck size={16} />
-                               <span className="text-[8px] font-black uppercase tracking-widest">Selo Confiança</span>
-                             </button>
-                             <button
-                                onClick={() => setShowLivePreview(true)}
-                                className="p-4 rounded-2xl border border-white/10 bg-white/5 hover:bg-white/10 text-white transition-all flex flex-col items-center gap-2 group md:col-span-2"
-                              >
-                               <Monitor size={16} className="text-gray-400 group-hover:text-primary transition-colors" />
-                               <span className="text-[8px] font-black uppercase tracking-widest text-gray-500 group-hover:text-white">Abrir Visualizador de Preview</span>
-                             </button>
-                          </div>
-                       </div>
-                    </div>
+                                 <div className="p-5 bg-white/5 rounded-3xl border border-white/5 space-y-3">
+                                    <span className="text-[10px] font-black text-zinc-400 uppercase tracking-widest block mb-2">Bloco 3 (Configuração de Suporte)</span>
+                                    <div className="grid grid-cols-2 gap-3">
+                                       <input 
+                                         type="text" 
+                                         value={course.preview_support_vip_label || ''}
+                                         onChange={e => setCourse({...course, preview_support_vip_label: e.target.value})}
+                                         className="bg-black/40 border border-white/10 rounded-xl px-4 py-3 text-xs text-white focus:border-amber-500 outline-none transition-all"
+                                         placeholder="Valor: 24/7"
+                                       />
+                                       <input 
+                                         type="text" 
+                                         value={course.preview_support_label || ''}
+                                         onChange={e => setCourse({...course, preview_support_label: e.target.value})}
+                                         className="bg-black/40 border border-white/10 rounded-xl px-4 py-3 text-xs text-white focus:border-amber-500 outline-none transition-all"
+                                         placeholder="Tag: Acompanhamento"
+                                       />
+                                    </div>
+                                 </div>
+                              </div>
+                           </div>
+
+                           {/* 5. SEÇÃO GARANTIA DETALHADA */}
+                           <div className="space-y-6 pt-4 border-t border-white/5">
+                              <div className="flex items-center gap-2 mb-2">
+                                <ShieldCheck size={14} className="text-emerald-500" />
+                                <span className="text-[10px] font-black text-zinc-500 uppercase tracking-widest">5. Garantia Incondicional</span>
+                              </div>
+                              <div className="space-y-3">
+                                 <label className="text-[10px] font-black text-gray-500 uppercase tracking-widest ml-1">Título do Selo</label>
+                                 <input 
+                                   type="text" 
+                                   value={course.preview_guarantee_title || ''}
+                                   onChange={e => setCourse({...course, preview_guarantee_title: e.target.value})}
+                                   className="w-full bg-black/40 border border-white/10 rounded-2xl px-6 py-4 text-white focus:border-primary outline-none transition-all"
+                                   placeholder="Garantia Incondicional de 7 Dias"
+                                 />
+                              </div>
+                              <div className="space-y-3">
+                                 <label className="text-[10px] font-black text-gray-500 uppercase tracking-widest ml-1">Subtítulo de Satisfação</label>
+                                 <input 
+                                   type="text" 
+                                   value={course.preview_guarantee_subtitle || ''}
+                                   onChange={e => setCourse({...course, preview_guarantee_subtitle: e.target.value})}
+                                   className="w-full bg-black/40 border border-white/10 rounded-2xl px-6 py-4 text-white focus:border-primary outline-none transition-all"
+                                   placeholder="Sua satisfação ou seu dinheiro de volta"
+                                 />
+                              </div>
+                              <div className="space-y-3">
+                                 <label className="text-[10px] font-black text-gray-500 uppercase tracking-widest ml-1">Texto de Descrição da Garantia</label>
+                                 <textarea 
+                                   value={course.preview_guarantee_description || ''}
+                                   onChange={e => setCourse({...course, preview_guarantee_description: e.target.value})}
+                                   className="w-full bg-black/40 border border-white/10 rounded-2xl px-6 py-4 text-xs text-white focus:border-primary outline-none transition-all h-24 resize-none"
+                                   placeholder="Eu tiro todo o risco das suas costas..."
+                                 />
+                              </div>
+                           </div>
+
+                           {/* 6. SEÇÃO RODAPÉ / CTA FINAL */}
+                           <div className="space-y-6 pt-4 border-t border-white/5">
+                              <div className="flex items-center gap-2 mb-2">
+                                 <Sparkles size={14} className="text-primary" />
+                                 <span className="text-[10px] font-black text-zinc-500 uppercase tracking-widest">6. Rodapé e Oferta Final</span>
+                              </div>
+                              <div className="space-y-3">
+                                 <label className="text-[10px] font-black text-gray-500 uppercase tracking-widest ml-1">Frase de Oferta Final (Acima do Botão)</label>
+                                 <input 
+                                   type="text" 
+                                   value={course.preview_footer_cta || ''}
+                                   onChange={e => setCourse({...course, preview_footer_cta: e.target.value})}
+                                   className="w-full bg-black/40 border border-white/10 rounded-2xl px-6 py-4 text-white focus:border-primary outline-none transition-all italic font-bold"
+                                   placeholder="Ex: Aproveite as condições especiais de lançamento"
+                                 />
+                              </div>
+
+                              <div className="grid grid-cols-2 gap-4 mt-6">
+                                 <button
+                                   onClick={() => setCourse({...course, preview_show_social_proof: course.preview_show_social_proof === false ? true : false})}
+                                   className={`p-4 rounded-2xl border transition-all flex flex-col items-center gap-2 ${course.preview_show_social_proof !== false ? 'bg-amber-500/10 border-amber-500/30 text-amber-500' : 'bg-white/5 border-white/5 text-zinc-600'}`}
+                                 >
+                                   <Users size={16} />
+                                   <span className="text-[8px] font-black uppercase tracking-widest">Prova Social</span>
+                                 </button>
+                                 <button
+                                   onClick={() => setCourse({...course, preview_show_trust: !course.preview_show_trust})}
+                                   className={`p-4 rounded-2xl border transition-all flex flex-col items-center gap-2 ${course.preview_show_trust !== false ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-500' : 'bg-white/5 border-white/5 text-zinc-600'}`}
+                                 >
+                                   <ShieldCheck size={16} />
+                                   <span className="text-[8px] font-black uppercase tracking-widest">Selo Confiança</span>
+                                 </button>
+                                 <button
+                                    onClick={() => setShowLivePreview(true)}
+                                    className="p-4 rounded-2xl border border-white/10 bg-white/5 hover:bg-white/10 text-white transition-all flex flex-col items-center gap-2 group md:col-span-2"
+                                  >
+                                   <Monitor size={16} className="text-gray-400 group-hover:text-primary transition-colors" />
+                                   <span className="text-[8px] font-black uppercase tracking-widest text-gray-500 group-hover:text-white">Abrir Visualizador de Preview</span>
+                                 </button>
+                              </div>
+                           </div>
+                        </div>
+                      </div>
+                    )}
                   </div>
                 )}
               </div>
@@ -3659,6 +3688,19 @@ export default function CourseEditor({
         }}
       />
     )}
+
+    {/* Live Preview Viewer Modal in Admin */}
+    <AnimatePresence>
+      {showLivePreview && (
+        <CoursePreviewViewer
+          course={course as Course}
+          onClose={() => setShowLivePreview(false)}
+          onPurchase={() => {
+            toast.info('Simulação: Botão de compra clicado na pré-visualização.');
+          }}
+        />
+      )}
+    </AnimatePresence>
   </div>
 );
 }

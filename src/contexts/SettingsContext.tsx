@@ -52,10 +52,12 @@ export interface AppSettings {
   gtm_id?: string;
   main_course_hotmart_id?: string;
   show_course_titles_home?: boolean;
+  enable_testimonials?: boolean;
 }
 
 const defaultSettings: AppSettings = {
   show_course_titles_home: false,
+  enable_testimonials: true,
   main_course_hotmart_id: '',
   app_name: 'Missing Trigger',
   admin_email: 'atendimento@suporte.com',

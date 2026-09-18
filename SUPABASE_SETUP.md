@@ -431,8 +431,46 @@ ALTER TABLE public.app_settings ADD COLUMN IF NOT EXISTS banner_config JSONB DEF
 ALTER TABLE public.app_settings ADD COLUMN IF NOT EXISTS banner_images_mobile TEXT[] DEFAULT '{}'::text[];
 ALTER TABLE public.app_settings ADD COLUMN IF NOT EXISTS banner_config_mobile JSONB DEFAULT '[]'::jsonb;
 ALTER TABLE public.app_settings ADD COLUMN IF NOT EXISTS banner_sync BOOLEAN DEFAULT true;
+ALTER TABLE public.app_settings ADD COLUMN IF NOT EXISTS enable_testimonials BOOLEAN DEFAULT true;
 ALTER TABLE public.app_settings ALTER COLUMN login_install_button_pulsing TYPE TEXT USING (CASE WHEN login_install_button_pulsing = true THEN 'pulsing' ELSE 'static' END);
 ALTER TABLE public.app_settings ALTER COLUMN login_install_button_pulsing SET DEFAULT 'pulsing';
+
+-- TABELA DE DEPOIMENTOS E HISTÓRIAS DE SUCESSO
+CREATE TABLE IF NOT EXISTS public.testimonials (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id UUID REFERENCES public.profiles(id) ON DELETE CASCADE,
+  user_name TEXT,
+  user_email TEXT,
+  user_avatar TEXT,
+  course_title TEXT,
+  rating INTEGER DEFAULT 5,
+  headline TEXT,
+  content TEXT NOT NULL,
+  image_url TEXT,
+  status TEXT DEFAULT 'pending',
+  is_read BOOLEAN DEFAULT false,
+  consent BOOLEAN DEFAULT true,
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+  updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+ALTER TABLE public.testimonials ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS "Permitir inserção de depoimentos para autenticados" ON public.testimonials;
+CREATE POLICY "Permitir inserção de depoimentos para autenticados" ON public.testimonials FOR INSERT WITH CHECK (true);
+
+DROP POLICY IF EXISTS "Permitir leitura de depoimentos" ON public.testimonials;
+CREATE POLICY "Permitir leitura de depoimentos" ON public.testimonials FOR SELECT USING (true);
+
+DROP POLICY IF EXISTS "Permitir atualização de depoimentos" ON public.testimonials;
+CREATE POLICY "Permitir atualização de depoimentos" ON public.testimonials FOR UPDATE USING (true);
+
+DROP POLICY IF EXISTS "Permitir exclusão de depoimentos" ON public.testimonials;
+CREATE POLICY "Permitir exclusão de depoimentos" ON public.testimonials FOR DELETE USING (true);
+
+GRANT ALL ON public.testimonials TO authenticated;
+GRANT ALL ON public.testimonials TO anon;
+GRANT ALL ON public.testimonials TO service_role;
+
 
 -- ==========================================
 -- POLÍTICAS DE SEGURANÇA (RLS)

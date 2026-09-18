@@ -123,7 +123,7 @@ export default function ChapterQuestions({ chapterId, userId: initialUserId, use
         })
       }).catch(e => console.warn('[ChapterQuestions] Erro ao notificar admin:', e));
     } catch (e) {
-      console.error('Error notifying admin:', e);
+      console.warn('Notice notifying admin:', e);
     }
   };
 

@@ -44,7 +44,7 @@ export async function createNotification(userId: string, title: string, message:
     if (error) throw error;
     return true;
   } catch (error) {
-    console.error('Error creating notification:', error);
+    console.warn('Notice creating notification:', error);
     return false;
   }
 }
@@ -113,6 +113,63 @@ export async function sendBroadcastNotification(title: string, message: string) 
     return true;
   } catch (error) {
     console.error('Error sending broadcast:', error);
+    return false;
+  }
+}
+
+/**
+ * Notifies all administrators via Push Notification and Internal notification
+ */
+export async function notifyAdmin(title: string, message: string, data?: any) {
+  try {
+    const { data: { session } } = await supabase.auth.getSession();
+    
+    // 1. Try centralized backend notify-admin API (handles FCM, OneSignal, Web Push & notifications table)
+    try {
+      const response = await safeFetch('/api/v1/notify-admin', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(session?.access_token ? { 'Authorization': `Bearer ${session.access_token}` } : {})
+        },
+        body: JSON.stringify({
+          title,
+          body: message,
+          data
+        })
+      });
+
+      if (response && (response.success || response.notifiedAdmins)) {
+        return true;
+      }
+    } catch (apiErr) {
+      console.warn('[notifications.ts] Central notify-admin API fallback:', apiErr);
+    }
+
+    // 2. Direct database fallback: find admin profiles and insert notification
+    const { data: admins } = await supabase
+      .from('profiles')
+      .select('id')
+      .eq('is_admin', true);
+
+    if (admins && admins.length > 0) {
+      const adminNotifs = admins.map(a => ({
+        user_id: a.id,
+        title,
+        body: message,
+        message,
+        is_read: false,
+        read: false,
+        created_at: new Date().toISOString(),
+        data: data || null
+      }));
+
+      await supabase.from('notifications').insert(adminNotifs);
+    }
+
+    return true;
+  } catch (error) {
+    console.warn('Notice in notifyAdmin:', error);
     return false;
   }
 }
