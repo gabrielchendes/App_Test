@@ -56,7 +56,7 @@ CREATE TABLE IF NOT EXISTS public.app_settings (
     logo_height INTEGER DEFAULT 64,
     course_pdf_auto_complete_fullscreen BOOLEAN DEFAULT false,
     show_course_titles_home BOOLEAN DEFAULT false,
-    app_url TEXT DEFAULT 'https://app-maternidade2.vercel.app',
+    app_url TEXT DEFAULT 'https://missingtrigger.vercel.app',
     custom_texts JSONB DEFAULT '{
         "auth.welcome": "Welcome back!",
         "auth.subtitle": "Access your exclusive area",
@@ -781,7 +781,7 @@ ALTER TABLE public.app_settings ADD COLUMN IF NOT EXISTS login_install_button_pu
 ALTER TABLE public.app_settings ALTER COLUMN login_install_button_pulsing TYPE TEXT USING (CASE WHEN login_install_button_pulsing::text = 'true' THEN 'pulsing' WHEN login_install_button_pulsing::text = 'false' THEN 'static' ELSE login_install_button_pulsing::text END);
 ALTER TABLE public.app_settings ADD COLUMN IF NOT EXISTS logo_height INTEGER DEFAULT 64;
 ALTER TABLE public.app_settings ADD COLUMN IF NOT EXISTS course_pdf_auto_complete_fullscreen BOOLEAN DEFAULT false;
-ALTER TABLE public.app_settings ADD COLUMN IF NOT EXISTS app_url TEXT DEFAULT 'https://app-maternidade2.vercel.app';
+ALTER TABLE public.app_settings ADD COLUMN IF NOT EXISTS app_url TEXT DEFAULT 'https://missingtrigger.vercel.app';
 ALTER TABLE public.app_settings ADD COLUMN IF NOT EXISTS banner_config JSONB DEFAULT '[]'::jsonb;
 ALTER TABLE public.app_settings ADD COLUMN IF NOT EXISTS banner_images_mobile TEXT[] DEFAULT '{}'::text[];
 ALTER TABLE public.app_settings ADD COLUMN IF NOT EXISTS banner_config_mobile JSONB DEFAULT '[]'::jsonb;
@@ -854,7 +854,7 @@ ALTER TABLE public.chapters ADD COLUMN IF NOT EXISTS button_link_color TEXT DEFA
 
 ```
 
-**Nota Importante:** No painel do Admin, certifique-se de configurar a "URL do APP" com `https://app-maternidade2.vercel.app` para que os links redirecionem corretamente após o login.
+**Nota Importante:** No painel do Admin, certifique-se de configurar a "URL do APP" com `https://missingtrigger.vercel.app` para que os links redirecionem corretamente após o login.
 
 -- =========================================================================
 -- 15. INTEGRAÇÃO HOTMART AUTOMÁTICA (WEBHOOK + EDGE FUNCTION + TABELAS)

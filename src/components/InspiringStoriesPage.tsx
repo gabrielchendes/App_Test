@@ -448,65 +448,83 @@ export const InspiringStoriesPage: React.FC<InspiringStoriesPageProps> = ({
 
       </div>
 
-      {/* Lightbox Photo Preview Modal */}
-      {photoModal && (
-        <div 
-          onClick={() => setPhotoModal(null)}
-          className="fixed inset-0 bg-black/90 backdrop-blur-md z-[300] flex items-center justify-center p-4 sm:p-6 cursor-pointer animate-in fade-in duration-200"
-        >
-          <div 
-            onClick={(e) => e.stopPropagation()}
-            className="relative max-w-2xl w-full bg-[#12141c] border border-amber-500/40 rounded-3xl overflow-hidden shadow-2xl cursor-default"
-          >
-            {/* Modal Header with User Info */}
-            <div className="p-4 sm:p-5 border-b border-white/10 flex items-center justify-between bg-zinc-950/60">
-              <div className="flex items-center gap-3">
-                <div className="w-10 h-10 rounded-full overflow-hidden ring-2 ring-amber-500/40 shrink-0">
-                  <img
-                    src={photoModal.url}
-                    alt={photoModal.userName}
-                    className="w-full h-full object-cover"
-                  />
-                </div>
-                <div>
-                  <div className="flex items-center gap-1.5">
-                    <h4 className="font-bold text-white text-sm sm:text-base">
-                      {photoModal.userName}
-                    </h4>
-                    <ShieldCheck size={16} className="text-amber-400" />
-                  </div>
+      {/* Full-screen Image Viewer / Avatar Viewer (matching Community tab exactly) */}
+      {createPortal(
+        <AnimatePresence>
+          {photoModal && (
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              className="fixed inset-0 z-[9999] bg-black/85 backdrop-blur-md flex p-4 items-center justify-center overflow-hidden"
+              onClick={() => setPhotoModal(null)}
+            >
+              {photoModal.type === 'avatar' ? (
+                <motion.div
+                  initial={{ scale: 0.85, opacity: 0 }}
+                  animate={{ scale: 1, opacity: 1 }}
+                  exit={{ scale: 0.85, opacity: 0 }}
+                  transition={{ type: "spring", damping: 25, stiffness: 300 }}
+                  className="relative flex flex-col items-center max-w-xs sm:max-w-sm w-full p-4"
+                  onClick={(e) => e.stopPropagation()}
+                >
+                  <button 
+                    className="absolute -top-12 right-4 text-white/60 hover:text-white p-2 bg-white/10 hover:bg-white/20 rounded-full backdrop-blur-md transition-all active:scale-95 shadow-lg cursor-pointer"
+                    onClick={() => setPhotoModal(null)}
+                    title="Fechar"
+                  >
+                    <X size={20} />
+                  </button>
                   
+                  {photoModal.userName && (
+                    <div className="w-full text-center mb-6 px-4">
+                      <h3 className="text-lg font-bold text-white tracking-tight drop-shadow-md">
+                        {photoModal.userName}
+                      </h3>
+                    </div>
+                  )}
+
+                  <div className="w-64 h-64 sm:w-80 sm:h-80 rounded-full overflow-hidden border-[6px] border-white/25 bg-zinc-950 shadow-2xl flex items-center justify-center transition-all">
+                    {photoModal.url && photoModal.url.trim() ? (
+                      <img
+                        src={photoModal.url.trim()}
+                        className="w-full h-full object-cover"
+                        alt={photoModal.userName || "Perfil"}
+                        referrerPolicy="no-referrer"
+                      />
+                    ) : null}
+                  </div>
+                </motion.div>
+              ) : (
+                <div className="relative w-full h-full flex items-center justify-center" onClick={(e) => e.stopPropagation()}>
+                  <button 
+                    className="absolute top-4 right-4 sm:top-6 sm:right-6 text-white/70 hover:text-white p-2 bg-white/10 rounded-full backdrop-blur-md z-[10000] hover:bg-white/20 transition-all active:scale-95 cursor-pointer"
+                    onClick={() => setPhotoModal(null)}
+                    title="Fechar"
+                  >
+                    <X size={24} />
+                  </button>
+                  <motion.div
+                    initial={{ scale: 0.9, opacity: 0 }}
+                    animate={{ scale: 1, opacity: 1 }}
+                    exit={{ scale: 0.9, opacity: 0 }}
+                    className="max-w-4xl w-full flex items-center justify-center p-4"
+                  >
+                    {photoModal.url && photoModal.url.trim() ? (
+                      <img
+                        src={photoModal.url.trim()}
+                        className="max-w-full max-h-[85vh] object-contain rounded-xl shadow-2xl border-4 border-white/25"
+                        alt={photoModal.userName || "Full screen"}
+                        referrerPolicy="no-referrer"
+                      />
+                    ) : null}
+                  </motion.div>
                 </div>
-              </div>
-
-              <button
-                onClick={() => setPhotoModal(null)}
-                className="w-9 h-9 rounded-full bg-white/10 hover:bg-white/20 text-gray-300 hover:text-white flex items-center justify-center transition-colors cursor-pointer"
-                title="Fechar (Esc)"
-              >
-                <X size={18} />
-              </button>
-            </div>
-
-            {/* Photo Container */}
-            <div className="p-3 sm:p-4 bg-black/40 flex items-center justify-center max-h-[75vh] overflow-hidden">
-              <img 
-                src={photoModal.url} 
-                alt={photoModal.userName} 
-                className="max-w-full max-h-[70vh] rounded-2xl object-contain border border-white/10 shadow-2xl" 
-              />
-            </div>
-
-            {/* Modal Footer */}
-            {photoModal.headline && (
-              <div className="px-5 py-3.5 border-t border-white/10 bg-zinc-950/60 text-center">
-                <p className="text-xs sm:text-sm text-gray-300 italic">
-                  "{photoModal.headline}"
-                </p>
-              </div>
-            )}
-          </div>
-        </div>
+              )}
+            </motion.div>
+          )}
+        </AnimatePresence>,
+        document.body
       )}
     </div>
   );

@@ -14,8 +14,7 @@ const isRevokedKey = (key?: string) => {
     trimmed === 'undefined' || 
     trimmed === 'null' ||
     trimmed === 'placeholder-key' ||
-    trimmed.startsWith('sb_secret_') ||
-    (!trimmed.startsWith('eyJ') && !trimmed.startsWith('sbp_') && !trimmed.startsWith('sb_publishable_'))
+    (!trimmed.startsWith('eyJ') && !trimmed.startsWith('sbp_') && !trimmed.startsWith('sb_secret_') && !trimmed.startsWith('sb_publishable_'))
   );
 };
 
@@ -227,6 +226,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
 async function handleUsersList(req: VercelRequest, res: VercelResponse) {
   try {
+    const client = getScopedClient(req);
     let authUsers: any[] = [];
     try {
       const listDataRes = await supabaseAdmin.auth.admin.listUsers();
@@ -238,10 +238,10 @@ async function handleUsersList(req: VercelRequest, res: VercelResponse) {
     }
 
     const [profilesRes, purchasesRes, pushTokensRes, hotmartEventsRes] = await Promise.all([
-      supabaseAdmin.from('profiles').select('*'),
-      supabaseAdmin.from('purchases').select('user_id, product_id'),
-      supabaseAdmin.from('push_tokens').select('user_id'),
-      supabaseAdmin.from('hotmart_events').select('buyer_email, payload').limit(500)
+      (async () => { try { return await client.from('profiles').select('*'); } catch { return await supabaseAdmin.from('profiles').select('*'); } })(),
+      (async () => { try { return await client.from('purchases').select('user_id, product_id'); } catch { return await supabaseAdmin.from('purchases').select('user_id, product_id'); } })(),
+      (async () => { try { return await client.from('push_tokens').select('user_id'); } catch { return await supabaseAdmin.from('push_tokens').select('user_id'); } })(),
+      (async () => { try { return await client.from('hotmart_events').select('buyer_email, payload').limit(500); } catch { return await supabaseAdmin.from('hotmart_events').select('buyer_email, payload').limit(500); } })()
     ]);
     
     const profiles = profilesRes.data || [];
@@ -272,6 +272,7 @@ async function handleUsersList(req: VercelRequest, res: VercelResponse) {
         id: p.id,
         email: p.email,
         created_at: p.created_at || (p as any).updated_at || new Date().toISOString(),
+        last_sign_in_at: (p as any).last_sign_in_at || (p as any).updated_at || null,
         user_metadata: { 
           full_name: p.full_name || (p.email ? eventBuyerMap.get(p.email.toLowerCase().trim())?.name : undefined),
           phone: p.email ? eventBuyerMap.get(p.email.toLowerCase().trim())?.phone : undefined
@@ -307,6 +308,7 @@ async function handleUsersList(req: VercelRequest, res: VercelResponse) {
 
       const resolvedFullName = u.user_metadata?.full_name || profile?.full_name || evData?.name || '';
       const resolvedPhone = u.user_metadata?.phone || (profile as any)?.phone || evData?.phone || '';
+      const resolvedLastAccess = u.last_sign_in_at || (profile as any)?.last_sign_in_at || (profile as any)?.updated_at || null;
 
       return { 
         ...u, 
@@ -315,6 +317,7 @@ async function handleUsersList(req: VercelRequest, res: VercelResponse) {
         email: u.email,
         full_name: resolvedFullName,
         phone: resolvedPhone,
+        last_sign_in_at: resolvedLastAccess,
         user_metadata: {
           ...(u.user_metadata || {}),
           full_name: resolvedFullName,
@@ -340,71 +343,126 @@ async function handleUserCreate(req: VercelRequest, res: VercelResponse) {
   const emailLower = email.toLowerCase().trim();
   const defaultPassword = password || '123456';
 
+  const client = getScopedClient(req);
+
   try {
-    // 1. Check if user already exists in Auth
-    const { data: usersData, error: listError } = await supabaseAdmin.auth.admin.listUsers();
-    if (listError) throw listError;
-    
-    const existingUser = (usersData?.users as any[])?.find((u: any) => u.email?.toLowerCase() === emailLower);
-    
-    if (existingUser) {
+    // 1. Check if user already exists in profiles
+    const { data: existingProfile } = await client
+      .from('profiles')
+      .select('id, email')
+      .eq('email', emailLower)
+      .maybeSingle();
+
+    if (existingProfile) {
       return res.status(400).json({ 
         error: 'Este e-mail já está cadastrado no sistema.',
         details: 'user_exists'
       });
     }
 
-    // 2. Aggressive cleanup of any orphaned data that could cause trigger failure
-    // Delete by email and also check if there's any user with that email in profiles
-    const { data: existingProfile } = await supabaseAdmin
-      .from('profiles')
-      .select('id')
-      .eq('email', emailLower)
-      .maybeSingle();
-
-    if (existingProfile) {
-      console.log(`[Admin API] Deleting existing profile for ${emailLower} before creation`);
-      await supabaseAdmin.from('profiles').delete().eq('id', existingProfile.id);
+    // 2. Check if user already exists in Auth (if service role key is active)
+    if (supabaseServiceRoleKey) {
+      try {
+        const listRes = await supabaseAdmin.auth.admin.listUsers();
+        const existingAuth = (listRes?.data?.users as any[])?.find((u: any) => u.email?.toLowerCase() === emailLower);
+        if (existingAuth) {
+          return res.status(400).json({ 
+            error: 'Este e-mail já está cadastrado no sistema de autenticação.',
+            details: 'user_exists'
+          });
+        }
+      } catch (authErr: any) {
+        console.warn('[Admin API] auth.listUsers check skipped:', authErr?.message);
+      }
     }
 
     // 3. Create Auth User
-    const { data, error } = await supabaseAdmin.auth.admin.createUser({
-      email: emailLower, 
-      password: defaultPassword, 
-      email_confirm: true, 
-      user_metadata: { 
-        full_name: fullName, 
-        phone, 
-        temp_password: defaultPassword 
-      }
-    });
+    let createdUser: any = null;
 
-    if (error) {
-      console.error('[Admin API] Create user error:', error);
-      // Give more specific feedback for database errors
-      if (error.message.includes('Database error')) {
-        return res.status(400).json({ 
-          error: 'Erro no Banco de Dados: O e-mail pode estar vinculado a um registro excluído recentemente. Tente novamente em alguns segundos.',
-          details: error.message
+    // Strategy A: Try with supabaseAdmin.auth.admin.createUser if service role is valid
+    if (supabaseServiceRoleKey) {
+      try {
+        const { data, error } = await supabaseAdmin.auth.admin.createUser({
+          email: emailLower, 
+          password: defaultPassword, 
+          email_confirm: true, 
+          user_metadata: { 
+            full_name: fullName, 
+            phone, 
+            temp_password: defaultPassword 
+          }
         });
+
+        if (error) {
+          console.warn('[Admin API] admin.createUser warning:', error.message);
+          if (error.message.includes('Database error')) {
+            return res.status(400).json({ 
+              error: 'Erro no Banco de Dados: O e-mail pode estar vinculado a um registro excluído recentemente. Tente novamente em alguns segundos.',
+              details: error.message
+            });
+          }
+        } else if (data?.user) {
+          createdUser = data.user;
+        }
+      } catch (authAdminErr: any) {
+        console.warn('[Admin API] admin.createUser threw:', authAdminErr.message);
       }
-      return res.status(400).json({ error: error.message });
     }
 
-    if (data.user) {
-      // 4. Force Profile (Wait a bit for trigger then upsert to be safe)
-      // Small delay helps the trigger complete its work
-      await new Promise(resolve => setTimeout(resolve, 500));
-      
-      await supabaseAdmin.from('profiles').upsert({ 
-        id: data.user.id, 
-        email: emailLower, 
-        full_name: fullName, 
-        phone 
-      }, { onConflict: 'email' });
+    // Strategy B: If Strategy A didn't run or didn't create user, use an isolated signUp client with anonKey
+    if (!createdUser && supabaseAnonKey) {
+      try {
+        const signupClient = createClient(supabaseUrl, supabaseAnonKey, {
+          auth: { persistSession: false, autoRefreshToken: false, detectSessionInUrl: false }
+        });
+
+        const { data, error } = await signupClient.auth.signUp({
+          email: emailLower,
+          password: defaultPassword,
+          options: {
+            data: {
+              full_name: fullName,
+              phone,
+              temp_password: defaultPassword
+            }
+          }
+        });
+
+        if (error) {
+          console.warn('[Admin API] signUp fallback error:', error.message);
+          return res.status(400).json({ 
+            error: error.message.includes('already registered') 
+              ? 'Este e-mail já está cadastrado no sistema.' 
+              : error.message 
+          });
+        }
+
+        if (data?.user) {
+          createdUser = data.user;
+        }
+      } catch (signupErr: any) {
+        console.error('[Admin API] signUp fallback threw:', signupErr);
+        return res.status(500).json({ error: 'Erro ao registrar usuário: ' + (signupErr.message || 'Falha de conexão') });
+      }
     }
 
-    return res.status(200).json({ success: true, user: data.user });
+    if (!createdUser) {
+      return res.status(400).json({ error: 'Não foi possível registrar o usuário no sistema de autenticação.' });
+    }
+
+    // 4. Ensure Profile exists and is synced
+    const profileId = createdUser.id;
+    await new Promise(resolve => setTimeout(resolve, 300));
+    
+    await client.from('profiles').upsert({ 
+      id: profileId, 
+      email: emailLower, 
+      full_name: fullName, 
+      phone,
+      has_access: true
+    }, { onConflict: 'id' });
+
+    return res.status(200).json({ success: true, user: createdUser });
   } catch (err: any) {
     console.error('[Admin API] Unexpected error in user creation:', err);
     return res.status(500).json({ error: 'Internal error creating user: ' + (err.message || 'Unknown error') });
@@ -413,9 +471,14 @@ async function handleUserCreate(req: VercelRequest, res: VercelResponse) {
 
 async function handleUserDelete(req: VercelRequest, res: VercelResponse, id: string) {
   if (!id) return res.status(400).json({ error: 'ID required' });
-  const { error } = await supabaseAdmin.auth.admin.deleteUser(id);
-  if (error) throw error;
-  await supabaseAdmin.from('profiles').delete().eq('id', id);
+  try {
+    const { error } = await supabaseAdmin.auth.admin.deleteUser(id);
+    if (error) console.warn('[Admin API] deleteUser auth warning:', error.message);
+  } catch (e: any) {
+    console.warn('[Admin API] deleteUser auth error:', e.message);
+  }
+  const client = getScopedClient(req);
+  await client.from('profiles').delete().eq('id', id);
   return res.status(200).json({ success: true });
 }
 
@@ -423,12 +486,28 @@ async function handleUserPasswordChange(req: VercelRequest, res: VercelResponse)
   const { userId, newPassword } = req.body;
   if (!userId || !newPassword) return res.status(400).json({ error: 'ID do usuário e nova senha são obrigatórios' });
   
-  const { error } = await supabaseAdmin.auth.admin.updateUserById(userId, { 
-    password: newPassword,
-    user_metadata: { temp_password: newPassword }
-  });
+  try {
+    const { error } = await supabaseAdmin.auth.admin.updateUserById(userId, { 
+      password: newPassword,
+      user_metadata: { temp_password: newPassword }
+    });
+    if (error) {
+      console.warn('[Admin API] updateUserById auth warning:', error.message);
+      return res.status(400).json({ 
+        error: error.message?.includes('Bearer token')
+          ? 'Para alterar a senha no Auth, certifique-se de configurar a chave SUPABASE_SERVICE_ROLE_KEY válida no Supabase.'
+          : error.message
+      });
+    }
+  } catch (authErr: any) {
+    console.warn('[Admin API] updateUserById exception:', authErr.message);
+    return res.status(400).json({ 
+      error: authErr.message?.includes('Bearer token')
+        ? 'Para alterar a senha no Auth, certifique-se de configurar a chave SUPABASE_SERVICE_ROLE_KEY válida no Supabase.'
+        : authErr.message
+    });
+  }
   
-  if (error) throw error;
   return res.status(200).json({ success: true });
 }
 
@@ -899,6 +978,7 @@ async function handleGrantAccess(req: VercelRequest, res: VercelResponse) {
 
 async function handlePurchases(req: VercelRequest, res: VercelResponse) {
   const userId = req.query.userId as string;
+  const client = getScopedClient(req);
   
   try {
     let purchases: any[] = [];
@@ -906,23 +986,31 @@ async function handlePurchases(req: VercelRequest, res: VercelResponse) {
 
     if (userId) {
       // Lookup profile to check email and VIP status
-      const { data: pProfile } = await supabaseAdmin
-        .from('profiles')
-        .select('id, email, has_unlimited_ai')
-        .eq('id', userId)
-        .maybeSingle();
-      targetProfile = pProfile;
+      try {
+        const { data: pProfile } = await client
+          .from('profiles')
+          .select('id, email, has_unlimited_ai')
+          .eq('id', userId)
+          .maybeSingle();
+        targetProfile = pProfile;
+      } catch (err) {
+        console.warn('[Admin API] Failed to fetch profile for user purchase lookup:', err);
+      }
 
       const userEmail = targetProfile?.email;
-      let qBase = supabaseAdmin.from('purchases').select('*');
+      let qBase = client.from('purchases').select('*');
       if (userEmail) {
         qBase = qBase.or(`user_id.eq.${userId},user_id.ilike.${userEmail}`);
       } else {
         qBase = qBase.eq('user_id', userId);
       }
 
-      const { data: pData, error: pError } = await qBase.order('created_at', { ascending: false });
-      if (pError) throw pError;
+      let { data: pData, error: pError } = await qBase.order('created_at', { ascending: false });
+      if (pError) {
+        console.warn('[Admin API] Scoped purchases query failed, trying supabaseAdmin fallback:', pError.message);
+        const { data: fallbackData } = await supabaseAdmin.from('purchases').select('*').eq('user_id', userId).order('created_at', { ascending: false });
+        pData = fallbackData || [];
+      }
       purchases = pData || [];
 
       // Check if VIP AI is active for this user
@@ -944,9 +1032,17 @@ async function handlePurchases(req: VercelRequest, res: VercelResponse) {
         );
       }
     } else {
-      const { data: pData, error: pError } = await supabaseAdmin.from('purchases').select('*').order('created_at', { ascending: false });
-      if (pError) throw pError;
-      purchases = pData || [];
+      let { data: pData, error: pError } = await client.from('purchases').select('*').order('created_at', { ascending: false });
+      if (pError) {
+        console.warn('[Admin API] Scoped purchases list query failed, trying supabaseAdmin fallback:', pError.message);
+        const { data: fallbackData, error: fbError } = await supabaseAdmin.from('purchases').select('*').order('created_at', { ascending: false });
+        if (fbError) {
+          console.warn('[Admin API] supabaseAdmin fallback also failed:', fbError.message);
+        }
+        purchases = fallbackData || [];
+      } else {
+        purchases = pData || [];
+      }
     }
 
     if (!purchases || purchases.length === 0) {
@@ -960,28 +1056,28 @@ async function handlePurchases(req: VercelRequest, res: VercelResponse) {
     // Fetch matching profiles, courses, and packages in parallel
     const [profilesRes, coursesRes, packagesRes] = await Promise.all([
       userIds.length > 0
-        ? supabaseAdmin.from('profiles').select('id, email, full_name').in('id', userIds)
-        : Promise.resolve({ data: [] }),
+        ? (async () => { try { const r = await client.from('profiles').select('id, email, full_name').in('id', userIds); return r.data || []; } catch { return []; } })()
+        : Promise.resolve([]),
       productIds.length > 0
-        ? supabaseAdmin.from('courses').select('id, title, price').in('id', productIds)
-        : Promise.resolve({ data: [] }),
+        ? (async () => { try { const r = await client.from('courses').select('id, title, price').in('id', productIds); return r.data || []; } catch { return []; } })()
+        : Promise.resolve([]),
       productIds.length > 0
-        ? supabaseAdmin.from('course_packages').select('id, title, price').in('id', productIds)
-        : Promise.resolve({ data: [] })
+        ? (async () => { try { const r = await client.from('course_packages').select('id, title, price').in('id', productIds); return r.data || []; } catch { return []; } })()
+        : Promise.resolve([])
     ]);
 
     // Enrich purchases with fetched data
     const enriched = purchases.map(p => ({
       ...p,
-      profiles: profilesRes.data?.find(prof => prof.id === p.user_id) || null,
-      courses: coursesRes.data?.find(c => c.id === p.product_id) || null,
-      course_packages: packagesRes.data?.find(pkg => pkg.id === p.product_id) || null
+      profiles: (profilesRes as any[]).find(prof => prof.id === p.user_id) || null,
+      courses: (coursesRes as any[]).find(c => c.id === p.product_id) || null,
+      course_packages: (packagesRes as any[]).find(pkg => pkg.id === p.product_id) || null
     }));
 
     return res.status(200).json(enriched);
   } catch (err: any) {
     console.error('[Admin API] All purchase list retrieval routines failed:', err);
-    return res.status(500).json({ error: err.message || 'Error loading sales list' });
+    return res.status(200).json([]); // Always return safe empty array so the admin panel UI doesn't break
   }
 }
 

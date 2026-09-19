@@ -2397,7 +2397,7 @@ export default function AdminPanel({ user }: AdminPanelProps) {
                                     )}
                                   </td>
                                   <td className="px-6 py-4 text-xs text-gray-500 font-medium">
-                                    {u.last_sign_in_at ? new Date(u.last_sign_in_at).toLocaleString('pt-BR') : 'Nunca'}
+                                    {(u.last_sign_in_at || u.updated_at) ? new Date(u.last_sign_in_at || u.updated_at).toLocaleString('pt-BR') : 'Nunca'}
                                   </td>
                                   <td className="px-6 py-4 text-right pr-8">
                                     <div className="flex justify-end gap-2 text-right">
@@ -2475,7 +2475,7 @@ export default function AdminPanel({ user }: AdminPanelProps) {
                               </div>
                               <div className="flex items-center gap-4 mt-3">
                                 <div className="flex items-center gap-2 text-[10px] font-black text-gray-600 uppercase tracking-widest bg-white/5 px-2 py-1 rounded-lg">
-                                  <Clock size={12} /> Último Acesso: {selectedUserForCourses?.last_sign_in_at ? new Date(selectedUserForCourses.last_sign_in_at).toLocaleString('pt-BR') : 'Nunca'}
+                                  <Clock size={12} /> Último Acesso: {(selectedUserForCourses?.last_sign_in_at || selectedUserForCourses?.updated_at) ? new Date(selectedUserForCourses.last_sign_in_at || selectedUserForCourses.updated_at).toLocaleString('pt-BR') : 'Nunca'}
                                 </div>
                                 <div className="flex items-center gap-2 text-[10px] font-black text-gray-600 uppercase tracking-widest bg-white/5 px-2 py-1 rounded-lg">
                                   <BookOpen size={12} /> {userPurchases.length} Cursos Liberados
@@ -4617,7 +4617,7 @@ export default function AdminPanel({ user }: AdminPanelProps) {
                                 value={localSettings?.app_url || ''}
                                 onChange={(e) => setLocalSettings({ ...localSettings, app_url: e.target.value })}
                                 className="w-full bg-black border border-white/10 rounded-xl px-4 py-3 text-sm text-white focus:border-blue-500 outline-none pr-10"
-                                placeholder="https://app-maternidade2.vercel.app"
+                                placeholder="https://missingtrigger.vercel.app"
                               />
                               <div className="absolute right-4 top-1/2 -translate-y-1/2 text-gray-500">
                                 <Globe size={14} />

@@ -349,7 +349,7 @@ async function handleMagicLink(req: VercelRequest, res: VercelResponse) {
   if ((!baseUrl || baseUrl.includes('localhost') || baseUrl.includes('127.0.0.1')) && host) {
     baseUrl = `https://${host}`;
   } else if (!baseUrl) {
-    baseUrl = host ? `https://${host}` : 'https://app-maternidade2.vercel.app';
+    baseUrl = host ? `https://${host}` : 'https://missingtrigger.vercel.app';
   }
 
   const cleanBaseUrl = baseUrl.replace(/\/$/, '');

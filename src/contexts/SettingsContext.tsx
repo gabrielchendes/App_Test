@@ -97,7 +97,7 @@ const defaultSettings: AppSettings = {
   login_display_type: 'title',
   login_install_button_pulsing: 'pulsing',
   logo_height: 64,
-  app_url: 'https://app-maternidade2.vercel.app',
+  app_url: 'https://missingtrigger.vercel.app',
   gtm_id: '',
   custom_texts: {
     'auth.welcome': 'Welcome back!',

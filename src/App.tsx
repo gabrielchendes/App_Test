@@ -223,6 +223,10 @@ export default function App() {
         setUser(prev => (prev?.id === session.user.id && prev?.email === session.user.email ? prev : session.user));
         setAuthLoading(false);
         clearTimeout(forceStopLoading);
+        // Record presence / last activity timestamp safely in background
+        if (event === 'SIGNED_IN' || event === 'INITIAL_SESSION') {
+          supabase.from('profiles').update({ updated_at: new Date().toISOString() }).eq('id', session.user.id).then();
+        }
       } else if (event === 'SIGNED_OUT' || (event as any) === 'USER_DELETED') {
         setUser(null);
         setAuthLoading(false);
