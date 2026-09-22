@@ -3,7 +3,6 @@
 // Esta função recebe e processa eventos de Webhook da Hotmart (Vendas, Reembolsos, Cancelamentos) 
 // de forma 100% segura, idempotente e automatizada.
 
-import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.38.4";
 
 const corsHeaders = {
@@ -12,7 +11,7 @@ const corsHeaders = {
   "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
 };
 
-serve(async (req) => {
+const handleRequest = async (req: Request): Promise<Response> => {
   // Preflight CORS
   if (req.method === "OPTIONS") {
     return new Response("ok", { headers: corsHeaders });
@@ -98,6 +97,10 @@ serve(async (req) => {
       payload.is_simulation === true ||
       cleanReceived === "SIMULATION_TOKEN";
 
+    if (isSimulation) {
+      payload.is_simulation = true;
+    }
+
     const authHeader = req.headers.get("Authorization") || "";
     const isServiceRoleAuth = authHeader.includes(Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") || "SERVICE_ROLE");
 
@@ -155,7 +158,7 @@ serve(async (req) => {
 
     console.log(`[Hotmart Edge Function] Processing event "${event}" for ${email}, Product ID: ${hotmartProductId || 'N/A (Default Principal)'}, Ucode: ${ucodeProductId || 'N/A'}, Transaction: ${transactionId}`);
 
-    // 3. IDEMPOTÊNCIA: Verificar se transação/evento já foi processado
+    // 3. IDEMPOTÊNCIA INTELIGENTE: Verificar se transação/evento já foi processado E se o usuário ainda existe
     if (transactionId && event) {
       try {
         const { data: existingEvent } = await supabaseAdmin
@@ -166,16 +169,56 @@ serve(async (req) => {
           .maybeSingle();
 
         if (existingEvent && existingEvent.status === "processed") {
-          console.log(`[Hotmart Edge Function] Transaction ${transactionId} with event ${event} already processed. Skipping idempotently.`);
-          return new Response(
-            JSON.stringify({
-              success: true,
-              message: "Evento já processado anteriormente (Idempotência garantida).",
-              transaction_id: transactionId,
-              event: event
-            }),
-            { headers: { ...corsHeaders, "Content-Type": "application/json" }, status: 200 }
-          );
+          // 1. Antes de retornar "Evento já processado", verificar se o usuário correspondente ao e-mail ainda existe no Supabase Auth e/ou na tabela profiles
+          let userStillExists = false;
+
+          try {
+            const { data: prof } = await supabaseAdmin
+              .from("profiles")
+              .select("id, email")
+              .ilike("email", email)
+              .maybeSingle();
+
+            if (prof?.id) {
+              try {
+                const { data: authUser, error: authErr } = await supabaseAdmin.auth.admin.getUserById(prof.id);
+                if (!authErr && authUser?.user) {
+                  userStillExists = true;
+                }
+              } catch (_) {
+                userStillExists = true;
+              }
+            }
+
+            if (!userStillExists) {
+              try {
+                const { data: authList } = await supabaseAdmin.auth.admin.listUsers({ page: 1, perPage: 1000 });
+                const foundInAuth = authList?.users?.find(u => u.email?.toLowerCase().trim() === email);
+                if (foundInAuth) {
+                  userStillExists = true;
+                }
+              } catch (_) {}
+            }
+          } catch (chkErr) {
+            console.warn("[Hotmart Edge Function] Erro ao checar usuário na verificação de idempotência:", chkErr);
+          }
+
+          // 2. Se o usuário já existir, mantém o comportamento de idempotência e não cria outro usuário
+          if (userStillExists) {
+            console.log(`[Hotmart Edge Function] Transação ${transactionId} evento ${event} já processado anteriormente e usuário ${email} já existe. Idempotência mantida.`);
+            return new Response(
+              JSON.stringify({
+                success: true,
+                message: "Evento já processado anteriormente (Idempotência garantida).",
+                transaction_id: transactionId,
+                event: event
+              }),
+              { headers: { ...corsHeaders, "Content-Type": "application/json" }, status: 200 }
+            );
+          }
+
+          // 3. Se o evento constava como processed mas o usuário foi excluído, NÃO considerar o evento como concluído. Continue o processamento e recrie o usuário.
+          console.log(`[Hotmart Edge Function] Transação ${transactionId} evento ${event} constava como processado, mas o usuário ${email} não existe mais no Supabase. Continuando processamento para recriação...`);
         }
       } catch (e) {
         // Tabela hotmart_events opcional se ainda não migrada
@@ -318,16 +361,43 @@ serve(async (req) => {
       event.includes("REEMBOLS") ||
       event.includes("INACTIVE");
 
-    // 6. BUSCAR OU CRIAR USUÁRIO NO SUPABASE
-    const { data: existingProfile } = await supabaseAdmin
-      .from("profiles")
-      .select("id, email, has_access, has_unlimited_ai")
-      .ilike("email", email)
-      .maybeSingle();
+    // 6. BUSCAR OU CRIAR/RECRIAR USUÁRIO NO SUPABASE
+    let targetUserId: string | null = null;
+    let existingProfile: any = null;
 
-    let targetUserId = existingProfile?.id;
+    try {
+      const { data: prof } = await supabaseAdmin
+        .from("profiles")
+        .select("id, email, has_access, has_unlimited_ai")
+        .ilike("email", email)
+        .maybeSingle();
 
-    if (!existingProfile && isApprovalEvent) {
+      if (prof?.id) {
+        existingProfile = prof;
+        try {
+          const { data: authUser, error: authErr } = await supabaseAdmin.auth.admin.getUserById(prof.id);
+          if (!authErr && authUser?.user) {
+            targetUserId = prof.id;
+          }
+        } catch (_) {
+          targetUserId = prof.id;
+        }
+      }
+
+      if (!targetUserId) {
+        try {
+          const { data: authList } = await supabaseAdmin.auth.admin.listUsers({ page: 1, perPage: 1000 });
+          const matched = authList?.users?.find(u => u.email?.toLowerCase().trim() === email);
+          if (matched) {
+            targetUserId = matched.id;
+          }
+        } catch (_) {}
+      }
+    } catch (findErr) {
+      console.warn("[Hotmart Edge Function] Erro ao localizar usuário existente:", findErr);
+    }
+
+    if (!targetUserId && isApprovalEvent) {
       console.log(`[Hotmart Edge Function] Creating new Auth user for ${email}...`);
       const tempPassword = "123456";
       const { data: newUser, error: createError } = await supabaseAdmin.auth.admin.createUser({
@@ -339,16 +409,71 @@ serve(async (req) => {
 
       if (newUser?.user) {
         targetUserId = newUser.user.id;
-        await supabaseAdmin.from("profiles").upsert({
-          id: newUser.user.id,
+      } else {
+        console.error("[Hotmart Edge Function] Error creating auth user:", createError);
+        const errMsg = (createError?.message || "").toLowerCase();
+        if (errMsg.includes("already registered") || errMsg.includes("already exists") || errMsg.includes("unique")) {
+          try {
+            const { data: authList } = await supabaseAdmin.auth.admin.listUsers({ page: 1, perPage: 1000 });
+            const matched = authList?.users?.find(u => u.email?.toLowerCase().trim() === email);
+            if (matched) {
+              targetUserId = matched.id;
+            }
+          } catch (_) {}
+        }
+      }
+
+      // 8. Se a criação do usuário falhar, NÃO registre o evento como processed (exceto em simulação).
+      if (!targetUserId) {
+        if (isSimulation) {
+          targetUserId = existingProfile?.id || null;
+        } else {
+          console.error("[Hotmart Edge Function] Falha crítica ao criar usuário para " + email);
+          return new Response(
+            JSON.stringify({
+              error: "Falha ao criar usuário no Supabase Auth",
+              details: createError?.message || "Não foi possível obter o identificador do usuário.",
+              transaction_id: transactionId,
+              event: event
+            }),
+            { headers: { ...corsHeaders, "Content-Type": "application/json" }, status: 500 }
+          );
+        }
+      }
+    }
+
+    // 6.1 Garantir que o profile seja criado/atualizado com os dados corretos e sincronizados
+    if (targetUserId && isApprovalEvent) {
+      try {
+        if (existingProfile && existingProfile.id !== targetUserId) {
+          await supabaseAdmin.from("profiles").delete().eq("id", existingProfile.id);
+        }
+
+        const { error: profileUpsertError } = await supabaseAdmin.from("profiles").upsert({
+          id: targetUserId,
           email: email,
           full_name: buyerName,
           has_access: true,
-          has_unlimited_ai: productType === "ai_subscription",
-          created_at: new Date().toISOString()
-        }, { onConflict: "email" });
-      } else {
-        console.error("[Hotmart Edge Function] Error creating auth user:", createError);
+          has_unlimited_ai: productType === "ai_subscription" ? true : (existingProfile?.has_unlimited_ai || false),
+          updated_at: new Date().toISOString()
+        }, { onConflict: "id" });
+
+        if (profileUpsertError) {
+          console.error("[Hotmart Edge Function] Erro ao criar/atualizar profile:", profileUpsertError);
+          if (!existingProfile) {
+            return new Response(
+              JSON.stringify({
+                error: "Falha ao criar perfil do usuário",
+                details: profileUpsertError.message,
+                transaction_id: transactionId,
+                event: event
+              }),
+              { headers: { ...corsHeaders, "Content-Type": "application/json" }, status: 500 }
+            );
+          }
+        }
+      } catch (profErr) {
+        console.error("[Hotmart Edge Function] Exceção ao atualizar profile:", profErr);
       }
     }
 
@@ -403,7 +528,7 @@ serve(async (req) => {
           await supabaseAdmin
             .from("purchases")
             .delete()
-            .or(`user_id.eq.${targetUserId},email.eq.${email}`)
+            .eq("user_id", targetUserId)
             .in("product_id", ["ai_subscription", "prod_ai_default", "HOTMART_IA_VICTORIA"]);
 
           actionSummary = "Assinatura IA Expert VIP REVOGADA";
@@ -421,9 +546,9 @@ serve(async (req) => {
       }
     }
 
-    // 8. REGISTRAR EVENTO NA TABELA LOG (hotmart_events) PARA AUDITORIA E IDEMPOTÊNCIA
+    // 8. REGISTRAR OU ATUALIZAR EVENTO NA TABELA LOG (hotmart_events) PARA AUDITORIA E IDEMPOTÊNCIA
     try {
-      await supabaseAdmin.from("hotmart_events").insert({
+      const eventRecord = {
         transaction_id: transactionId,
         event: event,
         buyer_email: email,
@@ -431,7 +556,25 @@ serve(async (req) => {
         status: "processed",
         payload: payload,
         processed_at: new Date().toISOString()
-      });
+      };
+
+      const { data: existingEv } = await supabaseAdmin
+        .from("hotmart_events")
+        .select("id")
+        .eq("transaction_id", transactionId)
+        .eq("event", event)
+        .maybeSingle();
+
+      if (existingEv?.id) {
+        await supabaseAdmin
+          .from("hotmart_events")
+          .update(eventRecord)
+          .eq("id", existingEv.id);
+      } else {
+        await supabaseAdmin
+          .from("hotmart_events")
+          .insert(eventRecord);
+      }
     } catch (logErr) {
       console.warn("[Hotmart Edge Function] Could not log event to hotmart_events:", logErr);
     }
@@ -513,4 +656,12 @@ serve(async (req) => {
       { headers: { ...corsHeaders, "Content-Type": "application/json" }, status: 500 }
     );
   }
-});
+};
+
+// Start native Deno server (standard for Supabase Edge Functions)
+if (typeof Deno !== "undefined" && typeof Deno.serve === "function") {
+  Deno.serve(handleRequest);
+} else {
+  // @ts-ignore
+  import("https://deno.land/std@0.168.0/http/server.ts").then(({ serve }) => serve(handleRequest));
+}

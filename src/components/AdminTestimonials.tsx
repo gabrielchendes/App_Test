@@ -23,6 +23,7 @@ import {
   ChevronUp,
   ChevronDown,
   Lock,
+  Globe,
   ShieldAlert
 } from 'lucide-react';
 import { supabase } from '../lib/supabase';
@@ -74,46 +75,81 @@ export const AdminTestimonials: React.FC<AdminTestimonialsProps> = ({
     setLoading(true);
     try {
       let list: Testimonial[] = [];
+
+      // 1. Tenta carregar da tabela dedicada 'testimonials' do Supabase
       try {
-        const res = await fetch('/api/v1/testimonials?all=true');
-        if (res.ok) {
-          const data = await res.json();
-          if (Array.isArray(data)) {
-            list = data as Testimonial[];
-          }
+        const { data, error } = await supabase
+          .from('testimonials')
+          .select('*')
+          .order('created_at', { ascending: false });
+
+        if (!error && Array.isArray(data) && data.length > 0) {
+          list = data as Testimonial[];
         }
-      } catch (apiErr) {
-        console.warn('[AdminTestimonials] API fetch notice:', apiErr);
+      } catch (err) {
+        console.warn('[AdminTestimonials] Supabase query notice:', err);
       }
 
-      // If API failed or returned empty, check Supabase directly or local cache
+      // 2. Se a tabela ainda estiver vazia, tenta a rota de API
       if (list.length === 0) {
         try {
-          const { data, error } = await supabase
-            .from('testimonials')
-            .select('*')
-            .order('created_at', { ascending: false });
-
-          if (!error && data && data.length > 0) {
-            list = data as Testimonial[];
+          const res = await fetch('/api/v1/testimonials?all=true');
+          if (res.ok) {
+            const data = await res.json();
+            if (Array.isArray(data) && data.length > 0) {
+              list = data as Testimonial[];
+            }
           }
-        } catch (err) {
-          console.warn('[AdminTestimonials] Supabase notice:', err);
+        } catch (apiErr) {
+          console.warn('[AdminTestimonials] API fetch notice:', apiErr);
         }
       }
 
-      // Check local cache if still empty
-      if (list.length === 0) {
-        try {
-          const local = localStorage.getItem('app_testimonials_cache');
-          if (local) {
-            const parsed = JSON.parse(local);
-            if (Array.isArray(parsed)) list = parsed;
+      // 3. Recupera do cache local com deduplicação rigorosa
+      try {
+        const local = localStorage.getItem('app_testimonials_cache');
+        if (local) {
+          const parsed = JSON.parse(local);
+          if (Array.isArray(parsed) && parsed.length > 0) {
+            if (list.length === 0) {
+              list = parsed;
+            } else {
+              const existingIds = new Set(list.map(t => t.id));
+              // Não duplica se o ID já existe ou se o mesmo autor enviou o mesmo texto
+              const missingFromRemote = parsed.filter((t: any) => {
+                if (!t || !t.id) return false;
+                if (existingIds.has(t.id)) return false;
+                const isContentDuplicate = list.some(remote =>
+                  (remote.user_name?.trim().toLowerCase() === t.user_name?.trim().toLowerCase() ||
+                   (remote.user_email && t.user_email && remote.user_email.toLowerCase() === t.user_email.toLowerCase())) &&
+                  remote.content?.trim() === t.content?.trim()
+                );
+                return !isContentDuplicate;
+              });
+              if (missingFromRemote.length > 0) {
+                list = [...missingFromRemote, ...list];
+              }
+            }
           }
-        } catch (e) {}
-      }
+        }
+      } catch (e) {}
 
-      // Cache the loaded list locally
+      // Deduplicação final por ID e conteúdo para garantir zero duplicatas na interface
+      const seenIds = new Set<string>();
+      const seenSignatures = new Set<string>();
+      const deduplicatedList: Testimonial[] = [];
+
+      for (const item of list) {
+        if (!item || !item.id || seenIds.has(item.id)) continue;
+        const sig = `${(item.user_email || item.user_name || '').trim().toLowerCase()}::${(item.content || '').trim()}`;
+        if (seenSignatures.has(sig)) continue;
+        seenIds.add(item.id);
+        seenSignatures.add(sig);
+        deduplicatedList.push(item);
+      }
+      list = deduplicatedList;
+
+      // Salva no cache local limpo (sem itens duplicados)
       if (list.length > 0) {
         try {
           localStorage.setItem('app_testimonials_cache', JSON.stringify(list));
@@ -187,51 +223,119 @@ export const AdminTestimonials: React.FC<AdminTestimonialsProps> = ({
     }
   };
 
-  const handleUpdateStatus = async (id: string, status: 'approved' | 'rejected' | 'pending') => {
+  const handleToggleConsent = async (id: string, currentConsent: boolean) => {
     try {
-      setTestimonials(prev => prev.map(t => t.id === id ? { ...t, status } : t));
+      const nextConsent = !currentConsent;
+      const target = testimonials.find(t => t.id === id);
+      const updatedList = testimonials.map(t => t.id === id ? { ...t, consent: nextConsent } : t);
+      setTestimonials(updatedList);
 
-      // 1. Update via server API (persists in server database so students see it immediately)
-      try {
-        const res = await fetch('/api/v1/testimonials', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ action: 'update-status', id, status })
-        });
-        if (!res.ok) {
-          console.warn('[AdminTestimonials] API update returned non-ok:', res.status);
-        }
-      } catch (apiErr) {
-        console.warn('[AdminTestimonials] API update exception:', apiErr);
-      }
-
-      // 2. Direct Supabase update if table exists
+      // Direct Supabase update
       try {
         await supabase
           .from('testimonials')
-          .update({ status })
+          .update({ consent: nextConsent })
           .eq('id', id);
-      } catch (e) {}
 
-      // 3. Also update local cache so inspiring stories page gets the update immediately
-      try {
-        const local = localStorage.getItem('app_testimonials_cache');
-        if (local) {
-          const parsed = JSON.parse(local);
-          const updated = parsed.map((t: any) => t.id === id ? { ...t, status } : t);
-          localStorage.setItem('app_testimonials_cache', JSON.stringify(updated));
+        if (id.startsWith('local_') && target) {
+          await supabase
+            .from('testimonials')
+            .update({ consent: nextConsent })
+            .eq('user_name', target.user_name)
+            .eq('content', target.content);
         }
       } catch (e) {}
 
+      // Server API update
+      try {
+        await fetch('/api/v1/testimonials', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ action: 'update', testimonial: { id, consent: nextConsent } })
+        });
+      } catch (apiErr) {}
+
+      try {
+        localStorage.setItem('app_testimonials_cache', JSON.stringify(updatedList));
+      } catch (e) {}
+
+      toast.success(
+        nextConsent 
+          ? 'Depoimento autorizado para exibição pública na página de histórias!' 
+          : 'Depoimento ocultado da página pública (visível apenas para admin).'
+      );
+    } catch (err) {
+      toast.error('Erro ao alterar visibilidade do depoimento.');
+    }
+  };
+
+  const handleUpdateStatus = async (id: string, status: 'approved' | 'rejected' | 'pending') => {
+    try {
       const target = testimonials.find(t => t.id === id);
-      if (status === 'approved' && target && target.consent === false) {
-        toast.warning(
-          'Atenção: A aluna não autorizou a publicação deste depoimento. Ele permanecerá protegido e restrito ao administrador.',
-          { duration: 6000 }
-        );
-      } else {
-        toast.success(status === 'approved' ? 'Depoimento aprovado com sucesso! Já está visível na página de depoimentos.' : 'Status atualizado.');
+      const nextConsent = status === 'approved' ? true : (target?.consent ?? true);
+      const approvedAt = status === 'approved' ? new Date().toISOString() : (status === 'pending' ? null : target?.approved_at);
+
+      const updatedList = testimonials.map(t => 
+        t.id === id ? { ...t, status, consent: nextConsent, approved_at: approvedAt } : t
+      );
+      setTestimonials(updatedList);
+
+      // 1. Direct Supabase update in dedicated testimonials table
+      try {
+        // Tenta atualizar pelo ID
+        const { error: updateErr } = await supabase
+          .from('testimonials')
+          .update({ 
+            status, 
+            consent: nextConsent,
+            ...(status === 'approved' ? { approved_at: approvedAt } : {})
+          })
+          .eq('id', id);
+
+        // Se era um item local ou o ID não bateu, tenta atualizar pelo autor e conteúdo
+        if ((updateErr || id.startsWith('local_')) && target) {
+          await supabase
+            .from('testimonials')
+            .update({ 
+              status, 
+              consent: nextConsent,
+              ...(status === 'approved' ? { approved_at: approvedAt } : {})
+            })
+            .eq('user_name', target.user_name)
+            .eq('content', target.content);
+        }
+      } catch (e) {
+        console.warn('[AdminTestimonials] Supabase update warning:', e);
       }
+
+      // 2. Update via server API
+      try {
+        await fetch('/api/v1/testimonials', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ 
+            action: 'update-status', 
+            id, 
+            status,
+            consent: nextConsent 
+          })
+        });
+      } catch (apiErr) {
+        console.warn('[AdminTestimonials] API update warning:', apiErr);
+      }
+
+      // 3. Atualiza cache local
+      try {
+        localStorage.setItem('app_testimonials_cache', JSON.stringify(updatedList));
+      } catch (e) {}
+
+      toast.success(
+        status === 'approved' 
+          ? 'Depoimento aprovado com sucesso! Já está visível na página de depoimentos.' 
+          : status === 'rejected'
+          ? 'Depoimento rejeitado.'
+          : 'Status alterado para pendente.'
+      );
     } catch (err: any) {
       console.error('Error updating status:', err);
       toast.error('Erro ao atualizar status.');
@@ -309,7 +413,7 @@ export const AdminTestimonials: React.FC<AdminTestimonialsProps> = ({
         user_name: editAuthorName.trim(),
         user_email: editUserEmail.trim() || undefined,
         user_avatar: editUserAvatar.trim() || undefined,
-        course_title: editCourseTitle.trim() || 'General',
+        course_title: 'Geral',
         rating: editRating,
         headline: editHeadline.trim() || undefined,
         content: editContent.trim(),
@@ -338,7 +442,8 @@ export const AdminTestimonials: React.FC<AdminTestimonialsProps> = ({
       } catch (e) {}
 
       // 3. Update component state
-      setTestimonials(prev => prev.map(t => t.id === updatedItem.id ? updatedItem : t));
+      const updatedList = testimonials.map(t => t.id === updatedItem.id ? updatedItem : t);
+      setTestimonials(updatedList);
 
       // 4. Update local cache
       try {
@@ -379,7 +484,7 @@ export const AdminTestimonials: React.FC<AdminTestimonialsProps> = ({
         user_name: newAuthorName.trim(),
         user_email: newUserEmail.trim() || undefined,
         user_avatar: newUserAvatar.trim() || undefined,
-        course_title: newCourseTitle.trim() || 'General',
+        course_title: 'Geral',
         rating: newRating,
         headline: newHeadline.trim() || undefined,
         content: newContent.trim(),
@@ -400,11 +505,11 @@ export const AdminTestimonials: React.FC<AdminTestimonialsProps> = ({
         console.warn('[AdminTestimonials] API create exception:', apiErr);
       }
 
-      // 2. Try insert to Supabase if table exists
+      // 2. Direct Supabase upsert
       try {
         await supabase
           .from('testimonials')
-          .insert(manualTestimonial);
+          .upsert(manualTestimonial, { onConflict: 'id' });
       } catch (dbErr) {}
 
       // 3. Save in local cache so it appears immediately on inspiring stories page
@@ -416,7 +521,8 @@ export const AdminTestimonials: React.FC<AdminTestimonialsProps> = ({
       } catch (cacheErr) {}
 
       // 4. Update component state
-      setTestimonials(prev => [manualTestimonial, ...prev]);
+      const updatedList = [manualTestimonial, ...testimonials];
+      setTestimonials(updatedList);
 
       toast.success(
         newStatus === 'approved'
@@ -448,9 +554,18 @@ export const AdminTestimonials: React.FC<AdminTestimonialsProps> = ({
     }
 
     try {
-      setTestimonials(prev => prev.filter(t => t.id !== id));
+      const updatedList = testimonials.filter(t => t.id !== id);
+      setTestimonials(updatedList);
 
-      // 1. Delete via server API
+      // 1. Direct Supabase delete from dedicated table
+      try {
+        await supabase
+          .from('testimonials')
+          .delete()
+          .eq('id', id);
+      } catch (e) {}
+
+      // 2. Delete via server API
       try {
         await fetch('/api/v1/testimonials', {
           method: 'POST',
@@ -458,14 +573,6 @@ export const AdminTestimonials: React.FC<AdminTestimonialsProps> = ({
           body: JSON.stringify({ action: 'delete', id })
         });
       } catch (apiErr) {}
-
-      // 2. Direct Supabase delete if table exists
-      try {
-        await supabase
-          .from('testimonials')
-          .delete()
-          .eq('id', id);
-      } catch (e) {}
 
       // 3. Update local cache
       try {
@@ -739,23 +846,34 @@ export const AdminTestimonials: React.FC<AdminTestimonialsProps> = ({
 
                   {/* Confidentiality Alert if Not Authorized for Public Sharing */}
                   {item.consent === false && (
-                    <div className="p-3.5 rounded-2xl bg-rose-500/10 border border-rose-500/30 flex items-start gap-3">
-                      <div className="p-2 rounded-xl bg-rose-500/20 text-rose-400 shrink-0">
-                        <Lock size={16} />
-                      </div>
-                      <div className="space-y-0.5">
-                        <div className="flex items-center gap-2">
-                          <span className="text-xs font-black text-rose-400 uppercase tracking-wider">
-                            Depoimento Confidencial (Não Autorizado para Compartilhamento)
-                          </span>
-                          <span className="px-2 py-0.5 rounded-full text-[9px] font-black uppercase tracking-wider bg-rose-500/20 text-rose-300 border border-rose-500/40">
-                            Apenas Administrador
-                          </span>
+                    <div className="p-3.5 rounded-2xl bg-rose-500/10 border border-rose-500/30 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
+                      <div className="flex items-start gap-3">
+                        <div className="p-2 rounded-xl bg-rose-500/20 text-rose-400 shrink-0">
+                          <Lock size={16} />
                         </div>
-                        <p className="text-xs text-rose-200/80 leading-relaxed">
-                          A aluna <u>não autorizou</u> o compartilhamento público deste relato. Ele <strong>não é exibido na página pública de depoimentos</strong> e fica restrito exclusivamente para você (administrador).
-                        </p>
+                        <div className="space-y-0.5">
+                          <div className="flex items-center gap-2">
+                            <span className="text-xs font-black text-rose-400 uppercase tracking-wider">
+                              Depoimento Marcado como Restrito
+                            </span>
+                            <span className="px-2 py-0.5 rounded-full text-[9px] font-black uppercase tracking-wider bg-rose-500/20 text-rose-300 border border-rose-500/40">
+                              Apenas Administrador
+                            </span>
+                          </div>
+                          <p className="text-xs text-rose-200/80 leading-relaxed">
+                            Inicialmente marcado como restrito. Clique no botão ao lado para autorizar e exibir publicamente na página de depoimentos.
+                          </p>
+                        </div>
                       </div>
+                      <button
+                        type="button"
+                        onClick={() => handleToggleConsent(item.id, false)}
+                        className="shrink-0 px-3.5 py-2 rounded-xl bg-amber-500 hover:bg-amber-400 text-black text-xs font-bold transition-all cursor-pointer flex items-center gap-1.5 shadow-lg shadow-amber-500/10"
+                        title="Tornar este depoimento público na página de histórias"
+                      >
+                        <Globe size={14} />
+                        <span>Tornar Público</span>
+                      </button>
                     </div>
                   )}
 
@@ -835,6 +953,20 @@ export const AdminTestimonials: React.FC<AdminTestimonialsProps> = ({
                         <span>Revogar Aprovação</span>
                       </button>
                     )}
+
+                    {/* Toggle Visibilidade Pública */}
+                    <button
+                      onClick={() => handleToggleConsent(item.id, item.consent !== false)}
+                      className={`px-3 py-1.5 rounded-xl text-xs font-bold uppercase tracking-wider transition-colors flex items-center gap-1.5 border ${
+                        item.consent !== false
+                          ? 'bg-amber-500/10 border-amber-500/30 text-amber-400 hover:bg-amber-500/20'
+                          : 'bg-rose-500/10 border-rose-500/30 text-rose-400 hover:bg-rose-500/20'
+                      }`}
+                      title={item.consent !== false ? 'Depoimento público: clique para tornar restrito' : 'Depoimento restrito: clique para autorizar exibição pública'}
+                    >
+                      {item.consent !== false ? <Globe size={13} /> : <Lock size={13} />}
+                      <span>{item.consent !== false ? 'Público' : 'Restrito'}</span>
+                    </button>
                   </div>
 
                   <div className="flex items-center gap-2">
@@ -950,48 +1082,30 @@ export const AdminTestimonials: React.FC<AdminTestimonialsProps> = ({
                 />
               </div>
 
-              {/* Course Title & Rating Row */}
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                <div className="space-y-1.5">
-                  <label className="text-xs font-bold text-gray-300 uppercase tracking-wider block">
-                    Curso / Conteúdo
-                  </label>
-                  <select
-                    value={newCourseTitle}
-                    onChange={(e) => setNewCourseTitle(e.target.value)}
-                    className="w-full bg-black/60 border border-white/10 focus:border-amber-500 rounded-xl px-4 py-2.5 text-sm text-white outline-none transition-colors"
-                  >
-                    <option value="Geral">Geral (Comunidade / Plataforma)</option>
-                    {availableCourses.map((c) => (
-                      <option key={c} value={c}>{c}</option>
-                    ))}
-                  </select>
-                </div>
-
-                <div className="space-y-1.5">
-                  <label className="text-xs font-bold text-gray-300 uppercase tracking-wider block">
-                    Avaliação em Estrelas
-                  </label>
-                  <div className="flex items-center gap-1.5 h-10 px-3 bg-black/60 border border-white/10 rounded-xl">
-                    {[1, 2, 3, 4, 5].map((star) => (
-                      <button
-                        key={star}
-                        type="button"
-                        onClick={() => setNewRating(star)}
-                        className="p-1 hover:scale-125 transition-transform cursor-pointer"
-                      >
-                        <Star
-                          size={18}
-                          className={
-                            star <= newRating
-                              ? 'fill-amber-400 text-amber-400'
-                              : 'text-zinc-700'
-                          }
-                        />
-                      </button>
-                    ))}
-                    <span className="text-xs font-bold text-amber-400 ml-2">{newRating}.0</span>
-                  </div>
+              {/* Rating */}
+              <div className="space-y-1.5">
+                <label className="text-xs font-bold text-gray-300 uppercase tracking-wider block">
+                  Avaliação em Estrelas
+                </label>
+                <div className="flex items-center gap-1.5 h-10 px-3 bg-black/60 border border-white/10 rounded-xl w-fit">
+                  {[1, 2, 3, 4, 5].map((star) => (
+                    <button
+                      key={star}
+                      type="button"
+                      onClick={() => setNewRating(star)}
+                      className="p-1 hover:scale-125 transition-transform cursor-pointer"
+                    >
+                      <Star
+                        size={18}
+                        className={
+                          star <= newRating
+                            ? 'fill-amber-400 text-amber-400'
+                            : 'text-zinc-700'
+                        }
+                      />
+                    </button>
+                  ))}
+                  <span className="text-xs font-bold text-amber-400 ml-2">{newRating}.0</span>
                 </div>
               </div>
 
@@ -1207,48 +1321,30 @@ export const AdminTestimonials: React.FC<AdminTestimonialsProps> = ({
                 />
               </div>
 
-              {/* Course Title & Rating Row */}
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                <div className="space-y-1.5">
-                  <label className="text-xs font-bold text-gray-300 uppercase tracking-wider block">
-                    Curso / Conteúdo
-                  </label>
-                  <select
-                    value={editCourseTitle}
-                    onChange={(e) => setEditCourseTitle(e.target.value)}
-                    className="w-full bg-black/60 border border-white/10 focus:border-amber-500 rounded-xl px-4 py-2.5 text-sm text-white outline-none transition-colors"
-                  >
-                    <option value="Geral">Geral (Comunidade / Plataforma)</option>
-                    {availableCourses.map((c) => (
-                      <option key={c} value={c}>{c}</option>
-                    ))}
-                  </select>
-                </div>
-
-                <div className="space-y-1.5">
-                  <label className="text-xs font-bold text-gray-300 uppercase tracking-wider block">
-                    Avaliação em Estrelas
-                  </label>
-                  <div className="flex items-center gap-1.5 h-10 px-3 bg-black/60 border border-white/10 rounded-xl">
-                    {[1, 2, 3, 4, 5].map((star) => (
-                      <button
-                        key={star}
-                        type="button"
-                        onClick={() => setEditRating(star)}
-                        className="p-1 hover:scale-125 transition-transform cursor-pointer"
-                      >
-                        <Star
-                          size={18}
-                          className={
-                            star <= editRating
-                              ? 'fill-amber-400 text-amber-400'
-                              : 'text-zinc-700'
-                          }
-                        />
-                      </button>
-                    ))}
-                    <span className="text-xs font-bold text-amber-400 ml-2">{editRating}.0</span>
-                  </div>
+              {/* Rating */}
+              <div className="space-y-1.5">
+                <label className="text-xs font-bold text-gray-300 uppercase tracking-wider block">
+                  Avaliação em Estrelas
+                </label>
+                <div className="flex items-center gap-1.5 h-10 px-3 bg-black/60 border border-white/10 rounded-xl w-fit">
+                  {[1, 2, 3, 4, 5].map((star) => (
+                    <button
+                      key={star}
+                      type="button"
+                      onClick={() => setEditRating(star)}
+                      className="p-1 hover:scale-125 transition-transform cursor-pointer"
+                    >
+                      <Star
+                        size={18}
+                        className={
+                          star <= editRating
+                            ? 'fill-amber-400 text-amber-400'
+                            : 'text-zinc-700'
+                        }
+                      />
+                    </button>
+                  ))}
+                  <span className="text-xs font-bold text-amber-400 ml-2">{editRating}.0</span>
                 </div>
               </div>
 

@@ -208,7 +208,7 @@ export default function AuthForm() {
   return (
     <div className="flex flex-col items-center gap-6 w-full max-w-md">
       {/* Luxury PWA Install Hero Capsule at the top */}
-      {(showInstallButton && (isInstallable || import.meta.env.DEV)) && !isInstalled && (
+      {showInstallButton && !isInstalled && (
         <div 
           className={`w-full max-w-[320px] sm:max-w-[340px] mx-auto relative group ${isPulsing ? 'animate-float-smooth' : ''}`}
         >

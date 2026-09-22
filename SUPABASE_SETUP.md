@@ -192,8 +192,12 @@ CREATE TABLE IF NOT EXISTS public.chapters (
     duration_minutes INTEGER DEFAULT 0,
     order_index INTEGER DEFAULT 0,
     is_preview BOOLEAN DEFAULT false,
+    custom_icon TEXT,
     created_at TIMESTAMPTZ DEFAULT NOW()
 );
+
+-- Se a tabela chapters já existir, execute para adicionar suporte direto a custom_icon:
+-- ALTER TABLE public.chapters ADD COLUMN IF NOT EXISTS custom_icon TEXT;
 
 -- 6. Tabela `products` (Legado - para compatibilidade)
 CREATE TABLE IF NOT EXISTS public.products (
@@ -998,6 +1002,66 @@ CREATE POLICY "Apenas admin pode atualizar" ON public.app_settings FOR UPDATE US
 
 DROP POLICY IF EXISTS "Apenas admin pode inserir" ON public.app_settings;
 CREATE POLICY "Apenas admin pode inserir" ON public.app_settings FOR INSERT WITH CHECK (public.is_admin());
+```
+
+---
+
+### Exclusão Automática da Conta de Autenticação (`auth.users`) ao Excluir o Usuário:
+
+Para garantir que a exclusão de um usuário no painel administrativo exclua tanto os dados do perfil (`public.profiles`) quanto a conta de autenticação oficial (`auth.users`), execute o script abaixo no **SQL Editor** do Supabase:
+
+```sql
+-- 1. Trigger de sincronização: Ao deletar da tabela profiles, remove automaticamente de auth.users
+CREATE OR REPLACE FUNCTION public.handle_delete_profile_sync_auth()
+RETURNS TRIGGER
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public, auth
+AS $$
+BEGIN
+  -- Se o usuário ainda existir na tabela auth.users, remove-o
+  IF EXISTS (SELECT 1 FROM auth.users WHERE id = OLD.id) THEN
+    DELETE FROM auth.users WHERE id = OLD.id;
+  END IF;
+  RETURN OLD;
+END;
+$$;
+
+DROP TRIGGER IF EXISTS on_profile_deleted_delete_auth ON public.profiles;
+CREATE TRIGGER on_profile_deleted_delete_auth
+AFTER DELETE ON public.profiles
+FOR EACH ROW
+EXECUTE FUNCTION public.handle_delete_profile_sync_auth();
+
+-- 2. Função RPC para exclusão completa atômica chamada diretamente pelo painel administrativo
+CREATE OR REPLACE FUNCTION public.delete_user_complete(target_user_id UUID)
+RETURNS JSONB
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public, auth
+AS $$
+DECLARE
+  v_caller_is_admin BOOLEAN := false;
+BEGIN
+  -- Verifica se o usuário autenticado chamador é administrador
+  SELECT COALESCE(is_admin, false) INTO v_caller_is_admin 
+  FROM public.profiles 
+  WHERE id = auth.uid();
+
+  IF auth.role() = 'service_role' OR v_caller_is_admin = true THEN
+    -- Remove o perfil
+    DELETE FROM public.profiles WHERE id = target_user_id;
+    -- Remove a conta no auth.users
+    DELETE FROM auth.users WHERE id = target_user_id;
+    
+    RETURN jsonb_build_object('success', true, 'deleted_user_id', target_user_id);
+  ELSE
+    RAISE EXCEPTION 'Acesso negado: apenas administradores podem excluir usuários.';
+  END IF;
+END;
+$$;
+
+GRANT EXECUTE ON FUNCTION public.delete_user_complete(UUID) TO authenticated, service_role, anon;
 ```
 
 

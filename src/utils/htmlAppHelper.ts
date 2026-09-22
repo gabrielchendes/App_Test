@@ -3,6 +3,32 @@ import { Chapter } from '../types/lms';
 export const HTML_APP_PREFIX = '<!-- HTML_APP -->';
 export const AUDIO_LESSON_PREFIX = '<!-- AUDIO_LESSON -->';
 export const AUDIO_PODCAST_PREFIX = '<!-- AUDIO_PODCAST -->';
+export const CUSTOM_ICON_PREFIX = '<!-- CUSTOM_ICON:';
+
+/**
+ * Extracts custom play/lesson icon marker if present in the text
+ */
+export function extractCustomIcon(storedContent?: string | null): { icon?: string; cleanText: string } {
+  if (!storedContent) return { icon: undefined, cleanText: '' };
+  const match = storedContent.match(/<!--\s*CUSTOM_ICON:([a-zA-Z0-9_-]+)\s*-->/);
+  if (match) {
+    const icon = match[1];
+    const cleanText = storedContent.replace(/<!--\s*CUSTOM_ICON:[a-zA-Z0-9_-]+\s*-->\r?\n?/, '');
+    return { icon, cleanText };
+  }
+  return { icon: undefined, cleanText: storedContent };
+}
+
+/**
+ * Formats rich_text embedding the custom icon marker when specified
+ */
+export function formatCustomIcon(rawText: string = '', icon?: string | null): string {
+  const { cleanText } = extractCustomIcon(rawText);
+  if (!icon || icon === 'default' || icon.trim() === '') {
+    return cleanText;
+  }
+  return `<!-- CUSTOM_ICON:${icon.trim()} -->\n${cleanText}`;
+}
 
 /**
  * Checks if the content string is an HTML Mini App.
@@ -151,6 +177,7 @@ export function extractAudioContent(storedContent?: string | null): string {
 export function prepareChapterForDb(chapter: {
   content_type?: string;
   rich_text?: string | null;
+  custom_icon?: string | null;
 }): {
   content_type: 'video' | 'pdf' | 'text' | 'link' | 'checklist' | 'interactive';
   rich_text: string;
@@ -174,13 +201,21 @@ export function prepareChapterForDb(chapter: {
     dbContentType = chapter.content_type;
   }
 
-  let dbRichText = chapter.rich_text || '';
+  // Extract any existing icon from rich_text
+  const { icon: existingIcon, cleanText } = extractCustomIcon(chapter.rich_text);
+  const targetIcon = chapter.custom_icon !== undefined ? chapter.custom_icon : existingIcon;
+
+  let dbRichText = cleanText || '';
   if (isAudio) {
     dbRichText = formatAudioContent(dbRichText);
   } else if (isHtml) {
     dbRichText = formatHtmlAppContent(dbRichText);
   } else {
     dbRichText = extractAudioContent(extractHtmlAppContent(dbRichText));
+  }
+
+  if (targetIcon) {
+    dbRichText = formatCustomIcon(dbRichText, targetIcon);
   }
 
   return {
@@ -193,22 +228,32 @@ export function prepareChapterForDb(chapter: {
  * Maps a database chapter to frontend representation.
  * If the database stored an Audio Lesson with 'video' + marker, maps it to 'audio'.
  * If the database stored an HTML Mini App with 'interactive' + marker, maps it to 'html'.
+ * Also extracts custom_icon if embedded in rich_text or stored directly.
  */
 export function fromDbChapter<T extends Partial<Chapter>>(ch: T): T {
-  if (isAudioChapter(ch)) {
+  const { icon: extractedIcon, cleanText } = extractCustomIcon(ch.rich_text);
+  const customIcon = (ch as any).custom_icon || extractedIcon || undefined;
+
+  let workingCh: T = {
+    ...ch,
+    custom_icon: customIcon,
+    rich_text: cleanText
+  };
+
+  if (isAudioChapter(workingCh)) {
     return {
-      ...ch,
+      ...workingCh,
       content_type: 'audio',
-      rich_text: extractAudioContent(ch.rich_text)
+      rich_text: extractAudioContent(workingCh.rich_text)
     };
   }
-  if (isHtmlAppChapter(ch)) {
+  if (isHtmlAppChapter(workingCh)) {
     return {
-      ...ch,
+      ...workingCh,
       content_type: 'html',
-      rich_text: extractHtmlAppContent(ch.rich_text)
+      rich_text: extractHtmlAppContent(workingCh.rich_text)
     };
   }
-  return ch;
+  return workingCh;
 }
 

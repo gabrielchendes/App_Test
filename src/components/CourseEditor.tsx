@@ -54,6 +54,7 @@ import { AiCourseEditModal } from './AiCourseEditModal';
 import { AiCourseFactoryModal } from './AiCourseFactoryModal';
 import { fetchChecklistByChapterId, saveChecklistToDatabase } from '../services/checklistService';
 import { formatHtmlAppContent, fromDbChapter, isHtmlAppChapter, prepareChapterForDb } from '../utils/htmlAppHelper';
+import { ChapterIconPicker, getChapterIconComponent } from '../utils/chapterIcons';
 import { parseCourseHtmlFunnel, serializeCourseHtmlFunnel } from '../utils/courseFunnel';
 import ImageCropperModal from './ImageCropperModal';
 import { dataCache } from '../lib/cache';
@@ -375,6 +376,7 @@ export default function CourseEditor({
   const [editingChapter, setEditingChapter] = useState<Partial<Chapter>>({
     title: '',
     content_type: 'video',
+    custom_icon: '',
     video_url: '',
     pdf_url: '',
     button_link_text: '',
@@ -911,7 +913,7 @@ export default function CourseEditor({
       }
 
       const { content_type: dbContentType, rich_text: dbRichText } = prepareChapterForDb(editingChapter);
-      const lessonData = {
+      const lessonData: any = {
         module_id: targetModuleId,
         title: editingChapter.title,
         description: editingChapter.description,
@@ -927,15 +929,30 @@ export default function CourseEditor({
         order_index: editingChapter.id ? editingChapter.order_index : chapters.length
       };
 
+      if (editingChapter.custom_icon) {
+        lessonData.custom_icon = editingChapter.custom_icon;
+      }
+
       if (editingChapter.id) {
-        const { error } = await supabase.from('chapters').update(lessonData).eq('id', editingChapter.id);
+        let { error } = await supabase.from('chapters').update(lessonData).eq('id', editingChapter.id);
+        if (error && error.message?.includes('custom_icon')) {
+          delete lessonData.custom_icon;
+          const retry = await supabase.from('chapters').update(lessonData).eq('id', editingChapter.id);
+          error = retry.error;
+        }
         if (error) throw error;
         if (editingChapter.content_type === 'checklist' && newChecklist) {
           await saveChecklistToDatabase(editingChapter.id, newChecklist);
         }
         toast.success('Aula atualizada!');
       } else {
-        const { data: newChapter, error } = await supabase.from('chapters').insert([lessonData]).select().single();
+        let { data: newChapter, error } = await supabase.from('chapters').insert([lessonData]).select().single();
+        if (error && error.message?.includes('custom_icon')) {
+          delete lessonData.custom_icon;
+          const retry = await supabase.from('chapters').insert([lessonData]).select().single();
+          newChapter = retry.data;
+          error = retry.error;
+        }
         if (error) throw error;
         if (editingChapter.content_type === 'checklist' && newChapter) {
           await saveChecklistToDatabase(newChapter.id, newChecklist);
@@ -955,6 +972,7 @@ export default function CourseEditor({
       setEditingChapter({
         title: '',
         content_type: 'video',
+        custom_icon: '',
         video_url: '',
         pdf_url: '',
         cover_url: '',
@@ -979,24 +997,39 @@ export default function CourseEditor({
     try {
       setSaving(true);
       const { content_type: dbContentType, rich_text: dbRichText } = prepareChapterForDb(editingExistingChapter);
-      const { error } = await supabase
+      const updateData: any = {
+        title: editingExistingChapter.title,
+        description: editingExistingChapter.description || '',
+        content_type: dbContentType,
+        video_url: editingExistingChapter.video_url || '',
+        pdf_url: editingExistingChapter.pdf_url || '',
+        button_link_text: editingExistingChapter.button_link_text || '',
+        button_link_url: editingExistingChapter.button_link_url || '',
+        button_link_color: editingExistingChapter.button_link_color || '#10b981',
+        cover_url: editingExistingChapter.cover_url || '',
+        rich_text: dbRichText,
+        duration_minutes: editingExistingChapter.duration_minutes || 0,
+        module_id: editingExistingChapter.module_id || null,
+        order_index: typeof editingExistingChapter.order_index === 'number' ? editingExistingChapter.order_index : 0
+      };
+
+      if (editingExistingChapter.custom_icon) {
+        updateData.custom_icon = editingExistingChapter.custom_icon;
+      }
+
+      let { error } = await supabase
         .from('chapters')
-        .update({
-          title: editingExistingChapter.title,
-          description: editingExistingChapter.description || '',
-          content_type: dbContentType,
-          video_url: editingExistingChapter.video_url || '',
-          pdf_url: editingExistingChapter.pdf_url || '',
-          button_link_text: editingExistingChapter.button_link_text || '',
-          button_link_url: editingExistingChapter.button_link_url || '',
-          button_link_color: editingExistingChapter.button_link_color || '#10b981',
-          cover_url: editingExistingChapter.cover_url || '',
-          rich_text: dbRichText,
-          duration_minutes: editingExistingChapter.duration_minutes || 0,
-          module_id: editingExistingChapter.module_id || null,
-          order_index: typeof editingExistingChapter.order_index === 'number' ? editingExistingChapter.order_index : 0
-        })
+        .update(updateData)
         .eq('id', editingExistingChapter.id);
+
+      if (error && error.message?.includes('custom_icon')) {
+        delete updateData.custom_icon;
+        const retry = await supabase
+          .from('chapters')
+          .update(updateData)
+          .eq('id', editingExistingChapter.id);
+        error = retry.error;
+      }
 
       if (error) throw error;
       if (editingExistingChapter.content_type === 'checklist' && editingChecklist) {
@@ -2392,6 +2425,14 @@ export default function CourseEditor({
                           </div>
                         </div>
 
+                        {/* Personalização do Símbolo do Play da Aula */}
+                        <ChapterIconPicker
+                          value={editingChapter.custom_icon || ''}
+                          contentType={editingChapter.content_type}
+                          onChange={(icon) => setEditingChapter({ ...editingChapter, custom_icon: icon })}
+                          themeColor="emerald"
+                        />
+
                         {editingChapter.content_type === 'checklist' ? (
                           <div className="pt-2 w-full">
                             <AdminChecklistEditor
@@ -2754,17 +2795,7 @@ export default function CourseEditor({
                                       </div>
                                     )}
                                     <div className="absolute inset-0 bg-black/20 flex items-center justify-center pointer-events-none">
-                                      {ch.content_type === 'video' ? (
-                                        <Video size={16} className="text-white drop-shadow-md" />
-                                      ) : ch.content_type === 'audio' ? (
-                                        <Headphones size={16} className="text-primary drop-shadow-md" />
-                                      ) : ch.content_type === 'checklist' ? (
-                                        <CheckSquare size={16} className="text-emerald-400 drop-shadow-md" />
-                                      ) : ch.content_type === 'html' || ch.content_type === 'html_app' || isHtmlAppChapter(ch) ? (
-                                        <FileCode size={16} className="text-amber-400 drop-shadow-md" />
-                                      ) : (
-                                        <FileText size={16} className="text-white drop-shadow-md" />
-                                      )}
+                                      {getChapterIconComponent(ch, "w-4 h-4 text-white drop-shadow-md", false)}
                                     </div>
                                     <div className="absolute top-1 left-1 px-1.5 py-0.5 bg-black/75 backdrop-blur-md rounded-md border border-white/10">
                                       <span className="text-[8px] font-black text-white">{idx + 1}</span>
@@ -3032,6 +3063,14 @@ export default function CourseEditor({
                                                 </div>
                                               </div>
                                             </div>
+
+                                            {/* Personalização do Símbolo do Play da Aula */}
+                                            <ChapterIconPicker
+                                              value={draft.custom_icon || ''}
+                                              contentType={draft.content_type}
+                                              onChange={(icon) => setEditingExistingChapter(prev => prev ? ({ ...prev, custom_icon: icon }) : ({ ...ch, custom_icon: icon }))}
+                                              themeColor="blue"
+                                            />
 
                                             {draft.content_type === 'checklist' ? (
                                               <div className="pt-2">

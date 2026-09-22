@@ -6,11 +6,12 @@ import { createClient } from '@supabase/supabase-js';
 const DATA_DIR = path.join(process.cwd(), 'data');
 const TESTIMONIALS_FILE = path.join(DATA_DIR, 'testimonials.json');
 
-const supabaseUrl = process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL || '';
-const supabaseAnonKey = process.env.SUPABASE_ANON_KEY || process.env.VITE_SUPABASE_ANON_KEY || '';
-const supabase = (supabaseUrl && supabaseAnonKey) 
-  ? createClient(supabaseUrl, supabaseAnonKey, { auth: { persistSession: false } }) 
-  : null;
+function getSupabaseClient() {
+  const url = process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL || '';
+  const key = process.env.SUPABASE_ANON_KEY || process.env.VITE_SUPABASE_ANON_KEY || '';
+  if (!url || !key) return null;
+  return createClient(url, key, { auth: { persistSession: false } });
+}
 
 export interface TestimonialItem {
   id: string;
@@ -108,6 +109,66 @@ function saveToFile(items: TestimonialItem[]): void {
   }
 }
 
+// Carrega os depoimentos da tabela dedicada 'testimonials' do Supabase
+async function loadTestimonials(): Promise<TestimonialItem[]> {
+  const supabase = getSupabaseClient();
+  if (supabase) {
+    try {
+      const { data, error } = await supabase
+        .from('testimonials')
+        .select('*')
+        .order('created_at', { ascending: false });
+
+      if (!error && Array.isArray(data) && data.length > 0) {
+        saveToFile(data as TestimonialItem[]);
+        return data as TestimonialItem[];
+      }
+    } catch (e) {
+      console.warn('[Testimonials API] Erro ao consultar tabela testimonials:', e);
+    }
+  }
+
+  // Fallback para arquivo local caso a tabela esteja sendo inicializada
+  return ensureDataFile();
+}
+
+// Salva o depoimento na tabela dedicada 'testimonials' do Supabase
+async function persistTestimonial(item: TestimonialItem): Promise<void> {
+  const supabase = getSupabaseClient();
+  if (supabase) {
+    try {
+      const { error } = await supabase
+        .from('testimonials')
+        .upsert(item, { onConflict: 'id' });
+
+      if (error) {
+        console.warn('[Testimonials API] Erro ao salvar depoimento no Supabase:', error.message);
+      }
+    } catch (e) {
+      console.warn('[Testimonials API] Exceção ao persistir no Supabase testimonials:', e);
+    }
+  }
+}
+
+// Exclui o depoimento da tabela dedicada 'testimonials' do Supabase
+async function deleteTestimonialFromDb(id: string): Promise<void> {
+  const supabase = getSupabaseClient();
+  if (supabase) {
+    try {
+      const { error } = await supabase
+        .from('testimonials')
+        .delete()
+        .eq('id', id);
+
+      if (error) {
+        console.warn('[Testimonials API] Erro ao excluir do Supabase:', error.message);
+      }
+    } catch (e) {
+      console.warn('[Testimonials API] Exceção ao excluir do Supabase testimonials:', e);
+    }
+  }
+}
+
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   // CORS
   res.setHeader('Access-Control-Allow-Origin', '*');
@@ -118,18 +179,16 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     return res.status(200).end();
   }
 
-  const items = ensureDataFile();
+  const supabase = getSupabaseClient();
+  const items = await loadTestimonials();
 
   if (req.method === 'GET') {
     const statusQuery = req.query.status as string | undefined;
-    const allQuery = req.query.all as string | undefined;
 
     // Filter by status if requested (e.g. status=approved for student page)
     if (statusQuery) {
       const filtered = items.filter(item => {
         if (item.status !== statusQuery) return false;
-        // Never share testimonials where consent was not granted publicly
-        if (statusQuery === 'approved' && item.consent === false) return false;
         return true;
       });
       return res.status(200).json(filtered);
@@ -150,7 +209,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         user_email: testimonial.user_email || undefined,
         user_avatar: testimonial.user_avatar || undefined,
         course_id: testimonial.course_id || undefined,
-        course_title: testimonial.course_title || 'General',
+        course_title: testimonial.course_title || 'Geral',
         rating: Number(testimonial.rating) || 5,
         headline: testimonial.headline || undefined,
         content: testimonial.content || '',
@@ -161,18 +220,20 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         created_at: testimonial.created_at || new Date().toISOString()
       };
 
-      // Add to top of list
-      items.unshift(newTestimonial);
-      saveToFile(items);
+      // Grava no Supabase testimonials
+      await persistTestimonial(newTestimonial);
 
-      // Attempt Supabase insert if table exists
-      if (supabase) {
-        try {
-          await supabase.from('testimonials').insert(newTestimonial);
-        } catch (e) {
-          // ignore table not found
-        }
+      // Check if already in items by ID or matching author & content to avoid duplication
+      const existingIdx = items.findIndex(t => 
+        t.id === newTestimonial.id || 
+        (t.user_name === newTestimonial.user_name && t.content?.trim() === newTestimonial.content?.trim())
+      );
+      if (existingIdx !== -1) {
+        items[existingIdx] = newTestimonial;
+      } else {
+        items.unshift(newTestimonial);
       }
+      saveToFile(items);
 
       return res.status(201).json({ success: true, item: newTestimonial });
     }
@@ -205,13 +266,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         items[index].approved_at = new Date().toISOString();
       }
 
+      await persistTestimonial(items[index]);
       saveToFile(items);
-
-      if (supabase) {
-        try {
-          await supabase.from('testimonials').update(items[index]).eq('id', targetId);
-        } catch (e) {}
-      }
 
       return res.status(200).json({ success: true, item: items[index] });
     }
@@ -249,28 +305,42 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     if (action === 'update-status' || status) {
       const targetId = id || req.body.id;
       const targetStatus = (status || req.body.status) as 'pending' | 'approved' | 'rejected';
+      const targetConsent = req.body.consent !== undefined 
+        ? Boolean(req.body.consent) 
+        : (targetStatus === 'approved' ? true : undefined);
 
+      let foundItem: TestimonialItem | null = null;
       const index = items.findIndex(t => t.id === targetId);
-      if (index === -1) {
-        return res.status(404).json({ error: 'Testimonial not found' });
+      if (index !== -1) {
+        items[index].status = targetStatus;
+        if (targetStatus === 'approved') {
+          items[index].approved_at = new Date().toISOString();
+          items[index].consent = true;
+        } else if (targetConsent !== undefined) {
+          items[index].consent = targetConsent;
+        }
+        foundItem = items[index];
+        await persistTestimonial(items[index]);
+        saveToFile(items);
       }
 
-      items[index].status = targetStatus;
-      if (targetStatus === 'approved') {
-        items[index].approved_at = new Date().toISOString();
-      }
-      saveToFile(items);
-
+      // Always also attempt direct update in Supabase
       if (supabase) {
         try {
-          await supabase.from('testimonials').update({ status: targetStatus }).eq('id', targetId);
+          await supabase
+            .from('testimonials')
+            .update({ 
+              status: targetStatus,
+              ...(targetStatus === 'approved' ? { consent: true, approved_at: new Date().toISOString() } : (targetConsent !== undefined ? { consent: targetConsent } : {}))
+            })
+            .eq('id', targetId);
         } catch (e) {}
       }
 
-      return res.status(200).json({ success: true, item: items[index] });
+      return res.status(200).json({ success: true, item: foundItem || { id: targetId, status: targetStatus } });
     }
 
-    // 3. Mark read / unread
+    // 5. Mark read / unread
     if (action === 'mark-read' || is_read !== undefined) {
       const targetId = id || req.body.id;
       const targetRead = is_read !== undefined ? is_read : true;
@@ -278,29 +348,23 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       const index = items.findIndex(t => t.id === targetId);
       if (index !== -1) {
         items[index].is_read = targetRead;
+        await persistTestimonial(items[index]);
         saveToFile(items);
-
-        if (supabase) {
-          try {
-            await supabase.from('testimonials').update({ is_read: targetRead }).eq('id', targetId);
-          } catch (e) {}
-        }
+      } else if (supabase) {
+        try {
+          await supabase.from('testimonials').update({ is_read: targetRead }).eq('id', targetId);
+        } catch (e) {}
       }
 
       return res.status(200).json({ success: true });
     }
 
-    // 4. Delete testimonial
+    // 6. Delete testimonial
     if (action === 'delete') {
       const targetId = id || req.body.id;
+      await deleteTestimonialFromDb(targetId);
       const filtered = items.filter(t => t.id !== targetId);
       saveToFile(filtered);
-
-      if (supabase) {
-        try {
-          await supabase.from('testimonials').delete().eq('id', targetId);
-        } catch (e) {}
-      }
 
       return res.status(200).json({ success: true });
     }
@@ -313,14 +377,9 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     if (!targetId) {
       return res.status(400).json({ error: 'Missing ID' });
     }
+    await deleteTestimonialFromDb(targetId);
     const filtered = items.filter(t => t.id !== targetId);
     saveToFile(filtered);
-
-    if (supabase) {
-      try {
-        await supabase.from('testimonials').delete().eq('id', targetId);
-      } catch (e) {}
-    }
 
     return res.status(200).json({ success: true });
   }

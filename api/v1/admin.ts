@@ -471,15 +471,46 @@ async function handleUserCreate(req: VercelRequest, res: VercelResponse) {
 
 async function handleUserDelete(req: VercelRequest, res: VercelResponse, id: string) {
   if (!id) return res.status(400).json({ error: 'ID required' });
-  try {
-    const { error } = await supabaseAdmin.auth.admin.deleteUser(id);
-    if (error) console.warn('[Admin API] deleteUser auth warning:', error.message);
-  } catch (e: any) {
-    console.warn('[Admin API] deleteUser auth error:', e.message);
-  }
+
   const client = getScopedClient(req);
-  await client.from('profiles').delete().eq('id', id);
-  return res.status(200).json({ success: true });
+  let authDeleted = false;
+
+  // 1. Tentar primeiro via RPC com SECURITY DEFINER (deleta auth.users e profiles no banco)
+  try {
+    const { data: rpcData, error: rpcError } = await client.rpc('delete_user_complete', {
+      target_user_id: id
+    });
+    if (!rpcError && rpcData?.success) {
+      authDeleted = true;
+    } else if (rpcError) {
+      console.warn('[Admin API] delete_user_complete RPC notice:', rpcError.message);
+    }
+  } catch (rpcEx: any) {
+    console.warn('[Admin API] delete_user_complete RPC exception:', rpcEx.message);
+  }
+
+  // 2. Se o RPC não finalizou ou não existe ainda, tentar via Supabase Auth Admin
+  if (!authDeleted) {
+    try {
+      const { error } = await supabaseAdmin.auth.admin.deleteUser(id);
+      if (error) {
+        console.warn('[Admin API] deleteUser auth warning:', error.message);
+      } else {
+        authDeleted = true;
+      }
+    } catch (e: any) {
+      console.warn('[Admin API] deleteUser auth error:', e.message);
+    }
+  }
+
+  // 3. Deleta o registro em profiles (se o trigger on_profile_deleted_delete_auth estiver ativo, também removerá auth.users automaticamente)
+  try {
+    await client.from('profiles').delete().eq('id', id);
+  } catch (profErr: any) {
+    console.warn('[Admin API] delete profile notice:', profErr.message);
+  }
+
+  return res.status(200).json({ success: true, authDeleted });
 }
 
 async function handleUserPasswordChange(req: VercelRequest, res: VercelResponse) {
@@ -706,11 +737,18 @@ async function handleAccessToggle(req: VercelRequest, res: VercelResponse) {
                   .in('product_id', aiProductIdsToDelete);
               }
               if (uid.includes('@')) {
-                await supabaseAdmin
-                  .from('purchases')
-                  .delete()
-                  .ilike('user_id', uid)
-                  .in('product_id', aiProductIdsToDelete);
+                const { data: prof } = await supabaseAdmin
+                  .from('profiles')
+                  .select('id')
+                  .ilike('email', uid)
+                  .maybeSingle();
+                if (prof?.id) {
+                  await supabaseAdmin
+                    .from('purchases')
+                    .delete()
+                    .eq('user_id', prof.id)
+                    .in('product_id', aiProductIdsToDelete);
+                }
               }
             }
           }
@@ -985,31 +1023,46 @@ async function handlePurchases(req: VercelRequest, res: VercelResponse) {
     let targetProfile: any = null;
 
     if (userId) {
+      const isUUID = (str: string) => /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(str);
+      const isInputUUID = isUUID(userId);
+
       // Lookup profile to check email and VIP status
       try {
-        const { data: pProfile } = await client
+        let pQuery = client
           .from('profiles')
-          .select('id, email, has_unlimited_ai')
-          .eq('id', userId)
-          .maybeSingle();
+          .select('id, email, has_unlimited_ai');
+        if (isInputUUID) {
+          pQuery = pQuery.eq('id', userId);
+        } else {
+          pQuery = pQuery.ilike('email', userId);
+        }
+        const { data: pProfile } = await pQuery.maybeSingle();
         targetProfile = pProfile;
       } catch (err) {
         console.warn('[Admin API] Failed to fetch profile for user purchase lookup:', err);
       }
 
-      const userEmail = targetProfile?.email;
-      let qBase = client.from('purchases').select('*');
-      if (userEmail) {
-        qBase = qBase.or(`user_id.eq.${userId},user_id.ilike.${userEmail}`);
-      } else {
-        qBase = qBase.eq('user_id', userId);
-      }
+      const effectiveUserId = targetProfile?.id || (isInputUUID ? userId : null);
 
-      let { data: pData, error: pError } = await qBase.order('created_at', { ascending: false });
-      if (pError) {
-        console.warn('[Admin API] Scoped purchases query failed, trying supabaseAdmin fallback:', pError.message);
-        const { data: fallbackData } = await supabaseAdmin.from('purchases').select('*').eq('user_id', userId).order('created_at', { ascending: false });
-        pData = fallbackData || [];
+      let pData: any[] = [];
+      if (effectiveUserId) {
+        const { data, error: pError } = await client
+          .from('purchases')
+          .select('*')
+          .eq('user_id', effectiveUserId)
+          .order('created_at', { ascending: false });
+
+        if (pError) {
+          console.warn('[Admin API] Scoped purchases query failed, trying supabaseAdmin fallback:', pError.message);
+          const { data: fallbackData } = await supabaseAdmin
+            .from('purchases')
+            .select('*')
+            .eq('user_id', effectiveUserId)
+            .order('created_at', { ascending: false });
+          pData = fallbackData || [];
+        } else {
+          pData = data || [];
+        }
       }
       purchases = pData || [];
 
@@ -1020,8 +1073,8 @@ async function handlePurchases(req: VercelRequest, res: VercelResponse) {
 
       if (targetProfile?.has_unlimited_ai === true && !hasAiInPurchases) {
         purchases.unshift({
-          id: 'manual_ai_' + userId,
-          user_id: userId,
+          id: 'manual_ai_' + (effectiveUserId || userId),
+          user_id: effectiveUserId || userId,
           product_id: 'ai_subscription',
           is_manual: true,
           created_at: new Date().toISOString()

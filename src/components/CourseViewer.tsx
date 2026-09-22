@@ -36,6 +36,7 @@ import FloatingWhatsApp from './FloatingWhatsApp';
 import SupportSection from './SupportSection';
 import PullToRefresh from './PullToRefresh';
 import { fromDbChapter, isHtmlAppChapter, extractHtmlAppContent } from '../utils/htmlAppHelper';
+import { getChapterIconComponent } from '../utils/chapterIcons';
 import { dataCache } from '../lib/cache';
 import { lazyWithRetry } from '../lib/lazyWithRetry';
 
@@ -750,13 +751,7 @@ export default function CourseViewer({ courseId, userId, onClose, initialCourse,
                                 />
                               ) : (
                                 <div className="w-full h-full bg-zinc-900 flex items-center justify-center text-white/30 group-hover:text-primary transition-colors">
-                                  {isChapterHtmlApp ? (
-                                    <FileCode className="w-10 h-10 sm:w-12 sm:h-12 text-amber-400/80" />
-                                  ) : chapter.content_type === 'audio' ? (
-                                    <Headphones className="w-10 h-10 sm:w-12 sm:h-12 text-primary/80" />
-                                  ) : (
-                                    <PlayCircle className="w-10 h-10 sm:w-12 sm:h-12" />
-                                  )}
+                                  {getChapterIconComponent(chapter, "w-10 h-10 sm:w-12 sm:h-12 text-white/40 group-hover:text-primary transition-colors", false)}
                                 </div>
                               )}
                               
@@ -766,26 +761,22 @@ export default function CourseViewer({ courseId, userId, onClose, initialCourse,
                               <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
                                 <div className={`w-11 h-11 sm:w-14 sm:h-14 rounded-2xl border flex items-center justify-center transition-all duration-500 shadow-xl backdrop-blur-md ${
                                   isCompleted 
-                                    ? 'bg-emerald-500/90 border-emerald-400 text-white scale-90 shadow-[0_0_15px_rgba(16,185,129,0.5)]' 
+                                    ? 'bg-emerald-600/30 border-emerald-400/25 text-emerald-300/70 scale-90 shadow-[0_0_15px_rgba(16,185,129,0.15)] opacity-65' 
                                     : isChapterHtmlApp
                                     ? 'bg-amber-950/70 border-amber-500/40 text-amber-300 group-hover:bg-amber-600 group-hover:border-amber-400 group-hover:text-white group-hover:scale-110 group-hover:shadow-[0_0_20px_rgba(245,158,11,0.6)]'
                                     : 'bg-black/50 border-white/30 text-white group-hover:bg-primary group-hover:border-primary group-hover:scale-110 group-hover:shadow-[0_0_20px_rgba(244,63,94,0.6)]'
                                 }`}>
                                   {isCompleted ? (
-                                    <CheckCircle2 className="w-6 h-6 sm:w-7 sm:h-7 text-white" />
-                                  ) : isChapterHtmlApp ? (
-                                    <FileCode className="w-5 h-5 sm:w-6 sm:h-6 text-white drop-shadow-md" />
-                                  ) : chapter.content_type === 'audio' ? (
-                                    <Headphones className="w-5 h-5 sm:w-6 sm:h-6 text-white drop-shadow-md" />
+                                    <CheckCircle2 className="w-6 h-6 sm:w-7 sm:h-7 text-emerald-300/75 drop-shadow-sm opacity-70" />
                                   ) : (
-                                    <Play className="w-5 h-5 sm:w-6 sm:h-6 text-white fill-white ml-0.5 sm:ml-1 drop-shadow-md" />
+                                    getChapterIconComponent(chapter, "w-5 h-5 sm:w-6 sm:h-6 text-white drop-shadow-md", true)
                                   )}
                                 </div>
                               </div>
 
                               {isCompleted && (
-                                <div className="absolute top-2.5 left-2.5 sm:top-3.5 sm:left-3.5 bg-emerald-500 text-white text-[8px] sm:text-[10px] font-black px-2.5 py-1 rounded-full uppercase tracking-widest shadow-lg italic flex items-center gap-1 border border-emerald-300/40">
-                                  <CheckCircle2 size={10} />
+                                <div className="absolute top-2.5 left-2.5 sm:top-3.5 sm:left-3.5 bg-emerald-600/40 backdrop-blur-md text-white/75 text-[8px] sm:text-[10px] font-black px-2.5 py-1 rounded-full uppercase tracking-widest shadow-md italic flex items-center gap-1 border border-emerald-400/20 opacity-70">
+                                  <CheckCircle2 size={10} className="text-emerald-300/75" />
                                   {t('course.completed')}
                                 </div>
                               )}
@@ -1131,7 +1122,7 @@ export default function CourseViewer({ courseId, userId, onClose, initialCourse,
                             `}
                           >
                             <div className="w-8 h-8 rounded-full bg-zinc-900 flex items-center justify-center shrink-0 border border-white/5">
-                              {isCompleted ? <CheckCircle2 size={16} className="text-green-500" /> : <span className="text-[10px] font-black text-gray-500">{idx + 1}</span>}
+                              {isCompleted ? <CheckCircle2 size={16} className="text-emerald-400/60 opacity-70" /> : <span className="text-[10px] font-black text-gray-500">{idx + 1}</span>}
                             </div>
                             <span className={`text-xs font-bold truncate ${isActive ? 'text-white' : 'text-gray-500'}`}>
                               {chapter.title}

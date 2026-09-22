@@ -93,12 +93,12 @@ export async function handleAiChat(req: VercelRequest, res: VercelResponse) {
         const isUUID = (str: string) =>
           /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(str || '');
 
-        let profile: { has_unlimited_ai?: boolean; is_admin?: boolean; email?: string } | null = null;
+        let profile: { id?: string; has_unlimited_ai?: boolean; is_admin?: boolean; email?: string } | null = null;
 
         if (isUUID(userIdentifier)) {
           const { data } = await supabaseAdmin
             .from('profiles')
-            .select('has_unlimited_ai, is_admin, email')
+            .select('id, has_unlimited_ai, is_admin, email')
             .eq('id', userIdentifier)
             .maybeSingle();
           profile = data;
@@ -108,7 +108,7 @@ export async function handleAiChat(req: VercelRequest, res: VercelResponse) {
           const emailToFind = (userContext?.email || userIdentifier).toLowerCase();
           const { data } = await supabaseAdmin
             .from('profiles')
-            .select('has_unlimited_ai, is_admin, email')
+            .select('id, has_unlimited_ai, is_admin, email')
             .eq('email', emailToFind)
             .maybeSingle();
           profile = data;
@@ -120,10 +120,10 @@ export async function handleAiChat(req: VercelRequest, res: VercelResponse) {
           isUserUnlimited = true;
         } else {
           // Fallback check purchases table
-          const userEmail = profile?.email;
+          const targetUid = (profile?.id && isUUID(profile.id)) ? profile.id : (isUUID(userIdentifier) ? userIdentifier : null);
           let pQuery = supabaseAdmin.from('purchases').select('id');
-          if (userEmail) {
-            pQuery = pQuery.or(`user_id.eq.${userIdentifier},user_id.ilike.${userEmail}`);
+          if (targetUid) {
+            pQuery = pQuery.eq('user_id', targetUid);
           } else {
             pQuery = pQuery.eq('user_id', userIdentifier);
           }

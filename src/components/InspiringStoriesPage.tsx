@@ -83,52 +83,64 @@ export const InspiringStoriesPage: React.FC<InspiringStoriesPageProps> = ({
   const fetchApprovedStories = async () => {
     setLoading(true);
     try {
-      let approvedList: Testimonial[] = [];
+      const allApproved: Testimonial[] = [];
+      const seenIds = new Set<string>();
+      const seenSignatures = new Set<string>();
 
-      // 1. Fetch approved testimonials from server API
+      const addTestimonial = (t: any) => {
+        if (!t || !t.id) return;
+        // Considera aprovado se status for 'approved' e consent não for explicitamente falso
+        if (t.status !== 'approved') return;
+        if (t.consent === false) return;
+
+        const sig = `${(t.user_name || '').trim().toLowerCase()}::${(t.content || '').trim()}`;
+        if (seenIds.has(t.id) || seenSignatures.has(sig)) return;
+
+        seenIds.add(t.id);
+        seenSignatures.add(sig);
+        allApproved.push(t as Testimonial);
+      };
+
+      // 1. Direct query to dedicated Supabase testimonials table (sem filtrar consent=false no SQL para não perder valores nulos)
+      try {
+        const { data, error } = await supabase
+          .from('testimonials')
+          .select('*')
+          .eq('status', 'approved')
+          .order('created_at', { ascending: false });
+
+        if (!error && Array.isArray(data)) {
+          data.forEach(addTestimonial);
+        }
+      } catch (e) {
+        console.warn('[InspiringStories] Supabase query notice:', e);
+      }
+
+      // 2. Fetch approved testimonials from server API
       try {
         const res = await fetch('/api/v1/testimonials?status=approved');
         if (res.ok) {
           const data = await res.json();
           if (Array.isArray(data)) {
-            approvedList = data as Testimonial[];
+            data.forEach(addTestimonial);
           }
         }
       } catch (apiErr) {
         console.warn('[InspiringStories] API fetch notice:', apiErr);
       }
 
-      // 2. Fallback to Supabase if API returned empty
-      if (approvedList.length === 0) {
-        try {
-          const { data, error } = await supabase
-            .from('testimonials')
-            .select('*')
-            .eq('status', 'approved')
-            .order('created_at', { ascending: false });
-
-          if (!error && data && data.length > 0) {
-            approvedList = data as Testimonial[];
+      // 3. Merge / Fallback from local cache
+      try {
+        const cached = localStorage.getItem('app_testimonials_cache');
+        if (cached) {
+          const parsed = JSON.parse(cached);
+          if (Array.isArray(parsed)) {
+            parsed.forEach(addTestimonial);
           }
-        } catch (e) {
-          console.warn('[InspiringStories] Supabase fallback notice:', e);
         }
-      }
+      } catch (e) {}
 
-      // 3. Fallback to local cache if still empty
-      if (approvedList.length === 0) {
-        try {
-          const cached = localStorage.getItem('app_testimonials_cache');
-          if (cached) {
-            const parsed = JSON.parse(cached);
-            if (Array.isArray(parsed)) {
-              approvedList = parsed.filter((t: any) => t.status === 'approved');
-            }
-          }
-        } catch (e) {}
-      }
-
-      setStories(approvedList);
+      setStories(allApproved);
     } catch (err) {
       console.warn('[InspiringStories] Exception fetching stories:', err);
       setStories([]);

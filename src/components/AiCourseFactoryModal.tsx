@@ -45,6 +45,7 @@ import { dataCache } from '../lib/cache';
 import { showToast } from '../lib/customToast';
 import { BlockLessonViewer } from './BlockLessonViewer';
 import { prepareChapterForDb } from '../utils/htmlAppHelper';
+import { useI18n } from '../contexts/I18nContext';
 
 interface AiCourseFactoryModalProps {
   isOpen: boolean;
@@ -100,12 +101,16 @@ export const AiCourseFactoryModal: React.FC<AiCourseFactoryModalProps> = ({
   onOpenInEditor,
   onOpenManualEditor
 }) => {
+  const { language: currentAppLanguage } = useI18n();
+
   // Navigation State
   const [modalStage, setModalStage] = useState<'input' | 'generating' | 'review' | 'preview_lesson'>('input');
   
   // Input parameters
   const [command, setCommand] = useState('');
-  const [language, setLanguage] = useState<'en' | 'pt-BR' | 'es'>('en');
+  const [language, setLanguage] = useState<'en' | 'pt-BR' | 'es'>(
+    currentAppLanguage === 'pt' ? 'pt-BR' : currentAppLanguage === 'es' ? 'es' : 'en'
+  );
   const [priceTier, setPriceTier] = useState<number>(97);
   const [tone, setTone] = useState('authoritative_empathetic');
   const [referenceImageUrl, setReferenceImageUrl] = useState('');
@@ -114,6 +119,7 @@ export const AiCourseFactoryModal: React.FC<AiCourseFactoryModalProps> = ({
   // Generation state
   const [steps, setSteps] = useState<GenerationStep[]>(DEFAULT_STEPS);
   const [currentStepIndex, setCurrentStepIndex] = useState(0);
+  const currentStepRef = useRef(0);
   const [generationError, setGenerationError] = useState<string | null>(null);
 
   // Result state
@@ -145,6 +151,7 @@ export const AiCourseFactoryModal: React.FC<AiCourseFactoryModalProps> = ({
     setModalStage('generating');
     setGenerationError(null);
     setCurrentStepIndex(0);
+    currentStepRef.current = 0;
 
     // Initialize steps
     const newSteps = DEFAULT_STEPS.map((s, idx) => ({
@@ -158,6 +165,7 @@ export const AiCourseFactoryModal: React.FC<AiCourseFactoryModalProps> = ({
       setCurrentStepIndex((prev) => {
         if (prev < 6) {
           const next = prev + 1;
+          currentStepRef.current = next;
           setSteps((currentSteps) =>
             currentSteps.map((s, i) => ({
               ...s,
@@ -211,9 +219,10 @@ export const AiCourseFactoryModal: React.FC<AiCourseFactoryModalProps> = ({
       clearInterval(stepInterval);
       console.error('[AI Course Factory Error]', err);
       setGenerationError(err.message || 'An error occurred during generation.');
+      const errIdx = currentStepRef.current;
       setSteps((currentSteps) =>
         currentSteps.map((s, i) =>
-          i === currentStepIndex ? { ...s, status: 'error' } : s
+          i === errIdx ? { ...s, status: 'error' } : s
         )
       );
     }

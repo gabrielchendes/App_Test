@@ -79,12 +79,14 @@ export const TestimonialPage: React.FC<TestimonialPageProps> = ({
     setIsSubmitting(true);
 
     try {
+      const canonicalId = 't_' + Date.now() + '_' + Math.random().toString(36).substring(2, 7);
       const testimonialData = {
+        id: canonicalId,
         user_id: user.id,
         user_name: authorName.trim(),
         user_email: userEmail,
         user_avatar: userAvatar,
-        course_title: 'General',
+        course_title: 'Geral',
         rating,
         headline: '',
         content: content.trim(),
@@ -95,7 +97,20 @@ export const TestimonialPage: React.FC<TestimonialPageProps> = ({
         created_at: new Date().toISOString()
       };
 
-      // 1. Save to server API
+      // 1. Direct Supabase upsert (authoritative database storage)
+      try {
+        const { error } = await supabase
+          .from('testimonials')
+          .upsert(testimonialData, { onConflict: 'id' });
+
+        if (error) {
+          console.warn('[Testimonial] Supabase upsert notice:', error.message);
+        }
+      } catch (dbErr) {
+        console.warn('[Testimonial] Database upsert exception:', dbErr);
+      }
+
+      // 2. Sync to server API (syncs testimonials.json and backend cache)
       try {
         await fetch('/api/v1/testimonials', {
           method: 'POST',
@@ -106,27 +121,14 @@ export const TestimonialPage: React.FC<TestimonialPageProps> = ({
         console.warn('[Testimonial] API save exception:', apiErr);
       }
 
-      // 2. Save to Supabase testimonials table if available
-      try {
-        const { error } = await supabase
-          .from('testimonials')
-          .insert(testimonialData);
-
-        if (error) {
-          console.warn('[Testimonial] Direct insert notice:', error.message);
-        }
-      } catch (dbErr) {
-        console.warn('[Testimonial] Database insert exception:', dbErr);
-      }
-
-      // 3. Local fallback storage to guarantee zero data loss
+      // 3. Local storage cache using the exact same canonical ID (no synthetic local_ ID)
       try {
         const existingLocal = JSON.parse(localStorage.getItem('app_testimonials_cache') || '[]');
-        existingLocal.unshift({
-          ...testimonialData,
-          id: 'local_' + Date.now()
-        });
-        localStorage.setItem('app_testimonials_cache', JSON.stringify(existingLocal.slice(0, 50)));
+        const filtered = Array.isArray(existingLocal) 
+          ? existingLocal.filter((t: any) => t.id !== canonicalId && t.content?.trim() !== testimonialData.content) 
+          : [];
+        filtered.unshift(testimonialData);
+        localStorage.setItem('app_testimonials_cache', JSON.stringify(filtered.slice(0, 50)));
       } catch (cacheErr) {
         console.warn('[Testimonial] Local storage cache exception:', cacheErr);
       }

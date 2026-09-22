@@ -76,6 +76,7 @@ export interface Testimonial {
   status: 'pending' | 'approved' | 'rejected';
   is_read: boolean;
   consent: boolean;
+  approved_at?: string;
   created_at: string;
   updated_at?: string;
 }
@@ -96,6 +97,7 @@ export interface Chapter {
   title: string;
   description: string;
   content_type: 'video' | 'audio' | 'pdf' | 'text' | 'link' | 'checklist' | 'interactive' | 'html_app' | 'html';
+  custom_icon?: string;
   video_url?: string;
   pdf_url?: string;
   cover_url?: string;

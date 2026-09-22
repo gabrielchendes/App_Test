@@ -497,16 +497,7 @@ export default function AdminPanel({ user }: AdminPanelProps) {
 
   useEffect(() => {
     const fetchUnreadTestimonials = async () => {
-      try {
-        const res = await fetch('/api/v1/testimonials?all=true');
-        if (res.ok) {
-          const data = await res.json();
-          if (Array.isArray(data)) {
-            setUnreadTestimonialsCount(data.filter((t: any) => !t.is_read).length);
-            return;
-          }
-        }
-      } catch (e) {}
+      // 1. Direct query count from dedicated testimonials table
       try {
         const { count, error } = await supabase
           .from('testimonials')
@@ -517,6 +508,20 @@ export default function AdminPanel({ user }: AdminPanelProps) {
           return;
         }
       } catch (e) {}
+
+      // 2. Fallback to API route
+      try {
+        const res = await fetch('/api/v1/testimonials?all=true');
+        if (res.ok) {
+          const data = await res.json();
+          if (Array.isArray(data)) {
+            setUnreadTestimonialsCount(data.filter((t: any) => !t.is_read).length);
+            return;
+          }
+        }
+      } catch (e) {}
+
+      // 3. Fallback to local cache if offline
       try {
         const local = localStorage.getItem('app_testimonials_cache');
         if (local) {
@@ -1618,17 +1623,32 @@ export default function AdminPanel({ user }: AdminPanelProps) {
     // confirm() removed
     setDeletingUser(true);
     try {
-      const { data: { session } } = await supabase.auth.getSession();
-      const data = await safeFetch(`/api/v1/admin?action=user-delete&id=${userId}`, {
-        method: 'DELETE',
-        headers: {
-          'Authorization': `Bearer ${session?.access_token}`
+      // 1. Tenta deletar de auth.users e profiles diretamente via RPC seguro
+      let deletedViaRpc = false;
+      try {
+        const { data: rpcData, error: rpcError } = await supabase.rpc('delete_user_complete', {
+          target_user_id: userId
+        });
+        if (!rpcError && rpcData?.success) {
+          deletedViaRpc = true;
         }
-      });
+      } catch (rpcErr) {
+        // Fallback para API
+      }
 
-      if (!data || data.error) throw new Error(data?.error || 'Erro ao excluir usuário');
+      if (!deletedViaRpc) {
+        const { data: { session } } = await supabase.auth.getSession();
+        const data = await safeFetch(`/api/v1/admin?action=user-delete&id=${userId}`, {
+          method: 'DELETE',
+          headers: {
+            'Authorization': `Bearer ${session?.access_token}`
+          }
+        });
 
-      toast.success('Usuário excluído com sucesso!');
+        if (!data || data.error) throw new Error(data?.error || 'Erro ao excluir usuário');
+      }
+
+      toast.success('Usuário e conta de autenticação excluídos com sucesso!');
       setSelectedUserForCourses(null);
       fetchData();
     } catch (err: any) {

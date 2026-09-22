@@ -180,12 +180,12 @@ export default function AiAssistantModal({ userId, userEmail, userName, userAvat
         const isUUID = (str: string) =>
           /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(str || '');
 
-        let profileData: { has_unlimited_ai?: boolean; is_admin?: boolean; email?: string } | null = null;
+        let profileData: { id?: string; has_unlimited_ai?: boolean; is_admin?: boolean; email?: string } | null = null;
 
         if (isUUID(cleanId)) {
           const { data } = await supabase
             .from('profiles')
-            .select('has_unlimited_ai, is_admin, email')
+            .select('id, has_unlimited_ai, is_admin, email')
             .eq('id', cleanId)
             .maybeSingle();
           profileData = data;
@@ -195,7 +195,7 @@ export default function AiAssistantModal({ userId, userEmail, userName, userAvat
           const emailToFind = (userEmail || cleanId).toLowerCase();
           const { data } = await supabase
             .from('profiles')
-            .select('has_unlimited_ai, is_admin, email')
+            .select('id, has_unlimited_ai, is_admin, email')
             .eq('email', emailToFind)
             .maybeSingle();
           profileData = data;
@@ -209,10 +209,10 @@ export default function AiAssistantModal({ userId, userEmail, userName, userAvat
           } else if (profileData.has_unlimited_ai === true) {
             isUnlimited = true;
           } else {
-            const emailToFind = profileData.email || userEmail;
             let q = supabase.from('purchases').select('id');
-            if (emailToFind) {
-              q = q.or(`user_id.eq.${cleanId},user_id.ilike.${emailToFind}`);
+            const targetUid = isUUID(cleanId) ? cleanId : (profileData.id && isUUID(profileData.id) ? profileData.id : null);
+            if (targetUid) {
+              q = q.eq('user_id', targetUid);
             } else {
               q = q.eq('user_id', cleanId);
             }
