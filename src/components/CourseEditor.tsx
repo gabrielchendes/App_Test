@@ -55,6 +55,7 @@ import { AiCourseFactoryModal } from './AiCourseFactoryModal';
 import { fetchChecklistByChapterId, saveChecklistToDatabase } from '../services/checklistService';
 import { formatHtmlAppContent, fromDbChapter, isHtmlAppChapter, prepareChapterForDb } from '../utils/htmlAppHelper';
 import { ChapterIconPicker, getChapterIconComponent } from '../utils/chapterIcons';
+import { ChapterBadgeCustomizer } from './ChapterBadgeCustomizer';
 import { parseCourseHtmlFunnel, serializeCourseHtmlFunnel } from '../utils/courseFunnel';
 import ImageCropperModal from './ImageCropperModal';
 import { dataCache } from '../lib/cache';
@@ -362,6 +363,7 @@ export default function CourseEditor({
     preview_type: 'video',
     preview_video_url: '',
     preview_pdf_url: '',
+    pdf_url: '',
     preview_rich_text: '',
     preview_link_text: '',
     preview_link_url: '',
@@ -377,6 +379,7 @@ export default function CourseEditor({
     title: '',
     content_type: 'video',
     custom_icon: '',
+    custom_badge: '',
     video_url: '',
     pdf_url: '',
     button_link_text: '',
@@ -565,13 +568,16 @@ export default function CourseEditor({
       if (courseError) throw courseError;
 
       const funnelParsed = parseCourseHtmlFunnel(courseData);
+      const effectivePdfUrl = courseData.pdf_url || courseData.preview_pdf_url || '';
 
       setCourse({
         ...courseData,
+        pdf_url: effectivePdfUrl,
+        preview_pdf_url: effectivePdfUrl,
         modal_type: funnelParsed.modal_type,
         modal_html: funnelParsed.modal_html,
         benefits: funnelParsed.benefits,
-        preview_type: funnelParsed.preview_type,
+        preview_type: funnelParsed.preview_type || (effectivePdfUrl ? 'pdf' : 'video'),
         preview_rich_text: funnelParsed.preview_rich_text
       });
 
@@ -750,7 +756,8 @@ export default function CourseEditor({
         preview_subtitle: course.preview_subtitle || '',
         preview_type: finalPreviewType,
         preview_video_url: course.preview_video_url || '',
-        preview_pdf_url: course.preview_pdf_url || '',
+        preview_pdf_url: course.preview_pdf_url || course.pdf_url || '',
+        pdf_url: course.pdf_url || course.preview_pdf_url || '',
         preview_rich_text: finalPreviewRichText,
         preview_link_text: course.preview_link_text || '',
         preview_link_url: course.preview_link_url || '',
@@ -869,7 +876,8 @@ export default function CourseEditor({
           preview_subtitle: course.preview_subtitle || '',
           preview_type: finalPreviewType,
           preview_video_url: course.preview_video_url || '',
-          preview_pdf_url: course.preview_pdf_url || '',
+          preview_pdf_url: course.preview_pdf_url || course.pdf_url || '',
+          pdf_url: course.pdf_url || course.preview_pdf_url || '',
           preview_rich_text: finalPreviewRichText,
           preview_link_text: course.preview_link_text || '',
           preview_link_url: course.preview_link_url || '',
@@ -932,11 +940,15 @@ export default function CourseEditor({
       if (editingChapter.custom_icon) {
         lessonData.custom_icon = editingChapter.custom_icon;
       }
+      if (editingChapter.custom_badge !== undefined) {
+        lessonData.custom_badge = editingChapter.custom_badge?.trim() || null;
+      }
 
       if (editingChapter.id) {
         let { error } = await supabase.from('chapters').update(lessonData).eq('id', editingChapter.id);
-        if (error && error.message?.includes('custom_icon')) {
-          delete lessonData.custom_icon;
+        if (error && (error.message?.includes('custom_icon') || error.message?.includes('custom_badge'))) {
+          if (error.message?.includes('custom_icon')) delete lessonData.custom_icon;
+          if (error.message?.includes('custom_badge')) delete lessonData.custom_badge;
           const retry = await supabase.from('chapters').update(lessonData).eq('id', editingChapter.id);
           error = retry.error;
         }
@@ -947,8 +959,9 @@ export default function CourseEditor({
         toast.success('Aula atualizada!');
       } else {
         let { data: newChapter, error } = await supabase.from('chapters').insert([lessonData]).select().single();
-        if (error && error.message?.includes('custom_icon')) {
-          delete lessonData.custom_icon;
+        if (error && (error.message?.includes('custom_icon') || error.message?.includes('custom_badge'))) {
+          if (error.message?.includes('custom_icon')) delete lessonData.custom_icon;
+          if (error.message?.includes('custom_badge')) delete lessonData.custom_badge;
           const retry = await supabase.from('chapters').insert([lessonData]).select().single();
           newChapter = retry.data;
           error = retry.error;
@@ -973,6 +986,7 @@ export default function CourseEditor({
         title: '',
         content_type: 'video',
         custom_icon: '',
+        custom_badge: '',
         video_url: '',
         pdf_url: '',
         cover_url: '',
@@ -1016,14 +1030,18 @@ export default function CourseEditor({
       if (editingExistingChapter.custom_icon) {
         updateData.custom_icon = editingExistingChapter.custom_icon;
       }
+      if (editingExistingChapter.custom_badge !== undefined) {
+        updateData.custom_badge = editingExistingChapter.custom_badge?.trim() || null;
+      }
 
       let { error } = await supabase
         .from('chapters')
         .update(updateData)
         .eq('id', editingExistingChapter.id);
 
-      if (error && error.message?.includes('custom_icon')) {
-        delete updateData.custom_icon;
+      if (error && (error.message?.includes('custom_icon') || error.message?.includes('custom_badge'))) {
+        if (error.message?.includes('custom_icon')) delete updateData.custom_icon;
+        if (error.message?.includes('custom_badge')) delete updateData.custom_badge;
         const retry = await supabase
           .from('chapters')
           .update(updateData)
@@ -1881,8 +1899,8 @@ export default function CourseEditor({
                                     <label className="text-[10px] font-black text-gray-500 uppercase tracking-widest ml-1">URL do Material PDF</label>
                                     <input 
                                       type="text" 
-                                      value={course.preview_pdf_url || ''}
-                                      onChange={e => setCourse({...course, preview_pdf_url: e.target.value})}
+                                      value={course.preview_pdf_url || course.pdf_url || ''}
+                                      onChange={e => setCourse({...course, preview_pdf_url: e.target.value, pdf_url: e.target.value})}
                                       className="w-full bg-black/60 border border-white/10 rounded-xl px-4 py-3 text-xs text-primary focus:border-primary outline-none transition-all font-mono"
                                       placeholder="https://domain.com/material.pdf"
                                     />
@@ -2430,6 +2448,14 @@ export default function CourseEditor({
                           value={editingChapter.custom_icon || ''}
                           contentType={editingChapter.content_type}
                           onChange={(icon) => setEditingChapter({ ...editingChapter, custom_icon: icon })}
+                          themeColor="emerald"
+                        />
+
+                        {/* Personalização da Etiqueta / Badge Acima do Título da Aula */}
+                        <ChapterBadgeCustomizer
+                          value={editingChapter.custom_badge || ''}
+                          chapterTitle={editingChapter.title}
+                          onChange={(badge) => setEditingChapter({ ...editingChapter, custom_badge: badge })}
                           themeColor="emerald"
                         />
 
@@ -3069,6 +3095,14 @@ export default function CourseEditor({
                                               value={draft.custom_icon || ''}
                                               contentType={draft.content_type}
                                               onChange={(icon) => setEditingExistingChapter(prev => prev ? ({ ...prev, custom_icon: icon }) : ({ ...ch, custom_icon: icon }))}
+                                              themeColor="blue"
+                                            />
+
+                                            {/* Personalização da Etiqueta / Badge Acima do Título da Aula */}
+                                            <ChapterBadgeCustomizer
+                                              value={draft.custom_badge || ''}
+                                              chapterTitle={draft.title}
+                                              onChange={(badge) => setEditingExistingChapter(prev => prev ? ({ ...prev, custom_badge: badge }) : ({ ...ch, custom_badge: badge }))}
                                               themeColor="blue"
                                             />
 

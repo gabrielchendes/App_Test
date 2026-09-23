@@ -196,8 +196,9 @@ CREATE TABLE IF NOT EXISTS public.chapters (
     created_at TIMESTAMPTZ DEFAULT NOW()
 );
 
--- Se a tabela chapters já existir, execute para adicionar suporte direto a custom_icon:
+-- Se a tabela chapters já existir, execute para adicionar suporte direto a custom_icon e custom_badge:
 -- ALTER TABLE public.chapters ADD COLUMN IF NOT EXISTS custom_icon TEXT;
+-- ALTER TABLE public.chapters ADD COLUMN IF NOT EXISTS custom_badge TEXT;
 
 -- 6. Tabela `products` (Legado - para compatibilidade)
 CREATE TABLE IF NOT EXISTS public.products (

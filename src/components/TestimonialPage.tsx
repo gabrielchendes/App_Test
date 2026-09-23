@@ -171,16 +171,16 @@ export const TestimonialPage: React.FC<TestimonialPageProps> = ({
 
           <div className="space-y-3">
             <h2 className="text-2xl sm:text-3xl font-black text-white tracking-tight">
-              Thank You for Your Feedback!
+              Thank You for Sharing Your Story!
             </h2>
             <p className="text-gray-300 text-sm sm:text-base leading-relaxed">
-              We truly appreciate you taking the time to share your story, <strong className="text-amber-400">{authorName}</strong>. Your testimonial has been received and shared with our team!
+              We truly appreciate you taking the time to share your results, <strong className="text-amber-400">{authorName}</strong>. Your story has been submitted and will soon inspire other women in our community!
             </p>
           </div>
 
           <div className="p-4 rounded-2xl bg-white/5 border border-white/10 text-xs text-gray-400 flex items-center gap-3 text-left">
             <ShieldCheck size={24} className="text-amber-400 shrink-0" />
-            <span>Your feedback inspires other women and helps us continuously improve the experience for everyone.</span>
+            <span>Your story inspires other women and helps us continuously improve the experience for everyone.</span>
           </div>
 
           <div className="flex flex-col sm:flex-row gap-3 pt-2">
@@ -242,11 +242,11 @@ export const TestimonialPage: React.FC<TestimonialPageProps> = ({
         {/* Hero Section */}
         <div className="text-center space-y-3">
           <h1 className="text-3xl sm:text-4xl font-black text-white tracking-tight">
-            Share Your Experience
+            Share Your Results
           </h1>
 
           <p className="text-gray-400 text-sm sm:text-base max-w-lg mx-auto leading-relaxed">
-            We would love to hear your feedback! Tell us how your experience has been and what impact this content made in your life.
+            We would love to hear your story! Tell us about your journey and the impact these lessons made in your life.
           </p>
         </div>
 
@@ -306,7 +306,7 @@ export const TestimonialPage: React.FC<TestimonialPageProps> = ({
           {/* 1. Rating */}
           <div className="space-y-3">
             <label className="text-xs font-black text-gray-300 uppercase tracking-wider block">
-              How would you rate your overall experience?
+              How was your experience?
             </label>
             <div className="flex flex-wrap items-center gap-2">
               <div className="flex items-center gap-1">
@@ -344,7 +344,7 @@ export const TestimonialPage: React.FC<TestimonialPageProps> = ({
           <div className="space-y-2">
             <div className="flex items-center justify-between">
               <label className="text-xs font-black text-gray-300 uppercase tracking-wider block">
-                Your Complete Testimonial <span className="text-amber-400">*</span>
+                Your Story:
               </label>
             </div>
             <textarea
@@ -364,12 +364,12 @@ export const TestimonialPage: React.FC<TestimonialPageProps> = ({
               }}
               onInput={(e) => (e.target as HTMLTextAreaElement).setCustomValidity('')}
               title={fillThisFieldMsg}
-              placeholder="Write your complete review here: How was your experience with the content? What key insights or results did you achieve, and how did it help you? Feel free to share your thoughts in detail..."
+              placeholder="What was your biggest breakthrough or change after applying these lessons? Tell us your story in detail..."
               className="w-full bg-black/80 border border-white/10 rounded-2xl p-4 text-white text-sm focus:border-amber-500 outline-none transition-colors leading-relaxed custom-scrollbar placeholder:text-zinc-600"
               required
             />
             <p className="text-[11px] text-gray-500">
-              Tip: Be candid and share specific highlights of what you learned or achieved.
+              Tip: Be specific! Mentioning real changes or key moments helps other women relate to your journey.
             </p>
           </div>
 
@@ -384,14 +384,14 @@ export const TestimonialPage: React.FC<TestimonialPageProps> = ({
                 className="mt-0.5 w-4 h-4 rounded text-amber-500 focus:ring-amber-500 bg-black border-white/20 cursor-pointer accent-amber-500"
               />
               <label htmlFor="consent-check" className="text-xs text-gray-300 leading-relaxed cursor-pointer select-none">
-                I authorize the sharing of my testimonial and feedback on the public stories page and official channels to inspire and support other women.
+                I authorize sharing my story on the public community page and official channels to inspire and support other women.
               </label>
             </div>
             {!consent && (
               <div className="ml-7 flex items-center gap-2 text-[11px] text-amber-400/90 bg-amber-500/10 px-3 py-2 rounded-xl border border-amber-500/20">
                 <Lock size={13} className="shrink-0 text-amber-400" />
                 <span>
-                  <strong>Confidential Use:</strong> Your testimonial will be delivered exclusively to the administration and <u>will not</u> be displayed publicly in the stories gallery.
+                  <strong>Confidential Use:</strong> Your story will be delivered exclusively to the administration and <u>will not</u> be displayed publicly in the stories gallery.
                 </span>
               </div>
             )}
@@ -407,12 +407,12 @@ export const TestimonialPage: React.FC<TestimonialPageProps> = ({
               {isSubmitting ? (
                 <>
                   <div className="w-5 h-5 border-2 border-zinc-950 border-t-transparent rounded-full animate-spin" />
-                  <span>Submitting Testimonial...</span>
+                  <span>Sharing Story...</span>
                 </>
               ) : (
                 <>
                   <Send size={16} className="text-zinc-950 transition-transform duration-300 group-hover:translate-x-1 shrink-0" />
-                  <span>Submit My Testimonial</span>
+                  <span>Share My Story</span>
                 </>
               )}
             </button>

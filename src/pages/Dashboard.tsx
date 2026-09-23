@@ -425,9 +425,12 @@ export default function Dashboard({ user }: DashboardProps) {
       const processedCourses = fetchedCoursesData.map(c => {
         const funnelParsed = parseCourseHtmlFunnel(c);
         const isMainCourse = !!c.is_free && !c.is_bonus;
+        const effectivePdf = c.pdf_url || c.preview_pdf_url || '';
         return {
           ...c,
           ...funnelParsed,
+          pdf_url: effectivePdf,
+          preview_pdf_url: c.preview_pdf_url || effectivePdf,
           price: isMainCourse ? mainPrice : c.price,
           checkout_url: isMainCourse ? mainCheckoutUrl : (courseToPackageCheckout[c.id] || c.checkout_url)
         };
@@ -457,6 +460,14 @@ export default function Dashboard({ user }: DashboardProps) {
           }
         });
       }
+
+      // Ensure courses with PDF materials reflect at least 1 material in stats
+      processedCourses.forEach(c => {
+        if ((c.pdf_url || c.preview_pdf_url) && (!stats[c.id] || (stats[c.id].lessons === 0 && stats[c.id].materials === 0))) {
+          if (!stats[c.id]) stats[c.id] = { lessons: 0, materials: 1 };
+          else stats[c.id].materials = 1;
+        }
+      });
 
       const progData = (progressResult.status === 'fulfilled' && (progressResult.value as any)?.data) 
         ? (progressResult.value as any).data 
@@ -545,17 +556,12 @@ export default function Dashboard({ user }: DashboardProps) {
         console.warn('Storage write failed', e);
       }
 
-      // Check if the course has modules or chapters in the stats
-      const hasContent = (courseStats[course.id]?.lessons || 0) + (courseStats[course.id]?.materials || 0) > 0;
-      
-      // If it's pure PDF (no internal lessons/modules) and has a PDF URL, open it directly
-      if (course.pdf_url && !hasContent && !viewingCourseId) {
-        window.open(course.pdf_url, '_blank');
-        return;
-      }
-      
-      // Otherwise, open the viewer with immediate course context
-      setViewingCourse(course);
+      // Open the viewer with immediate course context (handles video, PDF, and interactive lessons)
+      setViewingCourse({
+        ...course,
+        pdf_url: course.pdf_url || course.preview_pdf_url || '',
+        preview_pdf_url: course.preview_pdf_url || course.pdf_url || ''
+      });
       setViewingCourseId(course.id);
     } else {
       setSelectedCourse(course);

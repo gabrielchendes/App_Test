@@ -4,6 +4,7 @@ export const HTML_APP_PREFIX = '<!-- HTML_APP -->';
 export const AUDIO_LESSON_PREFIX = '<!-- AUDIO_LESSON -->';
 export const AUDIO_PODCAST_PREFIX = '<!-- AUDIO_PODCAST -->';
 export const CUSTOM_ICON_PREFIX = '<!-- CUSTOM_ICON:';
+export const CUSTOM_BADGE_PREFIX = '<!-- CUSTOM_BADGE:';
 
 /**
  * Extracts custom play/lesson icon marker if present in the text
@@ -28,6 +29,31 @@ export function formatCustomIcon(rawText: string = '', icon?: string | null): st
     return cleanText;
   }
   return `<!-- CUSTOM_ICON:${icon.trim()} -->\n${cleanText}`;
+}
+
+/**
+ * Extracts custom badge text if present in the text
+ */
+export function extractCustomBadge(storedContent?: string | null): { badge?: string; cleanText: string } {
+  if (!storedContent) return { badge: undefined, cleanText: '' };
+  const match = storedContent.match(/<!--\s*CUSTOM_BADGE:(.*?)\s*-->/);
+  if (match) {
+    const badge = match[1]?.trim();
+    const cleanText = storedContent.replace(/<!--\s*CUSTOM_BADGE:.*?\s*-->\r?\n?/, '');
+    return { badge: badge || undefined, cleanText };
+  }
+  return { badge: undefined, cleanText: storedContent };
+}
+
+/**
+ * Formats rich_text embedding the custom badge marker when specified
+ */
+export function formatCustomBadge(rawText: string = '', badge?: string | null): string {
+  const { cleanText } = extractCustomBadge(rawText);
+  if (!badge || badge.trim() === '') {
+    return cleanText;
+  }
+  return `<!-- CUSTOM_BADGE:${badge.trim()} -->\n${cleanText}`;
 }
 
 /**
@@ -178,6 +204,7 @@ export function prepareChapterForDb(chapter: {
   content_type?: string;
   rich_text?: string | null;
   custom_icon?: string | null;
+  custom_badge?: string | null;
 }): {
   content_type: 'video' | 'pdf' | 'text' | 'link' | 'checklist' | 'interactive';
   rich_text: string;
@@ -201,9 +228,11 @@ export function prepareChapterForDb(chapter: {
     dbContentType = chapter.content_type;
   }
 
-  // Extract any existing icon from rich_text
-  const { icon: existingIcon, cleanText } = extractCustomIcon(chapter.rich_text);
+  // Extract any existing icon and badge from rich_text
+  const { icon: existingIcon, cleanText: textAfterIcon } = extractCustomIcon(chapter.rich_text);
+  const { badge: existingBadge, cleanText } = extractCustomBadge(textAfterIcon);
   const targetIcon = chapter.custom_icon !== undefined ? chapter.custom_icon : existingIcon;
+  const targetBadge = chapter.custom_badge !== undefined ? chapter.custom_badge : existingBadge;
 
   let dbRichText = cleanText || '';
   if (isAudio) {
@@ -217,6 +246,9 @@ export function prepareChapterForDb(chapter: {
   if (targetIcon) {
     dbRichText = formatCustomIcon(dbRichText, targetIcon);
   }
+  if (targetBadge && targetBadge.trim() !== '') {
+    dbRichText = formatCustomBadge(dbRichText, targetBadge);
+  }
 
   return {
     content_type: dbContentType,
@@ -228,15 +260,18 @@ export function prepareChapterForDb(chapter: {
  * Maps a database chapter to frontend representation.
  * If the database stored an Audio Lesson with 'video' + marker, maps it to 'audio'.
  * If the database stored an HTML Mini App with 'interactive' + marker, maps it to 'html'.
- * Also extracts custom_icon if embedded in rich_text or stored directly.
+ * Also extracts custom_icon and custom_badge if embedded in rich_text or stored directly.
  */
 export function fromDbChapter<T extends Partial<Chapter>>(ch: T): T {
-  const { icon: extractedIcon, cleanText } = extractCustomIcon(ch.rich_text);
+  const { icon: extractedIcon, cleanText: textAfterIcon } = extractCustomIcon(ch.rich_text);
+  const { badge: extractedBadge, cleanText } = extractCustomBadge(textAfterIcon);
   const customIcon = (ch as any).custom_icon || extractedIcon || undefined;
+  const customBadge = (ch as any).custom_badge || (ch as any).badge_text || extractedBadge || undefined;
 
   let workingCh: T = {
     ...ch,
     custom_icon: customIcon,
+    custom_badge: customBadge,
     rich_text: cleanText
   };
 
@@ -252,6 +287,12 @@ export function fromDbChapter<T extends Partial<Chapter>>(ch: T): T {
       ...workingCh,
       content_type: 'html',
       rich_text: extractHtmlAppContent(workingCh.rich_text)
+    };
+  }
+  if (workingCh.content_type === 'pdf') {
+    return {
+      ...workingCh,
+      pdf_url: workingCh.pdf_url || (workingCh as any).video_url || ''
     };
   }
   return workingCh;

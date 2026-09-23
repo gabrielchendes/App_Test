@@ -218,7 +218,7 @@ export const InspiringStoriesPage: React.FC<InspiringStoriesPageProps> = ({
           </h1>
 
           <p className="text-base sm:text-lg text-gray-300 leading-relaxed font-normal">
-            Read how women in our community are transforming their motherhood experience, finding confidence, and supporting each other every step of the way.
+            Discover how women in our community are restoring their relationships, regaining confidence, and rewriting their stories.
           </p>
 
           {/* Social Proof & Metrics Bar */}
@@ -443,7 +443,7 @@ export const InspiringStoriesPage: React.FC<InspiringStoriesPageProps> = ({
             </h3>
 
             <p className="text-sm sm:text-base text-gray-300 leading-relaxed">
-              Every breakthrough, big or small, encourages another woman on her journey. Share what you learned and the difference it made for you.
+              Every breakthrough, big or small, helps another woman take her next step. Share your journey and how these lessons transformed your life.
             </p>
 
             <div className="pt-2">
@@ -451,7 +451,7 @@ export const InspiringStoriesPage: React.FC<InspiringStoriesPageProps> = ({
                 onClick={onWriteStory}
                 className="inline-flex items-center gap-3 px-8 py-3.5 rounded-full bg-gradient-to-r from-amber-400 via-amber-300 to-amber-500 text-zinc-950 font-black text-xs sm:text-sm uppercase tracking-widest shadow-xl shadow-amber-500/20 hover:shadow-amber-500/40 hover:-translate-y-0.5 active:translate-y-0 transition-all border border-amber-200/60 cursor-pointer"
               >
-                <span>Write Your Testimonial</span>
+                <span>Share Your Results</span>
                 <ChevronRight size={16} />
               </button>
             </div>

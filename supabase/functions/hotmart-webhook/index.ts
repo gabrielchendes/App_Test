@@ -143,7 +143,22 @@ const handleRequest = async (req: Request): Promise<Response> => {
 
     const email = buyerEmailRaw.trim().toLowerCase();
     const buyerName = payload.data?.buyer?.name || payload.buyer?.name || payload.name || "Cliente Hotmart";
-    const transactionId = payload.data?.purchase?.transaction || payload.transaction || payload.prod || ("HOTMART_" + Date.now());
+    const rawTransactionId =
+      payload.data?.purchase?.transaction ||
+      payload.data?.purchase?.transaction_id ||
+      payload.transaction ||
+      payload.transaction_id ||
+      payload.data?.subscription?.subscription_id ||
+      payload.subscription_id ||
+      payload.order_id ||
+      payload.data?.order?.id ||
+      payload.id ||
+      null;
+
+    const transactionId = rawTransactionId 
+      ? String(rawTransactionId).trim() 
+      : `HOTMART_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
+
     const numericProductId = payload.data?.product?.id ?? payload.prod ?? payload.product_id ?? payload.data?.subscription?.product?.id;
     const ucodeProductId = payload.data?.product?.ucode;
 
@@ -158,7 +173,12 @@ const handleRequest = async (req: Request): Promise<Response> => {
 
     console.log(`[Hotmart Edge Function] Processing event "${event}" for ${email}, Product ID: ${hotmartProductId || 'N/A (Default Principal)'}, Ucode: ${ucodeProductId || 'N/A'}, Transaction: ${transactionId}`);
 
-    // 3. IDEMPOTÊNCIA INTELIGENTE: Verificar se transação/evento já foi processado E se o usuário ainda existe
+    // 3. IDEMPOTÊNCIA ESTRITA POR COMBINAÇÃO (transaction_id + event)
+    // Regra:
+    // • Compra A -> transaction_id = A + PURCHASE_APPROVED -> processa.
+    // • Compra B -> transaction_id = B + PURCHASE_APPROVED -> processa normalmente, mesmo que seja do mesmo comprador.
+    // • O fato de o comprador já existir NÃO pode impedir o processamento de uma nova transação.
+    // • Somente considerar um evento como duplicado quando a MESMA combinação transaction_id + event já tiver sido processada com sucesso.
     if (transactionId && event) {
       try {
         const { data: existingEvent } = await supabaseAdmin
@@ -203,13 +223,13 @@ const handleRequest = async (req: Request): Promise<Response> => {
             console.warn("[Hotmart Edge Function] Erro ao checar usuário na verificação de idempotência:", chkErr);
           }
 
-          // 2. Se o usuário já existir, mantém o comportamento de idempotência e não cria outro usuário
+          // 2. Se o usuário já existir e este MESMO evento com o MESMO transaction_id já estiver processado:
           if (userStillExists) {
-            console.log(`[Hotmart Edge Function] Transação ${transactionId} evento ${event} já processado anteriormente e usuário ${email} já existe. Idempotência mantida.`);
+            console.log(`[Hotmart Edge Function] Transação ${transactionId} evento ${event} já processado anteriormente. Retornando idempotência.`);
             return new Response(
               JSON.stringify({
                 success: true,
-                message: "Evento já processado anteriormente (Idempotência garantida).",
+                message: "Evento já processado anteriormente",
                 transaction_id: transactionId,
                 event: event
               }),
@@ -488,6 +508,41 @@ const handleRequest = async (req: Request): Promise<Response> => {
             .from("profiles")
             .update({ has_access: true, updated_at: new Date().toISOString() })
             .eq("id", targetUserId);
+
+          if (hotmartProductId) {
+            try {
+              const { data: existingPur } = await supabaseAdmin
+                .from("purchases")
+                .select("id")
+                .eq("user_id", targetUserId)
+                .eq("product_id", hotmartProductId)
+                .maybeSingle();
+
+              if (existingPur?.id) {
+                await supabaseAdmin
+                  .from("purchases")
+                  .update({
+                    transaction_id: transactionId,
+                    status: "approved",
+                    created_at: new Date().toISOString()
+                  })
+                  .eq("id", existingPur.id);
+              } else {
+                await supabaseAdmin
+                  .from("purchases")
+                  .insert({
+                    user_id: targetUserId,
+                    product_id: hotmartProductId,
+                    transaction_id: transactionId,
+                    status: "approved",
+                    created_at: new Date().toISOString()
+                  });
+              }
+            } catch (pErr) {
+              console.warn("[Hotmart Edge Function] Could not record main product purchase:", pErr);
+            }
+          }
+
           actionSummary = "Acesso Principal à Plataforma ATIVADO";
         } else if (productType === "ai_subscription") {
           await supabaseAdmin
@@ -502,11 +557,37 @@ const handleRequest = async (req: Request): Promise<Response> => {
             .eq("id", targetUserId);
 
           for (const pid of targetIds) {
-            await supabaseAdmin.from("purchases").upsert({
-              user_id: targetUserId,
-              product_id: pid,
-              created_at: new Date().toISOString()
-            }, { onConflict: "user_id,product_id" as any });
+            try {
+              const { data: existingPur } = await supabaseAdmin
+                .from("purchases")
+                .select("id")
+                .eq("user_id", targetUserId)
+                .eq("product_id", pid)
+                .maybeSingle();
+
+              if (existingPur?.id) {
+                await supabaseAdmin
+                  .from("purchases")
+                  .update({
+                    transaction_id: transactionId,
+                    status: "approved",
+                    created_at: new Date().toISOString()
+                  })
+                  .eq("id", existingPur.id);
+              } else {
+                await supabaseAdmin
+                  .from("purchases")
+                  .insert({
+                    user_id: targetUserId,
+                    product_id: pid,
+                    transaction_id: transactionId,
+                    status: "approved",
+                    created_at: new Date().toISOString()
+                  });
+              }
+            } catch (pErr) {
+              console.warn(`[Hotmart Edge Function] Error recording purchase for ${pid}:`, pErr);
+            }
           }
 
           actionSummary = `Produto Adicional (${productType}) Liberado (${targetIds.length} itens): ${targetIds.join(", ")}`;

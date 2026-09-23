@@ -24,10 +24,10 @@ export const HomeTestimonialCard: React.FC<HomeTestimonialCardProps> = ({
     return null;
   }
 
-  const title = settings.custom_texts?.['home.testimonial_title'] || 'Share Your Experience';
-  const subtitle = settings.custom_texts?.['home.testimonial_subtitle'] || 'Tell us about your experience and how this content made a difference for you. Your story inspires our entire community!';
-  const buttonText = settings.custom_texts?.['home.testimonial_button'] || 'Write a Testimonial';
-  const readButtonText = settings.custom_texts?.['home.read_testimonials_button'] || 'Read Stories from Other Women';
+  const title = settings.custom_texts?.['home.testimonial_title'] || 'Share Your Results';
+  const subtitle = settings.custom_texts?.['home.testimonial_subtitle'] || 'Share your story and how this course helped you write a new chapter. Your story inspires our entire community!';
+  const buttonText = settings.custom_texts?.['home.testimonial_button'] || 'Share my Results';
+  const readButtonText = settings.custom_texts?.['home.read_testimonials_button'] || 'Read Success Stories From Other Women ';
 
   return (
     <div className="w-full px-4 sm:px-6 my-8">
@@ -40,7 +40,7 @@ export const HomeTestimonialCard: React.FC<HomeTestimonialCardProps> = ({
           <div className="space-y-3">
             <div className="inline-flex items-center gap-2 px-3.5 py-1 rounded-full bg-amber-500/10 border border-amber-500/20 text-amber-400 text-xs font-bold uppercase tracking-wider mx-auto">
               <Heart size={13} className="fill-amber-400 text-amber-400" />
-              <span>Community Impact</span>
+              <span>REAL STORIES</span>
             </div>
 
             <h3 className="text-2xl sm:text-3xl font-black text-white tracking-tight leading-tight">

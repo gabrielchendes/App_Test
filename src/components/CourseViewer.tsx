@@ -169,6 +169,14 @@ export default function CourseViewer({ courseId, userId, onClose, initialCourse,
       let currentCourse = initialCourse || course;
       if (courseRes.status === 'fulfilled' && courseRes.value?.data) {
         currentCourse = courseRes.value.data;
+      }
+      if (currentCourse) {
+        const effectivePdf = currentCourse.pdf_url || currentCourse.preview_pdf_url || '';
+        currentCourse = {
+          ...currentCourse,
+          pdf_url: effectivePdf,
+          preview_pdf_url: currentCourse.preview_pdf_url || effectivePdf
+        };
         setCourse(currentCourse);
       }
 
@@ -200,16 +208,28 @@ export default function CourseViewer({ courseId, userId, onClose, initialCourse,
         finalChapters = (chaptersData || []).map(fromDbChapter);
       }
 
-      // If course has direct pdf_url and no chapters created yet, synthesize a PDF lesson
-      if (finalChapters.length === 0 && currentCourse?.pdf_url) {
+      const effectivePdfUrl = currentCourse?.pdf_url || currentCourse?.preview_pdf_url;
+
+      // If any chapter has content_type === 'pdf' without its own pdf_url, inject effectivePdfUrl
+      if (effectivePdfUrl) {
+        finalChapters = finalChapters.map(ch => {
+          if (ch.content_type === 'pdf' && !ch.pdf_url) {
+            return { ...ch, pdf_url: effectivePdfUrl };
+          }
+          return ch;
+        });
+      }
+
+      // If course has direct pdf_url/preview_pdf_url and no chapters created yet, synthesize a PDF lesson
+      if (finalChapters.length === 0 && effectivePdfUrl) {
         const pdfChapter: Chapter = {
           id: `pdf-${courseId}`,
-          module_id: '',
-          title: currentCourse.title || t('course.pdf_material') || 'Digital PDF Material',
-          description: currentCourse.description || '',
+          module_id: modulesData[0]?.id || '',
+          title: currentCourse?.title || t('course.pdf_material') || 'Material Digital em PDF',
+          description: currentCourse?.description || '',
           content_type: 'pdf',
-          pdf_url: currentCourse.pdf_url,
-          cover_url: currentCourse.cover_url || currentCourse.premium_cover_url,
+          pdf_url: effectivePdfUrl,
+          cover_url: currentCourse?.cover_url || currentCourse?.premium_cover_url,
           duration_minutes: 10,
           order_index: 0,
           is_preview: false,
@@ -454,21 +474,22 @@ export default function CourseViewer({ courseId, userId, onClose, initialCourse,
   };
 
   const renderPdf = () => {
-    if (!activeChapter?.pdf_url) return null;
+    const rawPdfUrl = activeChapter?.pdf_url || (activeChapter as any)?.video_url || course?.pdf_url || course?.preview_pdf_url;
+    if (!rawPdfUrl) return null;
     
     // Mechanism: Google Drive preview or Google Docs Viewer to avoid Chrome iframe PDF blocking
     let viewerUrl = '';
-    if (activeChapter.pdf_url.includes('drive.google.com')) {
+    if (rawPdfUrl.includes('drive.google.com')) {
       let fileId = '';
-      const match1 = activeChapter.pdf_url.match(/\/file\/d\/([a-zA-Z0-9_-]+)/);
-      const match2 = activeChapter.pdf_url.match(/id=([a-zA-Z0-9_-]+)/);
-      const match3 = activeChapter.pdf_url.match(/\/d\/([a-zA-Z0-9_-]+)/);
+      const match1 = rawPdfUrl.match(/\/file\/d\/([a-zA-Z0-9_-]+)/);
+      const match2 = rawPdfUrl.match(/id=([a-zA-Z0-9_-]+)/);
+      const match3 = rawPdfUrl.match(/\/d\/([a-zA-Z0-9_-]+)/);
       if (match1) fileId = match1[1];
       else if (match2) fileId = match2[1];
       else if (match3) fileId = match3[1];
-      viewerUrl = fileId ? `https://drive.google.com/file/d/${fileId}/preview` : activeChapter.pdf_url;
+      viewerUrl = fileId ? `https://drive.google.com/file/d/${fileId}/preview` : rawPdfUrl;
     } else {
-      const encodedUrl = encodeURIComponent(activeChapter.pdf_url);
+      const encodedUrl = encodeURIComponent(rawPdfUrl);
       viewerUrl = `https://docs.google.com/viewer?url=${encodedUrl}&embedded=true`;
     }
 
@@ -478,10 +499,10 @@ export default function CourseViewer({ courseId, userId, onClose, initialCourse,
         <div className="absolute inset-0 opacity-10 pointer-events-none bg-[radial-gradient(#ffffff_1px,transparent_1px)] [background-size:20px_20px]" />
         
         <iframe 
-          key={activeChapter.id}
+          key={activeChapter?.id || 'pdf-viewer'}
           src={viewerUrl}
           className="w-full h-full border-none relative z-10"
-          title={activeChapter.title}
+          title={activeChapter?.title || course?.title || 'Material PDF'}
           allow="fullscreen"
           loading="lazy"
         />
@@ -494,8 +515,8 @@ export default function CourseViewer({ courseId, userId, onClose, initialCourse,
         <div className="absolute top-6 right-6 z-50">
           <button 
             onClick={() => {
-              window.open(activeChapter.pdf_url!, '_blank');
-              if (settings?.course_pdf_auto_complete_fullscreen) {
+              window.open(rawPdfUrl, '_blank');
+              if (settings?.course_pdf_auto_complete_fullscreen && activeChapter?.id) {
                 markChapterComplete(activeChapter.id);
               }
             }}
@@ -644,33 +665,53 @@ export default function CourseViewer({ courseId, userId, onClose, initialCourse,
                       <div className="w-16 h-16 rounded-2xl bg-primary/10 text-primary mx-auto flex items-center justify-center">
                         <FileText size={32} />
                       </div>
-                      <div className="space-y-2">
-                        <h3 className="text-xl font-black text-white uppercase italic">
-                          {course?.pdf_url ? (t('course.pdf_material') || 'Digital PDF Material') : (t('course.content') || 'Course Content')}
-                        </h3>
-                        <p className="text-sm text-gray-400">
-                          {course?.pdf_url 
-                            ? (t('course.pdf_description') || 'This course includes exclusive digital material in PDF format.') 
-                            : (t('course.lessons_available') || 'Course modules and lessons will be available here.')}
-                        </p>
-                      </div>
-                      {course?.pdf_url ? (
-                        <div className="pt-2 flex flex-col sm:flex-row gap-3 justify-center">
-                          <button
-                            onClick={() => window.open(course.pdf_url!, '_blank')}
-                            className="px-8 py-4 rounded-xl bg-primary text-black font-black uppercase text-xs tracking-widest hover:brightness-110 active:scale-95 transition-all shadow-lg flex items-center justify-center gap-2 cursor-pointer"
-                          >
-                            <Maximize2 size={16} /> {t('course.open_pdf') || 'Open PDF Material'}
-                          </button>
-                        </div>
-                      ) : (
-                        <button
-                          onClick={onClose}
-                          className="px-6 py-3 rounded-xl bg-white/10 text-white font-bold uppercase text-xs tracking-wider hover:bg-white/20 active:scale-95 transition-all cursor-pointer"
-                        >
-                          {t('course.back_home') || 'Back to Home'}
-                        </button>
-                      )}
+                      {(() => {
+                        const effectiveCoursePdf = course?.pdf_url || course?.preview_pdf_url;
+                        return (
+                          <>
+                            <div className="space-y-2">
+                              <h3 className="text-xl font-black text-white uppercase italic">
+                                {effectiveCoursePdf ? (t('course.pdf_material') || 'Material PDF') : (t('course.content') || 'Conteúdo')}
+                              </h3>
+                              <p className="text-sm text-gray-400">
+                                {effectiveCoursePdf 
+                                  ? (t('course.pdf_description') || 'Este curso possui material digital exclusivo em formato PDF.') 
+                                  : (t('course.lessons_available') || 'Os módulos e aulas deste curso serão disponibilizados aqui.')}
+                              </p>
+                            </div>
+                            {effectiveCoursePdf ? (
+                              <div className="pt-2 flex flex-col sm:flex-row gap-3 justify-center">
+                                <button
+                                  onClick={() => {
+                                    if (chapters.length > 0) {
+                                      setActiveChapter(chapters[0]);
+                                      setViewMode('player');
+                                    } else {
+                                      window.open(effectiveCoursePdf, '_blank');
+                                    }
+                                  }}
+                                  className="px-8 py-4 rounded-xl bg-primary text-black font-black uppercase text-xs tracking-widest hover:brightness-110 active:scale-95 transition-all shadow-lg flex items-center justify-center gap-2 cursor-pointer"
+                                >
+                                  <FileText size={16} /> {t('course.open_pdf') || 'Abrir Material em PDF'}
+                                </button>
+                                <button
+                                  onClick={() => window.open(effectiveCoursePdf, '_blank')}
+                                  className="px-6 py-4 rounded-xl bg-white/10 text-white font-black uppercase text-xs tracking-widest hover:bg-white/20 active:scale-95 transition-all flex items-center justify-center gap-2 cursor-pointer"
+                                >
+                                  <Maximize2 size={16} /> {t('course.view_fullscreen') || 'Abrir em Nova Aba'}
+                                </button>
+                              </div>
+                            ) : (
+                              <button
+                                onClick={onClose}
+                                className="px-6 py-3 rounded-xl bg-white/10 text-white font-bold uppercase text-xs tracking-wider hover:bg-white/20 active:scale-95 transition-all cursor-pointer"
+                              >
+                                {t('course.back_home') || 'Voltar ao Início'}
+                              </button>
+                            )}
+                          </>
+                        );
+                      })()}
                     </div>
                   ) : (
                     (modules.length > 0 ? modules : [{ id: null, title: null }]).map((module, mIdx) => {
@@ -787,12 +828,18 @@ export default function CourseViewer({ courseId, userId, onClose, initialCourse,
                             </div>
                             
                             <div className="space-y-0.5 px-2">
-                              <div className="flex items-center gap-2">
-                                <span className="text-[10px] font-black text-primary uppercase tracking-[0.2em] italic leading-none">
-                                  {chapter.content_type === 'video' ? '' : chapter.content_type === 'audio' ? 'Podcast' : chapter.content_type === 'pdf' ? '' : isChapterHtmlApp ? 'HTML' : (t('course.reading') || 'Leitura')}
-                                </span>
-                                {isCompleted && <div className="w-1 h-1 rounded-full bg-green-500" />}
-                              </div>
+                              {chapter.custom_badge && chapter.custom_badge.trim() ? (
+                                <div className="flex items-center gap-2">
+                                  <span className="text-[10px] font-black text-primary uppercase tracking-[0.2em] italic leading-none">
+                                    {chapter.custom_badge.trim()}
+                                  </span>
+                                  {isCompleted && <div className="w-1 h-1 rounded-full bg-green-500" />}
+                                </div>
+                              ) : isCompleted ? (
+                                <div className="flex items-center gap-2 py-0.5">
+                                  <div className="w-1.5 h-1.5 rounded-full bg-green-500" />
+                                </div>
+                              ) : null}
                               <h4 className={`text-xs sm:text-lg font-black uppercase italic tracking-tight leading-[1.1] transition-colors group-hover:text-primary ${isCompleted ? 'text-white/40' : 'text-white'}`}>
                                 <span className="text-primary/40 mr-1 sm:mr-1.5 opacity-50">{(idx + 1).toString().padStart(2, '0')}.</span>
                                 {chapter.title}
@@ -825,6 +872,13 @@ export default function CourseViewer({ courseId, userId, onClose, initialCourse,
                     animate={{ opacity: 1, y: 0 }}
                     transition={{ delay: 0.1 }}
                   >
+                    {activeChapter?.custom_badge && activeChapter.custom_badge.trim() && (
+                      <div className="mb-3">
+                        <span className="inline-block px-3 py-1 bg-primary/10 border border-primary/25 rounded-full text-[10px] font-black text-primary uppercase tracking-[0.2em] italic">
+                          {activeChapter.custom_badge.trim()}
+                        </span>
+                      </div>
+                    )}
                     <h1 className="text-4xl md:text-6xl font-serif font-black leading-tight text-white mb-4">
                       {activeChapter?.title}
                     </h1>
