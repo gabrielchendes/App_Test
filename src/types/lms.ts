@@ -58,6 +58,7 @@ export interface Course {
   order_index?: number;
   linked_package_id?: string;
   is_package_exclusive_bonus?: boolean;
+  hide_single_module_header?: boolean;
   created_at: string;
   tenant_id: string;
 }

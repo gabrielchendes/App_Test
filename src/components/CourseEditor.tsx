@@ -28,6 +28,7 @@ import {
   Layers,
   Monitor,
   Eye,
+  EyeOff,
   Users,
   Award,
   MessageSquare,
@@ -47,6 +48,7 @@ import { toast } from 'sonner';
 import CoursePreviewViewer from './CoursePreviewViewer';
 import { AdminChecklistEditor } from './AdminChecklistEditor';
 import { AdminHtmlAppEditor } from './AdminHtmlAppEditor';
+import { normalizePdfUrl } from '../utils/pdfHelper';
 import HtmlAppViewer, { SAMPLE_SALES_MODAL_HTML, SAMPLE_SALES_PREVIEW_HTML } from './HtmlAppViewer';
 import { AiLessonGeneratorModal } from './AiLessonGeneratorModal';
 import { AiCourseGeneratorModal } from './AiCourseGeneratorModal';
@@ -370,6 +372,7 @@ export default function CourseEditor({
     preview_link_color: '#3b82f6',
     linked_package_id: '',
     is_package_exclusive_bonus: false,
+    hide_single_module_header: true,
     modal_type: 'standard',
     modal_html: ''
   });
@@ -572,6 +575,9 @@ export default function CourseEditor({
 
       setCourse({
         ...courseData,
+        hide_single_module_header: funnelParsed.hide_single_module_header !== undefined
+          ? funnelParsed.hide_single_module_header
+          : (courseData.hide_single_module_header !== undefined ? courseData.hide_single_module_header : true),
         pdf_url: effectivePdfUrl,
         preview_pdf_url: effectivePdfUrl,
         modal_type: funnelParsed.modal_type,
@@ -768,11 +774,17 @@ export default function CourseEditor({
         checkout_url: finalCheckoutUrl,
         hotmart_product_id: finalHotmartId,
         linked_package_id: course.linked_package_id || null,
-        is_package_exclusive_bonus: course.is_package_exclusive_bonus || false
+        is_package_exclusive_bonus: course.is_package_exclusive_bonus || false,
+        hide_single_module_header: course.hide_single_module_header !== false
       };
 
       if (courseId) {
-        const { error } = await supabase.from('courses').update(courseData).eq('id', courseId);
+        let { error } = await supabase.from('courses').update(courseData).eq('id', courseId);
+        if (error && error.message?.includes('hide_single_module_header')) {
+          delete (courseData as any).hide_single_module_header;
+          const retry = await supabase.from('courses').update(courseData).eq('id', courseId);
+          error = retry.error;
+        }
         if (error) {
           if (error.code === '23505' || error.message?.includes('unique') || error.message?.includes('duplicate key')) {
             toast.error('Erro ao salvar: O ID do Produto Hotmart informado já está sendo utilizado por outro curso!');
@@ -783,7 +795,13 @@ export default function CourseEditor({
         dataCache.invalidate();
         toast.success('Informações salvas!');
       } else {
-        const { data, error } = await supabase.from('courses').insert([courseData]).select().single();
+        let { data, error } = await supabase.from('courses').insert([courseData]).select().single();
+        if (error && error.message?.includes('hide_single_module_header')) {
+          delete (courseData as any).hide_single_module_header;
+          const retry = await supabase.from('courses').insert([courseData]).select().single();
+          data = retry.data;
+          error = retry.error;
+        }
         if (error) {
           if (error.code === '23505' || error.message?.includes('unique') || error.message?.includes('duplicate key')) {
             toast.error('Erro ao salvar: O ID do Produto Hotmart informado já está sendo utilizado por outro curso!');
@@ -2202,6 +2220,60 @@ export default function CourseEditor({
                       </div>
 
                       <div className="space-y-6 max-h-[60vh] overflow-y-auto px-1 scrollbar-hide">
+                        {/* Opção para quando o curso tem apenas 1 módulo */}
+                        <div className="p-4 bg-black/60 border border-white/10 rounded-2xl space-y-2">
+                          <div className="flex items-center justify-between gap-4">
+                            <div className="space-y-1">
+                              <div className="flex items-center gap-2">
+                                <EyeOff size={15} className="text-blue-400" />
+                                <label className="text-xs font-black text-white uppercase tracking-wider">
+                                  Ocultar nome do módulo se for módulo único
+                                </label>
+                              </div>
+                              <p className="text-[11px] text-gray-400 leading-relaxed">
+                                {course.hide_single_module_header !== false 
+                                  ? 'Ativado (Padrão): O cabeçalho "01 MÓDULO 1" não é exibido no curso, mostrando apenas as aulas.'
+                                  : 'Desativado: O nome do módulo será exibido mesmo sendo o único do curso.'}
+                              </p>
+                            </div>
+                            <button
+                              type="button"
+                              onClick={async () => {
+                                const nextVal = course.hide_single_module_header === false ? true : false;
+                                setCourse(prev => ({ ...prev, hide_single_module_header: nextVal }));
+                                if (courseId) {
+                                  const { finalBenefits } = serializeCourseHtmlFunnel({ ...course, hide_single_module_header: nextVal });
+                                  let { error } = await supabase.from('courses').update({ 
+                                    hide_single_module_header: nextVal,
+                                    benefits: finalBenefits 
+                                  }).eq('id', courseId);
+                                  if (error && error.message?.includes('hide_single_module_header')) {
+                                    await supabase.from('courses').update({ benefits: finalBenefits }).eq('id', courseId);
+                                  }
+                                  dataCache.invalidate('course_full_' + courseId);
+                                  dataCache.invalidate();
+                                  toast.success(nextVal ? 'Nome do módulo ocultado quando houver apenas 1 módulo (Padrão)' : 'Nome do módulo único será exibido');
+                                }
+                              }}
+                              className={`relative inline-flex h-6 w-11 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none ${
+                                (course.hide_single_module_header !== false) ? 'bg-blue-600' : 'bg-zinc-800'
+                              }`}
+                              title="Alternar visibilidade do cabeçalho de módulo único"
+                            >
+                              <span
+                                className={`pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out ${
+                                  (course.hide_single_module_header !== false) ? 'translate-x-5' : 'translate-x-0'
+                                }`}
+                              />
+                            </button>
+                          </div>
+                          {modules.length > 1 && (
+                            <div className="pt-2 border-t border-white/5 text-[10px] text-amber-400/90 font-bold flex items-center gap-1.5">
+                              <span>ℹ️ Este curso possui {modules.length} módulos. Com mais de 1 módulo, os nomes dos módulos são sempre exibidos obrigatoriamente.</span>
+                            </div>
+                          )}
+                        </div>
+
                         <div className="space-y-6">
                         {modules.map((mod, idx) => (
                           <div key={mod.id} className="flex items-center gap-4 group">
@@ -2716,6 +2788,71 @@ export default function CourseEditor({
                       </button>
                     </div>
                  </div>
+              )}
+
+              {/* Opção de Módulo Único */}
+              {modules.length <= 1 ? (
+                <div className="p-5 bg-gradient-to-r from-blue-900/20 via-black/40 to-transparent border border-blue-500/20 rounded-3xl flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+                  <div className="space-y-1">
+                    <div className="flex items-center gap-2">
+                      <div className="w-7 h-7 rounded-lg bg-blue-500/10 flex items-center justify-center text-blue-400 border border-blue-500/20">
+                        <EyeOff size={14} />
+                      </div>
+                      <h4 className="text-xs font-black uppercase tracking-wider text-white">
+                        Exibição de Módulo Único
+                      </h4>
+                      <span className={`text-[10px] font-black uppercase px-2 py-0.5 rounded-full border ${
+                        course.hide_single_module_header !== false 
+                          ? 'bg-blue-500/20 text-blue-300 border-blue-500/30' 
+                          : 'bg-white/10 text-gray-300 border-white/20'
+                      }`}>
+                        {course.hide_single_module_header !== false ? 'Nome do Módulo Oculto (Padrão)' : 'Nome do Módulo Visível'}
+                      </span>
+                    </div>
+                    <p className="text-[11px] text-gray-400 max-w-xl">
+                      {course.hide_single_module_header !== false
+                        ? 'O cabeçalho "01 MÓDULO 1" e o progresso do módulo estão ocultos para os alunos. As aulas são exibidas diretamente.'
+                        : 'O nome do módulo único está visível para os alunos ao abrir o curso.'}
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={async () => {
+                      const nextVal = course.hide_single_module_header === false ? true : false;
+                      setCourse(prev => ({ ...prev, hide_single_module_header: nextVal }));
+                      if (courseId) {
+                        const { finalBenefits } = serializeCourseHtmlFunnel({ ...course, hide_single_module_header: nextVal });
+                        let { error } = await supabase.from('courses').update({ 
+                          hide_single_module_header: nextVal,
+                          benefits: finalBenefits 
+                        }).eq('id', courseId);
+                        if (error && error.message?.includes('hide_single_module_header')) {
+                          await supabase.from('courses').update({ benefits: finalBenefits }).eq('id', courseId);
+                        }
+                        dataCache.invalidate('course_full_' + courseId);
+                        dataCache.invalidate();
+                        toast.success(nextVal ? 'Nome do módulo ocultado quando houver apenas 1 módulo (Padrão)' : 'Nome do módulo único será exibido');
+                      }
+                    }}
+                    className={`relative inline-flex h-7 w-12 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none self-start sm:self-center ${
+                      (course.hide_single_module_header !== false) ? 'bg-blue-600' : 'bg-zinc-800'
+                    }`}
+                    title="Alternar ocultação do cabeçalho de módulo único"
+                  >
+                    <span
+                      className={`pointer-events-none inline-block h-6 w-6 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out ${
+                        (course.hide_single_module_header !== false) ? 'translate-x-5' : 'translate-x-0'
+                      }`}
+                    />
+                  </button>
+                </div>
+              ) : (
+                <div className="p-3.5 bg-white/5 border border-white/10 rounded-2xl flex items-center justify-between text-[11px] text-gray-400">
+                  <span className="font-bold flex items-center gap-2">
+                    <Layers size={14} className="text-blue-400" />
+                    Curso com {modules.length} módulos: os nomes de cada módulo são exibidos obrigatoriamente.
+                  </span>
+                </div>
               )}
 
               {/* Modules & Chapters List */}

@@ -162,9 +162,13 @@ CREATE TABLE IF NOT EXISTS public.courses (
     linked_package_id UUID REFERENCES public.course_packages(id) ON DELETE SET NULL,
     is_package_exclusive BOOLEAN DEFAULT FALSE,
     is_package_exclusive_bonus BOOLEAN DEFAULT FALSE,
+    hide_single_module_header BOOLEAN DEFAULT TRUE,
     created_at TIMESTAMPTZ DEFAULT NOW(),
     updated_at TIMESTAMPTZ DEFAULT NOW()
 );
+
+-- Se a tabela courses já existir, execute para adicionar suporte nativo a hide_single_module_header:
+-- ALTER TABLE public.courses ADD COLUMN IF NOT EXISTS hide_single_module_header BOOLEAN DEFAULT TRUE;
 
 -- 4. Tabela `modules` (Módulos dos Cursos)
 CREATE TABLE IF NOT EXISTS public.modules (

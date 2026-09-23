@@ -15,7 +15,8 @@ import {
   Lock,
   Sparkles,
   Maximize2,
-  FileText
+  FileText,
+  RotateCcw
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { Course } from '../types/lms';
@@ -26,8 +27,8 @@ import FloatingWhatsApp from './FloatingWhatsApp';
 import CustomDirectVideoPlayer from './CustomDirectVideoPlayer';
 import { getCloudflareStreamEmbedUrl, isCloudflareStreamUrl, isDirectVideoUrl } from '../utils/videoUtils';
 import HtmlAppViewer from './HtmlAppViewer';
-
 import { parseCourseHtmlFunnel } from '../utils/courseFunnel';
+import { getPdfEmbedSources } from '../utils/pdfHelper';
 
 interface CoursePreviewViewerProps {
   course: Course;
@@ -39,6 +40,8 @@ export default function CoursePreviewViewer({ course: rawCourse, onClose, onPurc
   const course = parseCourseHtmlFunnel(rawCourse) as Course;
   const { settings } = useSettings();
   const { t } = useI18n();
+  const [pdfViewerMode, setPdfViewerMode] = useState<'google' | 'direct'>('google');
+  const [pdfReloadCount, setPdfReloadCount] = useState(0);
 
   const isHtmlPreview = course.preview_type === 'html' || 
     Boolean(course.preview_rich_text && /^\s*<(!DOCTYPE|html|div|main|section|body)/i.test(course.preview_rich_text)) ||
@@ -135,16 +138,11 @@ export default function CoursePreviewViewer({ course: rawCourse, onClose, onPurc
     }
 
     if (type === 'pdf') {
-      let viewerUrl = '';
-      if ((course.preview_pdf_url || '').includes('drive.google.com')) {
-        const fileId = (course.preview_pdf_url || '').match(/\/file\/d\/([a-zA-Z0-9_-]+)/)?.[1] || 
-                       (course.preview_pdf_url || '').match(/id=([a-zA-Z0-9_-]+)/)?.[1] || 
-                       (course.preview_pdf_url || '').match(/\/d\/([a-zA-Z0-9_-]+)/)?.[1];
-        viewerUrl = fileId ? `https://drive.google.com/file/d/${fileId}/preview` : (course.preview_pdf_url || '');
-      } else {
-        const encodedUrl = encodeURIComponent(course.preview_pdf_url || '');
-        viewerUrl = `https://docs.google.com/viewer?url=${encodedUrl}&embedded=true`;
-      }
+      const rawPdfUrl = course.preview_pdf_url || course.preview_url || course.pdf_url || '';
+      if (!rawPdfUrl) return null;
+
+      const { isGoogleDrive, googleDocsUrl, directUrl, cleanUrl } = getPdfEmbedSources(rawPdfUrl, pdfReloadCount);
+      const viewerUrl = isGoogleDrive ? googleDocsUrl : (pdfViewerMode === 'direct' ? directUrl : googleDocsUrl);
 
       return (
         <div className="relative aspect-[1/1.4] sm:aspect-[3/4] w-full bg-[#1a1a1a] rounded-[2rem] sm:rounded-[3rem] overflow-hidden shadow-2xl border border-white/10 ring-8 ring-white/5">
@@ -152,6 +150,7 @@ export default function CoursePreviewViewer({ course: rawCourse, onClose, onPurc
           <div className="absolute inset-0 opacity-10 pointer-events-none bg-[radial-gradient(#ffffff_1px,transparent_1px)] [background-size:20px_20px]" />
           
           <iframe 
+            key={`preview-pdf-${pdfViewerMode}-${pdfReloadCount}`}
             src={viewerUrl}
             className="w-full h-full border-none relative z-10"
             title={course.title}
@@ -163,16 +162,54 @@ export default function CoursePreviewViewer({ course: rawCourse, onClose, onPurc
           <div className="absolute inset-y-0 left-0 w-8 bg-gradient-to-r from-black/40 to-transparent z-20 pointer-events-none" />
           <div className="absolute inset-y-0 right-0 w-2 bg-gradient-to-l from-black/20 to-transparent z-20 pointer-events-none" />
 
-          {/* Fullscreen Trigger Overlay */}
-          <div className="absolute top-6 right-6 z-50">
+          {/* Floating Controls Bar in Top-Right */}
+          <div className="absolute top-4 right-4 sm:top-6 sm:right-6 z-50 flex items-center gap-2">
+            {!isGoogleDrive && (
+              <div className="bg-black/85 backdrop-blur-md border border-white/10 p-1 rounded-2xl flex items-center shadow-2xl">
+                <button
+                  type="button"
+                  onClick={() => setPdfViewerMode('google')}
+                  className={`px-3 py-1.5 rounded-xl text-[10px] font-bold tracking-wider uppercase transition-all ${
+                    pdfViewerMode === 'google'
+                      ? 'bg-primary text-black shadow-md'
+                      : 'text-gray-400 hover:text-white'
+                  }`}
+                  title="Google Docs Viewer"
+                >
+                  Google Docs
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setPdfViewerMode('direct')}
+                  className={`px-3 py-1.5 rounded-xl text-[10px] font-bold tracking-wider uppercase transition-all ${
+                    pdfViewerMode === 'direct'
+                      ? 'bg-primary text-black shadow-md'
+                      : 'text-gray-400 hover:text-white'
+                  }`}
+                  title="Visualizador Direto"
+                >
+                  Direto
+                </button>
+              </div>
+            )}
+
+            <button
+              type="button"
+              onClick={() => setPdfReloadCount(prev => prev + 1)}
+              className="bg-black/80 hover:bg-black text-white hover:text-primary p-3 sm:p-3.5 rounded-2xl transition-all border border-white/10 shadow-xl cursor-pointer hover:scale-105 active:scale-95"
+              title="Recarregar Visualizador"
+            >
+              <RotateCcw size={18} />
+            </button>
+
             <a 
-              href={course.preview_pdf_url}
+              href={cleanUrl}
               target="_blank"
               rel="noopener noreferrer"
-              className="bg-primary hover:bg-primary/90 text-black p-4 rounded-2xl transition-all hover:scale-110 active:scale-95 shadow-[0_8px_32px_rgba(var(--primary-rgb),0.3)] flex items-center justify-center group/btn cursor-pointer"
+              className="bg-primary hover:bg-primary/90 text-black p-3 sm:p-3.5 rounded-2xl transition-all hover:scale-105 active:scale-95 shadow-[0_8px_32px_rgba(var(--primary-rgb),0.3)] flex items-center justify-center group/btn cursor-pointer"
               title="Ver em Tela Cheia"
             >
-              <Maximize2 size={24} className="group-hover/btn:rotate-12 transition-transform" />
+              <Maximize2 size={18} className="group-hover/btn:rotate-12 transition-transform" />
             </a>
           </div>
         </div>

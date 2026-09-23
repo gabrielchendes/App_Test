@@ -22,7 +22,8 @@ import {
   CheckSquare,
   Puzzle,
   Headphones,
-  FileCode
+  FileCode,
+  RotateCcw
 } from 'lucide-react';
 import WhatsAppIcon from './WhatsAppIcon';
 import { motion, AnimatePresence } from 'motion/react';
@@ -36,7 +37,9 @@ import FloatingWhatsApp from './FloatingWhatsApp';
 import SupportSection from './SupportSection';
 import PullToRefresh from './PullToRefresh';
 import { fromDbChapter, isHtmlAppChapter, extractHtmlAppContent } from '../utils/htmlAppHelper';
+import { parseCourseHtmlFunnel } from '../utils/courseFunnel';
 import { getChapterIconComponent } from '../utils/chapterIcons';
+import { getPdfEmbedSources } from '../utils/pdfHelper';
 import { dataCache } from '../lib/cache';
 import { lazyWithRetry } from '../lib/lazyWithRetry';
 
@@ -58,7 +61,7 @@ interface CourseViewerProps {
 export default function CourseViewer({ courseId, userId, onClose, initialCourse, isProfessor = false }: CourseViewerProps) {
   const { t } = useI18n();
   const { settings } = useSettings();
-  const [course, setCourse] = useState<Course | null>(initialCourse || null);
+  const [course, setCourse] = useState<Course | null>(initialCourse ? (parseCourseHtmlFunnel(initialCourse) as Course) : null);
   const [modules, setModules] = useState<Module[]>([]);
   const [chapters, setChapters] = useState<Chapter[]>([]);
   const [progress, setProgress] = useState<UserProgress[]>([]);
@@ -66,6 +69,8 @@ export default function CourseViewer({ courseId, userId, onClose, initialCourse,
   const [activeChapter, setActiveChapter] = useState<Chapter | null>(null);
   const [loading, setLoading] = useState(true);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [pdfViewerMode, setPdfViewerMode] = useState<'google' | 'direct'>('google');
+  const [pdfReloadCount, setPdfReloadCount] = useState(0);
   const scrollContainerRef = React.useRef<HTMLDivElement>(null);
 
   const activeChapterRef = React.useRef<Chapter | null>(null);
@@ -171,6 +176,7 @@ export default function CourseViewer({ courseId, userId, onClose, initialCourse,
         currentCourse = courseRes.value.data;
       }
       if (currentCourse) {
+        currentCourse = parseCourseHtmlFunnel(currentCourse) as Course;
         const effectivePdf = currentCourse.pdf_url || currentCourse.preview_pdf_url || '';
         currentCourse = {
           ...currentCourse,
@@ -474,24 +480,11 @@ export default function CourseViewer({ courseId, userId, onClose, initialCourse,
   };
 
   const renderPdf = () => {
-    const rawPdfUrl = activeChapter?.pdf_url || (activeChapter as any)?.video_url || course?.pdf_url || course?.preview_pdf_url;
+    const rawPdfUrl = activeChapter?.pdf_url || (activeChapter as any)?.video_url || course?.pdf_url || course?.preview_pdf_url || course?.preview_url;
     if (!rawPdfUrl) return null;
     
-    // Mechanism: Google Drive preview or Google Docs Viewer to avoid Chrome iframe PDF blocking
-    let viewerUrl = '';
-    if (rawPdfUrl.includes('drive.google.com')) {
-      let fileId = '';
-      const match1 = rawPdfUrl.match(/\/file\/d\/([a-zA-Z0-9_-]+)/);
-      const match2 = rawPdfUrl.match(/id=([a-zA-Z0-9_-]+)/);
-      const match3 = rawPdfUrl.match(/\/d\/([a-zA-Z0-9_-]+)/);
-      if (match1) fileId = match1[1];
-      else if (match2) fileId = match2[1];
-      else if (match3) fileId = match3[1];
-      viewerUrl = fileId ? `https://drive.google.com/file/d/${fileId}/preview` : rawPdfUrl;
-    } else {
-      const encodedUrl = encodeURIComponent(rawPdfUrl);
-      viewerUrl = `https://docs.google.com/viewer?url=${encodedUrl}&embedded=true`;
-    }
+    const { isGoogleDrive, googleDocsUrl, directUrl, cleanUrl } = getPdfEmbedSources(rawPdfUrl, pdfReloadCount);
+    const viewerUrl = isGoogleDrive ? googleDocsUrl : (pdfViewerMode === 'direct' ? directUrl : googleDocsUrl);
 
     return (
       <div className="w-full h-full relative group/pdf bg-[#1a1a1a] overflow-hidden rounded-[2rem] sm:rounded-[3rem]">
@@ -499,7 +492,7 @@ export default function CourseViewer({ courseId, userId, onClose, initialCourse,
         <div className="absolute inset-0 opacity-10 pointer-events-none bg-[radial-gradient(#ffffff_1px,transparent_1px)] [background-size:20px_20px]" />
         
         <iframe 
-          key={activeChapter?.id || 'pdf-viewer'}
+          key={`${activeChapter?.id || 'pdf'}-${pdfViewerMode}-${pdfReloadCount}`}
           src={viewerUrl}
           className="w-full h-full border-none relative z-10"
           title={activeChapter?.title || course?.title || 'Material PDF'}
@@ -511,19 +504,60 @@ export default function CourseViewer({ courseId, userId, onClose, initialCourse,
         <div className="absolute inset-y-0 left-0 w-8 bg-gradient-to-r from-black/40 to-transparent z-20 pointer-events-none" />
         <div className="absolute inset-y-0 right-0 w-2 bg-gradient-to-l from-black/20 to-transparent z-20 pointer-events-none" />
 
-        {/* Fullscreen Trigger Overlay */}
-        <div className="absolute top-6 right-6 z-50">
+        {/* Floating Controls Bar in Top-Right */}
+        <div className="absolute top-4 right-4 sm:top-6 sm:right-6 z-50 flex items-center gap-2">
+          {!isGoogleDrive && (
+            <div className="bg-black/85 backdrop-blur-md border border-white/10 p-1 rounded-2xl flex items-center shadow-2xl">
+              <button
+                type="button"
+                onClick={() => setPdfViewerMode('google')}
+                className={`px-3 py-1.5 rounded-xl text-[10px] font-bold tracking-wider uppercase transition-all ${
+                  pdfViewerMode === 'google'
+                    ? 'bg-primary text-black shadow-md'
+                    : 'text-gray-400 hover:text-white'
+                }`}
+                title="Visualizador Google Docs"
+              >
+                Google Docs
+              </button>
+              <button
+                type="button"
+                onClick={() => setPdfViewerMode('direct')}
+                className={`px-3 py-1.5 rounded-xl text-[10px] font-bold tracking-wider uppercase transition-all ${
+                  pdfViewerMode === 'direct'
+                    ? 'bg-primary text-black shadow-md'
+                    : 'text-gray-400 hover:text-white'
+                }`}
+                title="Visualizador Direto / Nativo"
+              >
+                Direto
+              </button>
+            </div>
+          )}
+
+          <button
+            type="button"
+            onClick={() => {
+              setPdfReloadCount(prev => prev + 1);
+              toast.info('Recarregando documento...');
+            }}
+            className="bg-black/80 hover:bg-black text-white hover:text-primary p-3 sm:p-3.5 rounded-2xl transition-all border border-white/10 shadow-xl cursor-pointer hover:scale-105 active:scale-95"
+            title="Recarregar Visualizador de PDF"
+          >
+            <RotateCcw size={18} />
+          </button>
+
           <button 
             onClick={() => {
-              window.open(rawPdfUrl, '_blank');
+              window.open(cleanUrl, '_blank');
               if (settings?.course_pdf_auto_complete_fullscreen && activeChapter?.id) {
                 markChapterComplete(activeChapter.id);
               }
             }}
-            className="bg-primary hover:bg-primary/90 text-black p-4 rounded-2xl transition-all hover:scale-110 active:scale-95 shadow-[0_8px_32px_rgba(var(--primary-rgb),0.3)] flex items-center justify-center group/btn cursor-pointer"
+            className="bg-primary hover:bg-primary/90 text-black p-3 sm:p-3.5 rounded-2xl transition-all hover:scale-105 active:scale-95 shadow-[0_8px_32px_rgba(var(--primary-rgb),0.3)] flex items-center justify-center group/btn cursor-pointer"
             title={t('course.view_fullscreen') || "View Fullscreen"}
           >
-            <Maximize2 size={24} className="group-hover/btn:rotate-12 transition-transform" />
+            <Maximize2 size={18} className="group-hover/btn:rotate-12 transition-transform" />
           </button>
         </div>
       </div>
@@ -719,9 +753,16 @@ export default function CourseViewer({ courseId, userId, onClose, initialCourse,
                       if (moduleChapters.length === 0) return null;
                       const moduleProgress = module.id ? calculateModuleProgress(module.id) : 0;
 
+                      // Regra de exibição do cabeçalho do módulo:
+                      // Quando o curso tiver apenas um módulo (ou nenhum), o padrão é NÃO exibir o nome/cabeçalho desse módulo
+                      // (oculta '01 MÓDULO 1'), mostrando apenas as informações e cards das aulas diretamente.
+                      // Somente quando houver mais de um módulo (modules.length > 1), o nome de cada módulo é exibido obrigatoriamente.
+                      const isSingleModule = modules.length <= 1;
+                      const hideModuleHeader = isSingleModule && (course?.hide_single_module_header !== false);
+
                       return (
                         <div key={module.id || 'global'} className="space-y-10 group/module">
-                      {!module.title || module.title.trim() === '' ? null : (
+                      {!module.title || module.title.trim() === '' || hideModuleHeader ? null : (
                         <div className="border-b border-white/5 pb-6">
                            <div className="flex items-end gap-6 mb-4">
                              <span className="text-6xl font-black text-white/5 italic leading-none select-none">{(mIdx + 1).toString().padStart(2, '0')}</span>
@@ -786,7 +827,7 @@ export default function CourseViewer({ courseId, userId, onClose, initialCourse,
                                   src={chapter.cover_url.trim()} 
                                   loading="lazy"
                                   decoding="async"
-                                  className={`w-full h-full object-cover transition-all duration-700 ${isCompleted ? 'opacity-75 grayscale-[20%]' : 'opacity-100 group-hover:scale-105'}`} 
+                                  className={`w-full h-full object-cover transition-all duration-700 ${isCompleted ? 'opacity-90' : 'opacity-100 group-hover:scale-105'}`} 
                                   alt={chapter.title} 
                                   referrerPolicy="no-referrer"
                                 />
@@ -802,13 +843,13 @@ export default function CourseViewer({ courseId, userId, onClose, initialCourse,
                               <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
                                 <div className={`w-11 h-11 sm:w-14 sm:h-14 rounded-2xl border flex items-center justify-center transition-all duration-500 shadow-xl backdrop-blur-md ${
                                   isCompleted 
-                                    ? 'bg-emerald-600/30 border-emerald-400/25 text-emerald-300/70 scale-90 shadow-[0_0_15px_rgba(16,185,129,0.15)] opacity-65' 
+                                    ? 'bg-emerald-500 border-2 border-emerald-300 text-white scale-100 shadow-[0_0_25px_rgba(16,185,129,0.7)] opacity-100' 
                                     : isChapterHtmlApp
                                     ? 'bg-amber-950/70 border-amber-500/40 text-amber-300 group-hover:bg-amber-600 group-hover:border-amber-400 group-hover:text-white group-hover:scale-110 group-hover:shadow-[0_0_20px_rgba(245,158,11,0.6)]'
                                     : 'bg-black/50 border-white/30 text-white group-hover:bg-primary group-hover:border-primary group-hover:scale-110 group-hover:shadow-[0_0_20px_rgba(244,63,94,0.6)]'
                                 }`}>
                                   {isCompleted ? (
-                                    <CheckCircle2 className="w-6 h-6 sm:w-7 sm:h-7 text-emerald-300/75 drop-shadow-sm opacity-70" />
+                                    <CheckCircle2 className="w-7 h-7 sm:w-8 sm:h-8 text-white drop-shadow-md opacity-100" strokeWidth={2.5} />
                                   ) : (
                                     getChapterIconComponent(chapter, "w-5 h-5 sm:w-6 sm:h-6 text-white drop-shadow-md", true)
                                   )}
@@ -816,8 +857,8 @@ export default function CourseViewer({ courseId, userId, onClose, initialCourse,
                               </div>
 
                               {isCompleted && (
-                                <div className="absolute top-2.5 left-2.5 sm:top-3.5 sm:left-3.5 bg-emerald-600/40 backdrop-blur-md text-white/75 text-[8px] sm:text-[10px] font-black px-2.5 py-1 rounded-full uppercase tracking-widest shadow-md italic flex items-center gap-1 border border-emerald-400/20 opacity-70">
-                                  <CheckCircle2 size={10} className="text-emerald-300/75" />
+                                <div className="absolute top-2.5 left-2.5 sm:top-3.5 sm:left-3.5 bg-emerald-600 text-white text-[8px] sm:text-[10px] font-black px-2.5 py-1 rounded-full uppercase tracking-widest shadow-md italic flex items-center gap-1 border border-emerald-400 opacity-100">
+                                  <CheckCircle2 size={11} className="text-white shrink-0" strokeWidth={2.5} />
                                   {t('course.completed')}
                                 </div>
                               )}
@@ -840,7 +881,7 @@ export default function CourseViewer({ courseId, userId, onClose, initialCourse,
                                   <div className="w-1.5 h-1.5 rounded-full bg-green-500" />
                                 </div>
                               ) : null}
-                              <h4 className={`text-xs sm:text-lg font-black uppercase italic tracking-tight leading-[1.1] transition-colors group-hover:text-primary ${isCompleted ? 'text-white/40' : 'text-white'}`}>
+                              <h4 className={`text-xs sm:text-lg font-black uppercase italic tracking-tight leading-[1.1] transition-colors group-hover:text-primary ${isCompleted ? 'text-white/80' : 'text-white'}`}>
                                 <span className="text-primary/40 mr-1 sm:mr-1.5 opacity-50">{(idx + 1).toString().padStart(2, '0')}.</span>
                                 {chapter.title}
                               </h4>
@@ -1176,7 +1217,7 @@ export default function CourseViewer({ courseId, userId, onClose, initialCourse,
                             `}
                           >
                             <div className="w-8 h-8 rounded-full bg-zinc-900 flex items-center justify-center shrink-0 border border-white/5">
-                              {isCompleted ? <CheckCircle2 size={16} className="text-emerald-400/60 opacity-70" /> : <span className="text-[10px] font-black text-gray-500">{idx + 1}</span>}
+                              {isCompleted ? <CheckCircle2 size={16} className="text-emerald-400 opacity-100" strokeWidth={2.5} /> : <span className="text-[10px] font-black text-gray-500">{idx + 1}</span>}
                             </div>
                             <span className={`text-xs font-bold truncate ${isActive ? 'text-white' : 'text-gray-500'}`}>
                               {chapter.title}
