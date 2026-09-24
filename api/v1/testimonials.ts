@@ -5,6 +5,54 @@ import { createClient } from '@supabase/supabase-js';
 
 const DATA_DIR = path.join(process.cwd(), 'data');
 const TESTIMONIALS_FILE = path.join(DATA_DIR, 'testimonials.json');
+const ORDER_FILE = path.join(DATA_DIR, 'testimonials_order.json');
+
+function saveOrderToFile(orderedIds: string[]): void {
+  try {
+    if (!fs.existsSync(DATA_DIR)) {
+      fs.mkdirSync(DATA_DIR, { recursive: true });
+    }
+    fs.writeFileSync(ORDER_FILE, JSON.stringify(orderedIds, null, 2), 'utf-8');
+  } catch (err) {
+    console.error('[Testimonials API] Error saving order to file:', err);
+  }
+}
+
+function loadOrderFromFile(): string[] {
+  try {
+    if (fs.existsSync(ORDER_FILE)) {
+      const content = fs.readFileSync(ORDER_FILE, 'utf-8');
+      const parsed = JSON.parse(content);
+      if (Array.isArray(parsed)) return parsed;
+    }
+  } catch {}
+  return [];
+}
+
+function applyOrdering(items: TestimonialItem[], orderedIds: string[]): TestimonialItem[] {
+  if (!Array.isArray(orderedIds) || orderedIds.length === 0) {
+    return [...items].sort((a, b) => 
+      new Date(b.created_at || 0).getTime() - new Date(a.created_at || 0).getTime()
+    );
+  }
+
+  const idMap = new Map(items.map(t => [t.id, t]));
+  const ordered: TestimonialItem[] = [];
+
+  orderedIds.forEach(id => {
+    const it = idMap.get(id);
+    if (it) {
+      ordered.push(it);
+      idMap.delete(id);
+    }
+  });
+
+  const remaining = Array.from(idMap.values()).sort((a, b) => 
+    new Date(b.created_at || 0).getTime() - new Date(a.created_at || 0).getTime()
+  );
+
+  return [...ordered, ...remaining];
+}
 
 function getSupabaseClient() {
   const url = process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL || '';
@@ -112,16 +160,19 @@ function saveToFile(items: TestimonialItem[]): void {
 // Carrega os depoimentos da tabela dedicada 'testimonials' do Supabase
 async function loadTestimonials(): Promise<TestimonialItem[]> {
   const supabase = getSupabaseClient();
+  let items: TestimonialItem[] = [];
+  let orderedIds: string[] = loadOrderFromFile();
+
   if (supabase) {
     try {
+      // Carrega diretamente da tabela própria 'testimonials' ordenada por data decrescente
       const { data, error } = await supabase
         .from('testimonials')
         .select('*')
         .order('created_at', { ascending: false });
 
       if (!error && Array.isArray(data) && data.length > 0) {
-        saveToFile(data as TestimonialItem[]);
-        return data as TestimonialItem[];
+        items = data as TestimonialItem[];
       }
     } catch (e) {
       console.warn('[Testimonials API] Erro ao consultar tabela testimonials:', e);
@@ -129,7 +180,14 @@ async function loadTestimonials(): Promise<TestimonialItem[]> {
   }
 
   // Fallback para arquivo local caso a tabela esteja sendo inicializada
-  return ensureDataFile();
+  if (items.length === 0) {
+    items = ensureDataFile();
+  }
+
+  // Aplica ordenação personalizada persistida ou ordenação nativa por created_at
+  const sorted = applyOrdering(items, orderedIds);
+  saveToFile(sorted);
+  return sorted;
 }
 
 // Salva o depoimento na tabela dedicada 'testimonials' do Supabase
@@ -262,8 +320,12 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         is_read: updated.is_read !== undefined ? Boolean(updated.is_read) : items[index].is_read
       };
 
-      if (items[index].status === 'approved' && !items[index].approved_at) {
-        items[index].approved_at = new Date().toISOString();
+      if (items[index].status === 'approved') {
+        if (!items[index].approved_at) {
+          items[index].approved_at = new Date().toISOString();
+        }
+        // Aprovação automática marca como lido
+        items[index].is_read = true;
       }
 
       await persistTestimonial(items[index]);
@@ -272,31 +334,48 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       return res.status(200).json({ success: true, item: items[index] });
     }
 
-    // 3. Reorder testimonials (Admin custom ordering)
+    // 3. Reorder testimonials (Admin custom ordering persistida 100% na tabela própria 'testimonials')
     if (action === 'reorder') {
       const { orderedIds } = req.body;
       if (Array.isArray(orderedIds) && orderedIds.length > 0) {
-        const idMap = new Map(items.map(t => [t.id, t]));
-        const reordered: TestimonialItem[] = [];
+        saveOrderToFile(orderedIds);
 
-        orderedIds.forEach(targetId => {
-          const item = idMap.get(targetId);
-          if (item) {
-            reordered.push(item);
-            idMap.delete(targetId);
+        // Atribui timestamps sequenciais para que a ordenação nativa por created_at da tabela 'testimonials'
+        // reflita com exatidão a ordem definida pelo admin sem tocar em app_settings
+        const baseTime = Date.now();
+        const idToTimestamp = new Map<string, string>();
+        orderedIds.forEach((tid, idx) => {
+          idToTimestamp.set(tid, new Date(baseTime - idx * 1000).toISOString());
+        });
+
+        if (supabase) {
+          try {
+            for (let i = 0; i < orderedIds.length; i++) {
+              const tid = orderedIds[i];
+              const newTs = idToTimestamp.get(tid);
+              if (newTs) {
+                await supabase
+                  .from('testimonials')
+                  .update({ created_at: newTs })
+                  .eq('id', tid);
+              }
+            }
+          } catch (supErr) {
+            console.warn('[Testimonials API] Erro ao persistir ordem na tabela testimonials:', supErr);
           }
-        });
+        }
 
-        // Add any remaining items that weren't in orderedIds
-        idMap.forEach(remaining => {
-          reordered.push(remaining);
+        // Aplica ordenação em memória e salva no arquivo local
+        items.forEach(t => {
+          const newTs = idToTimestamp.get(t.id);
+          if (newTs) t.created_at = newTs;
         });
-
+        const reordered = applyOrdering(items, orderedIds);
         items.length = 0;
         items.push(...reordered);
         saveToFile(items);
 
-        return res.status(200).json({ success: true, count: items.length });
+        return res.status(200).json({ success: true, count: items.length, orderedIds });
       }
       return res.status(400).json({ error: 'Missing or invalid orderedIds array' });
     }
@@ -305,39 +384,54 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     if (action === 'update-status' || status) {
       const targetId = id || req.body.id;
       const targetStatus = (status || req.body.status) as 'pending' | 'approved' | 'rejected';
+      const isApproved = targetStatus === 'approved';
       const targetConsent = req.body.consent !== undefined 
         ? Boolean(req.body.consent) 
-        : (targetStatus === 'approved' ? true : undefined);
+        : (isApproved ? true : undefined);
 
       let foundItem: TestimonialItem | null = null;
       const index = items.findIndex(t => t.id === targetId);
       if (index !== -1) {
         items[index].status = targetStatus;
-        if (targetStatus === 'approved') {
+        if (isApproved) {
           items[index].approved_at = new Date().toISOString();
           items[index].consent = true;
-        } else if (targetConsent !== undefined) {
-          items[index].consent = targetConsent;
+          // Quando aprovado pelo admin, automaticamente marca como lido
+          items[index].is_read = true;
+        } else {
+          if (targetConsent !== undefined) items[index].consent = targetConsent;
+          if (req.body.is_read !== undefined) items[index].is_read = Boolean(req.body.is_read);
         }
         foundItem = items[index];
         await persistTestimonial(items[index]);
         saveToFile(items);
       }
 
-      // Always also attempt direct update in Supabase
+      // Always also attempt direct update in Supabase 'testimonials' table
       if (supabase) {
         try {
+          const updatePayload: any = { 
+            status: targetStatus,
+            ...(isApproved 
+              ? { consent: true, is_read: true, approved_at: new Date().toISOString() } 
+              : { 
+                  ...(targetConsent !== undefined ? { consent: targetConsent } : {}),
+                  ...(req.body.is_read !== undefined ? { is_read: Boolean(req.body.is_read) } : {})
+                }
+            )
+          };
+
           await supabase
             .from('testimonials')
-            .update({ 
-              status: targetStatus,
-              ...(targetStatus === 'approved' ? { consent: true, approved_at: new Date().toISOString() } : (targetConsent !== undefined ? { consent: targetConsent } : {}))
-            })
+            .update(updatePayload)
             .eq('id', targetId);
         } catch (e) {}
       }
 
-      return res.status(200).json({ success: true, item: foundItem || { id: targetId, status: targetStatus } });
+      return res.status(200).json({ 
+        success: true, 
+        item: foundItem || { id: targetId, status: targetStatus, is_read: isApproved ? true : undefined } 
+      });
     }
 
     // 5. Mark read / unread

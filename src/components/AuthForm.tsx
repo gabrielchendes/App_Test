@@ -9,7 +9,9 @@ import { useI18n } from '../contexts/I18nContext';
 import { safeParse, safeFetch } from '../lib/utils';
 import { motion, AnimatePresence } from 'motion/react';
 import { usePWAInstall } from '../hooks/usePWAInstall';
-import PWAInstallModal from './PWAInstallModal';
+import { lazyWithRetry } from '../lib/lazyWithRetry';
+
+const PWAInstallModal = lazyWithRetry(() => import('./PWAInstallModal'));
 
 type LoginMethod = 'passwordless' | 'password';
 
@@ -474,11 +476,13 @@ export default function AuthForm() {
           </div>
         </div>
       </div>
-      <PWAInstallModal
-        isOpen={isPWAModalOpen}
-        onClose={() => setIsPWAModalOpen(false)}
-        onInstall={promptInstall}
-      />
+      <React.Suspense fallback={null}>
+        <PWAInstallModal
+          isOpen={isPWAModalOpen}
+          onClose={() => setIsPWAModalOpen(false)}
+          onInstall={promptInstall}
+        />
+      </React.Suspense>
     </div>
   );
 }

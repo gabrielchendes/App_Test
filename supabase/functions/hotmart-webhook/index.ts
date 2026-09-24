@@ -159,19 +159,73 @@ const handleRequest = async (req: Request): Promise<Response> => {
       ? String(rawTransactionId).trim() 
       : `HOTMART_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
 
-    const numericProductId = payload.data?.product?.id ?? payload.prod ?? payload.product_id ?? payload.data?.subscription?.product?.id;
-    const ucodeProductId = payload.data?.product?.ucode;
+    // 1. CORREÇÃO NA EXTRAÇÃO DO ID DO PRODUTO (HOTMART SANDBOX / PRODUÇÃO / COMBOS):
+    // Em ambiente de testes/Sandbox ou eventos com combos, a Hotmart envia data.product.id = 0 na raiz do payload.
+    // Varremos também data.product.content.products[0].id e data.product.content.products[0].ucode,
+    // garantindo capturar o ID correto do produto (ex: 4774438) tanto em Sandbox quanto em produção.
+    const isValidId = (val: any): boolean => {
+      if (val === undefined || val === null) return false;
+      const s = String(val).trim();
+      return s !== "" && s !== "0" && s !== "null" && s !== "undefined";
+    };
+
+    const contentProducts: any[] = Array.isArray(payload.data?.product?.content?.products)
+      ? payload.data.product.content.products
+      : [];
+
+    const firstContentProd = contentProducts[0] || {};
+    const contentProdId = firstContentProd.id;
+    const contentProdUcode = firstContentProd.ucode;
+    const contentProdName = firstContentProd.name;
+
+    const rootNumericId = payload.data?.product?.id ?? payload.prod ?? payload.product_id ?? payload.data?.subscription?.product?.id;
+    const rootUcode = payload.data?.product?.ucode;
+    const rootName = payload.data?.product?.name;
 
     let hotmartProductId = "";
-    if (numericProductId !== undefined && numericProductId !== null && String(numericProductId).trim() !== "" && String(numericProductId).trim() !== "0") {
-      hotmartProductId = String(numericProductId).trim();
-    } else if (ucodeProductId && String(ucodeProductId).trim() !== "") {
-      hotmartProductId = String(ucodeProductId).trim();
-    } else if (numericProductId !== undefined && numericProductId !== null && String(numericProductId).trim() !== "") {
-      hotmartProductId = String(numericProductId).trim();
+    let ucodeProductId = "";
+
+    // Priorizar ID numérico válido diferente de 0 da raiz
+    if (isValidId(rootNumericId)) {
+      hotmartProductId = String(rootNumericId).trim();
+    } 
+    // Se a raiz for 0 ou vazia, extrair do content.products[0].id (Hotmart Sandbox / Combos)
+    else if (isValidId(contentProdId)) {
+      hotmartProductId = String(contentProdId).trim();
+    } 
+    // Fallback para ucode
+    else if (rootUcode && String(rootUcode).trim() !== "") {
+      hotmartProductId = String(rootUcode).trim();
+    } else if (contentProdUcode && String(contentProdUcode).trim() !== "") {
+      hotmartProductId = String(contentProdUcode).trim();
+    } else if (rootNumericId !== undefined && rootNumericId !== null && String(rootNumericId).trim() !== "") {
+      hotmartProductId = String(rootNumericId).trim();
     }
 
-    console.log(`[Hotmart Edge Function] Processing event "${event}" for ${email}, Product ID: ${hotmartProductId || 'N/A (Default Principal)'}, Ucode: ${ucodeProductId || 'N/A'}, Transaction: ${transactionId}`);
+    // Resolver ucode
+    if (rootUcode && String(rootUcode).trim() !== "") {
+      ucodeProductId = String(rootUcode).trim();
+    } else if (contentProdUcode && String(contentProdUcode).trim() !== "") {
+      ucodeProductId = String(contentProdUcode).trim();
+    }
+
+    // Chaves de busca para cruzar com mapeamento (ID raiz, ID de content, ucodes)
+    const searchKeys: string[] = [];
+    if (hotmartProductId) searchKeys.push(hotmartProductId);
+    if (isValidId(rootNumericId)) searchKeys.push(String(rootNumericId).trim());
+    if (isValidId(contentProdId)) searchKeys.push(String(contentProdId).trim());
+    if (rootUcode && String(rootUcode).trim()) searchKeys.push(String(rootUcode).trim());
+    if (contentProdUcode && String(contentProdUcode).trim()) searchKeys.push(String(contentProdUcode).trim());
+
+    // Se houver mais produtos dentro de content.products (combo/bundle), adiciona todos
+    for (const cp of contentProducts) {
+      if (isValidId(cp.id)) searchKeys.push(String(cp.id).trim());
+      if (cp.ucode && String(cp.ucode).trim()) searchKeys.push(String(cp.ucode).trim());
+    }
+
+    const uniqueSearchKeys = Array.from(new Set(searchKeys.filter(Boolean)));
+
+    console.log(`[Hotmart Edge Function] Processing event "${event}" for ${email}, Product ID: ${hotmartProductId || 'N/A (Default Principal)'}, Ucode: ${ucodeProductId || 'N/A'}, Content Prod ID: ${contentProdId || 'N/A'}, Transaction: ${transactionId}`);
 
     // 3. IDEMPOTÊNCIA ESTRITA POR COMBINAÇÃO (transaction_id + event)
     // Regra:
@@ -249,8 +303,8 @@ const handleRequest = async (req: Request): Promise<Response> => {
     let productType: "main_product" | "course" | "package" | "ai_subscription" = "main_product";
     let targetIds: string[] = [];
 
-    if (hotmartProductId || ucodeProductId) {
-      const searchKeys = Array.from(new Set([hotmartProductId, ucodeProductId].filter(Boolean) as string[]));
+    if (uniqueSearchKeys.length > 0) {
+      const searchKeys = uniqueSearchKeys;
 
       // a) Procurar na tabela de mapeamento customizada hotmart_products
       let mapping: any = null;
@@ -662,7 +716,10 @@ const handleRequest = async (req: Request): Promise<Response> => {
 
     // 8.5 REGISTRAR OU ATUALIZAR VENDA NA TABELA SALES
     try {
-      let resolvedName = payload.data?.product?.name;
+      let resolvedName = (rootName && rootName !== 'Curso / Produto Hotmart (Simulação)') 
+        ? rootName 
+        : (contentProdName || rootName);
+
       if (!resolvedName || resolvedName === 'Curso / Produto Hotmart (Simulação)') {
         if (productType === 'main_product') resolvedName = 'Acesso Geral à Plataforma (Produto Principal)';
         else if (productType === 'ai_subscription') resolvedName = 'Assinatura IA Expert VIP (Ilimitada)';

@@ -22,7 +22,7 @@ export function normalizePdfUrl(rawUrl?: string | null): string {
     else if (match3) fileId = match3[1];
 
     if (fileId) {
-      return `https://drive.google.com/file/d/${fileId}/preview`;
+      return `https://drive.google.com/file/d/${fileId}/preview?hl=en`;
     }
   }
 
@@ -38,17 +38,21 @@ export function getPdfEmbedSources(rawUrl: string, reloadKey = 0) {
   const isGoogleDrive = cleanUrl.includes('drive.google.com');
 
   if (isGoogleDrive) {
+    const drivePreviewUrl = cleanUrl.includes('hl=en')
+      ? cleanUrl
+      : `${cleanUrl}${cleanUrl.includes('?') ? '&' : '?'}hl=en`;
     return {
       isGoogleDrive: true,
-      googleDocsUrl: cleanUrl,
-      directUrl: cleanUrl,
+      googleDocsUrl: drivePreviewUrl,
+      directUrl: drivePreviewUrl,
       cleanUrl
     };
   }
 
   const reloadParam = reloadKey > 0 ? `&_t=${reloadKey}` : '';
-  const googleDocsUrl = `https://docs.google.com/viewer?url=${encodeURIComponent(cleanUrl)}&embedded=true${reloadParam}`;
-  const directUrl = `${cleanUrl}${cleanUrl.includes('#') ? '' : '#toolbar=1&navpanes=0'}`;
+  // Force hl=en so page numbers and viewer UI render in English ("Page 1 of ...")
+  const googleDocsUrl = `https://docs.google.com/viewer?url=${encodeURIComponent(cleanUrl)}&hl=en&embedded=true${reloadParam}`;
+  const directUrl = `${cleanUrl}${cleanUrl.includes('#') ? '' : '#toolbar=0&navpanes=0&scrollbar=0'}`;
 
   return {
     isGoogleDrive: false,

@@ -1222,6 +1222,9 @@ async function handleUpdateSettings(req: VercelRequest, res: VercelResponse) {
     if (!payload.custom_texts) payload.custom_texts = {};
     payload.custom_texts['config.favicon_url'] = payload.favicon_url || '';
   }
+  if (payload.custom_texts && 'testimonials_order' in payload.custom_texts) {
+    delete payload.custom_texts['testimonials_order'];
+  }
 
   // Update app_settings table using scoped client (authenticated caller) with fallback to supabaseAdmin
   const scopedClient = getScopedClient(req);

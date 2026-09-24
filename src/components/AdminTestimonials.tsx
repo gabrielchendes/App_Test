@@ -29,6 +29,7 @@ import {
 import { supabase } from '../lib/supabase';
 import { Testimonial } from '../types/lms';
 import { toast } from 'sonner';
+import { applyTestimonialOrder } from '../lib/utils';
 
 interface AdminTestimonialsProps {
   onTestimonialCountChange?: (unreadCount: number) => void;
@@ -75,64 +76,90 @@ export const AdminTestimonials: React.FC<AdminTestimonialsProps> = ({
     setLoading(true);
     try {
       let list: Testimonial[] = [];
+      let orderedIds: string[] = [];
 
-      // 1. Tenta carregar da tabela dedicada 'testimonials' do Supabase
+      // 1. Tenta recuperar ordem persistida no cache local
       try {
-        const { data, error } = await supabase
-          .from('testimonials')
-          .select('*')
-          .order('created_at', { ascending: false });
-
-        if (!error && Array.isArray(data) && data.length > 0) {
-          list = data as Testimonial[];
+        const storedOrder = localStorage.getItem('app_testimonials_order');
+        if (storedOrder) {
+          const parsed = JSON.parse(storedOrder);
+          if (Array.isArray(parsed)) orderedIds = parsed;
         }
-      } catch (err) {
-        console.warn('[AdminTestimonials] Supabase query notice:', err);
+      } catch {}
+
+      // 2. Limpeza preventiva: garante que a tabela app_settings não retenha nada sobre depoimentos
+      try {
+        const { data: stData } = await supabase
+          .from('app_settings')
+          .select('custom_texts')
+          .eq('id', 1)
+          .maybeSingle();
+
+        if (stData?.custom_texts?.['testimonials_order']) {
+          const nextTexts = { ...stData.custom_texts };
+          delete nextTexts['testimonials_order'];
+          const { error: updErr } = await supabase
+            .from('app_settings')
+            .update({ custom_texts: nextTexts })
+            .eq('id', 1);
+
+          if (updErr) {
+            const { data: { session } } = await supabase.auth.getSession();
+            if (session?.access_token) {
+              await fetch('/api/v1/admin?action=update-settings', {
+                method: 'POST',
+                headers: {
+                  'Content-Type': 'application/json',
+                  'Authorization': `Bearer ${session.access_token}`
+                },
+                body: JSON.stringify({ settings: { custom_texts: nextTexts } })
+              });
+            }
+          }
+        }
+      } catch {}
+
+      // 3. Tenta carregar da rota de API (já carregada diretamente da tabela testimonials)
+      try {
+        const res = await fetch('/api/v1/testimonials?all=true');
+        if (res.ok) {
+          const data = await res.json();
+          if (Array.isArray(data) && data.length > 0) {
+            list = data as Testimonial[];
+          }
+        }
+      } catch (apiErr) {
+        console.warn('[AdminTestimonials] API fetch notice:', apiErr);
       }
 
-      // 2. Se a tabela ainda estiver vazia, tenta a rota de API
+      // 4. Se a API estiver vazia ou offline, busca diretamente da tabela dedicada 'testimonials'
       if (list.length === 0) {
         try {
-          const res = await fetch('/api/v1/testimonials?all=true');
-          if (res.ok) {
-            const data = await res.json();
-            if (Array.isArray(data) && data.length > 0) {
-              list = data as Testimonial[];
-            }
+          const { data, error } = await supabase
+            .from('testimonials')
+            .select('*')
+            .order('created_at', { ascending: false });
+
+          if (!error && Array.isArray(data) && data.length > 0) {
+            list = data as Testimonial[];
           }
-        } catch (apiErr) {
-          console.warn('[AdminTestimonials] API fetch notice:', apiErr);
+        } catch (err) {
+          console.warn('[AdminTestimonials] Supabase query notice:', err);
         }
       }
 
-      // 3. Recupera do cache local com deduplicação rigorosa
-      try {
-        const local = localStorage.getItem('app_testimonials_cache');
-        if (local) {
-          const parsed = JSON.parse(local);
-          if (Array.isArray(parsed) && parsed.length > 0) {
-            if (list.length === 0) {
+      // 5. Fallback para cache local se ainda vazio
+      if (list.length === 0) {
+        try {
+          const local = localStorage.getItem('app_testimonials_cache');
+          if (local) {
+            const parsed = JSON.parse(local);
+            if (Array.isArray(parsed) && parsed.length > 0) {
               list = parsed;
-            } else {
-              const existingIds = new Set(list.map(t => t.id));
-              // Não duplica se o ID já existe ou se o mesmo autor enviou o mesmo texto
-              const missingFromRemote = parsed.filter((t: any) => {
-                if (!t || !t.id) return false;
-                if (existingIds.has(t.id)) return false;
-                const isContentDuplicate = list.some(remote =>
-                  (remote.user_name?.trim().toLowerCase() === t.user_name?.trim().toLowerCase() ||
-                   (remote.user_email && t.user_email && remote.user_email.toLowerCase() === t.user_email.toLowerCase())) &&
-                  remote.content?.trim() === t.content?.trim()
-                );
-                return !isContentDuplicate;
-              });
-              if (missingFromRemote.length > 0) {
-                list = [...missingFromRemote, ...list];
-              }
             }
           }
-        }
-      } catch (e) {}
+        } catch (e) {}
+      }
 
       // Deduplicação final por ID e conteúdo para garantir zero duplicatas na interface
       const seenIds = new Set<string>();
@@ -147,19 +174,21 @@ export const AdminTestimonials: React.FC<AdminTestimonialsProps> = ({
         seenSignatures.add(sig);
         deduplicatedList.push(item);
       }
-      list = deduplicatedList;
 
-      // Salva no cache local limpo (sem itens duplicados)
-      if (list.length > 0) {
+      // Aplica ordenação personalizada salva
+      const orderedList = applyTestimonialOrder(deduplicatedList, orderedIds);
+
+      // Salva no cache local limpo com a ordem correta
+      if (orderedList.length > 0) {
         try {
-          localStorage.setItem('app_testimonials_cache', JSON.stringify(list));
+          localStorage.setItem('app_testimonials_cache', JSON.stringify(orderedList));
         } catch (e) {}
       }
 
-      setTestimonials(list);
+      setTestimonials(orderedList);
 
       // Report unread count
-      const unreadCount = list.filter(t => !t.is_read).length;
+      const unreadCount = orderedList.filter(t => !t.is_read).length;
       if (onTestimonialCountChange) {
         onTestimonialCountChange(unreadCount);
       }
@@ -272,35 +301,47 @@ export const AdminTestimonials: React.FC<AdminTestimonialsProps> = ({
   const handleUpdateStatus = async (id: string, status: 'approved' | 'rejected' | 'pending') => {
     try {
       const target = testimonials.find(t => t.id === id);
-      const nextConsent = status === 'approved' ? true : (target?.consent ?? true);
-      const approvedAt = status === 'approved' ? new Date().toISOString() : (status === 'pending' ? null : target?.approved_at);
+      const isApproved = status === 'approved';
+      const nextConsent = isApproved ? true : (target?.consent ?? true);
+      const approvedAt = isApproved ? new Date().toISOString() : (status === 'pending' ? null : target?.approved_at);
+      // Quando aprovado pelo admin, automaticamente marca como lido!
+      const nextIsRead = isApproved ? true : (target?.is_read ?? false);
 
       const updatedList = testimonials.map(t => 
-        t.id === id ? { ...t, status, consent: nextConsent, approved_at: approvedAt } : t
+        t.id === id ? { 
+          ...t, 
+          status, 
+          consent: nextConsent, 
+          is_read: nextIsRead, 
+          approved_at: approvedAt 
+        } : t
       );
       setTestimonials(updatedList);
 
+      // Atualiza o contador de não lidos imediatamente
+      const unreadCount = updatedList.filter(t => !t.is_read).length;
+      if (onTestimonialCountChange) {
+        onTestimonialCountChange(unreadCount);
+      }
+
       // 1. Direct Supabase update in dedicated testimonials table
       try {
-        // Tenta atualizar pelo ID
+        const updatePayload: any = { 
+          status, 
+          consent: nextConsent,
+          ...(isApproved ? { is_read: true, approved_at: approvedAt } : {})
+        };
+
         const { error: updateErr } = await supabase
           .from('testimonials')
-          .update({ 
-            status, 
-            consent: nextConsent,
-            ...(status === 'approved' ? { approved_at: approvedAt } : {})
-          })
+          .update(updatePayload)
           .eq('id', id);
 
         // Se era um item local ou o ID não bateu, tenta atualizar pelo autor e conteúdo
         if ((updateErr || id.startsWith('local_')) && target) {
           await supabase
             .from('testimonials')
-            .update({ 
-              status, 
-              consent: nextConsent,
-              ...(status === 'approved' ? { approved_at: approvedAt } : {})
-            })
+            .update(updatePayload)
             .eq('user_name', target.user_name)
             .eq('content', target.content);
         }
@@ -317,7 +358,8 @@ export const AdminTestimonials: React.FC<AdminTestimonialsProps> = ({
             action: 'update-status', 
             id, 
             status,
-            consent: nextConsent 
+            consent: nextConsent,
+            is_read: isApproved ? true : undefined
           })
         });
       } catch (apiErr) {
@@ -330,8 +372,8 @@ export const AdminTestimonials: React.FC<AdminTestimonialsProps> = ({
       } catch (e) {}
 
       toast.success(
-        status === 'approved' 
-          ? 'Depoimento aprovado com sucesso! Já está visível na página de depoimentos.' 
+        isApproved 
+          ? 'Depoimento aprovado e marcado como lido! Já está visível na página de histórias.' 
           : status === 'rejected'
           ? 'Depoimento rejeitado.'
           : 'Status alterado para pendente.'
@@ -342,23 +384,62 @@ export const AdminTestimonials: React.FC<AdminTestimonialsProps> = ({
     }
   };
 
-  // Reorder testimonials (move up / down)
+  // Reorder testimonials (move up / down) - gravando 100% na tabela própria 'testimonials'
   const handleMove = async (id: string, direction: 'up' | 'down') => {
-    const currentIndex = testimonials.findIndex(t => t.id === id);
-    if (currentIndex === -1) return;
+    // 1. Localiza a posição dentro dos itens visíveis (respeitando filtros atuais)
+    const visibleIndex = filteredTestimonials.findIndex(t => t.id === id);
+    const targetVisibleIndex = direction === 'up' ? visibleIndex - 1 : visibleIndex + 1;
 
-    const targetIndex = direction === 'up' ? currentIndex - 1 : currentIndex + 1;
-    if (targetIndex < 0 || targetIndex >= testimonials.length) return;
+    if (visibleIndex === -1 || targetVisibleIndex < 0 || targetVisibleIndex >= filteredTestimonials.length) {
+      return;
+    }
+
+    const currentItem = filteredTestimonials[visibleIndex];
+    const targetItem = filteredTestimonials[targetVisibleIndex];
+
+    const currentIndex = testimonials.findIndex(t => t.id === currentItem.id);
+    const targetIndex = testimonials.findIndex(t => t.id === targetItem.id);
+
+    if (currentIndex === -1 || targetIndex === -1) return;
 
     const newTestimonials = [...testimonials];
     const [movedItem] = newTestimonials.splice(currentIndex, 1);
     newTestimonials.splice(targetIndex, 0, movedItem);
 
+    // Atribui timestamps decrescentes diretamente aos itens para que a ordem fique gravada na tabela 'testimonials'
+    const baseTime = Date.now();
+    for (let i = 0; i < newTestimonials.length; i++) {
+      newTestimonials[i] = {
+        ...newTestimonials[i],
+        created_at: new Date(baseTime - i * 1000).toISOString()
+      };
+    }
+
     setTestimonials(newTestimonials);
 
-    // 1. Update order on server API
+    const orderedIds = newTestimonials.map(t => t.id);
+
+    // 1. Salva a ordem no cache local
     try {
-      const orderedIds = newTestimonials.map(t => t.id);
+      localStorage.setItem('app_testimonials_order', JSON.stringify(orderedIds));
+      localStorage.setItem('app_testimonials_cache', JSON.stringify(newTestimonials));
+    } catch (e) {}
+
+    // 2. Atualiza os registros diretamente na tabela 'testimonials' do Supabase (sem tocar em app_settings)
+    try {
+      for (let i = 0; i < newTestimonials.length; i++) {
+        const item = newTestimonials[i];
+        await supabase
+          .from('testimonials')
+          .update({ created_at: item.created_at })
+          .eq('id', item.id);
+      }
+    } catch (dbErr) {
+      console.warn('[AdminTestimonials] Direct DB order update notice:', dbErr);
+    }
+
+    // 3. Persiste a ordem no servidor backend (atualiza testimonials.json na tabela própria)
+    try {
       await fetch('/api/v1/testimonials', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -368,12 +449,7 @@ export const AdminTestimonials: React.FC<AdminTestimonialsProps> = ({
       console.warn('[AdminTestimonials] Reorder API notice:', apiErr);
     }
 
-    // 2. Update local cache
-    try {
-      localStorage.setItem('app_testimonials_cache', JSON.stringify(newTestimonials));
-    } catch (e) {}
-
-    toast.success('Ordem de exibição dos depoimentos atualizada!');
+    toast.success('Ordem de exibição dos depoimentos atualizada na tabela própria!');
   };
 
   // Open Edit Modal
@@ -408,6 +484,7 @@ export const AdminTestimonials: React.FC<AdminTestimonialsProps> = ({
 
     setIsSavingEdit(true);
     try {
+      const isApproved = editStatus === 'approved';
       const updatedItem: Testimonial = {
         ...editingTestimonial,
         user_name: editAuthorName.trim(),
@@ -419,7 +496,9 @@ export const AdminTestimonials: React.FC<AdminTestimonialsProps> = ({
         content: editContent.trim(),
         image_url: editImageUrl.trim() || undefined,
         status: editStatus,
-        consent: editConsent
+        consent: editConsent,
+        is_read: isApproved ? true : (editingTestimonial?.is_read ?? false),
+        approved_at: isApproved ? (editingTestimonial?.approved_at || new Date().toISOString()) : editingTestimonial?.approved_at
       };
 
       // 1. Save to server API
@@ -444,6 +523,12 @@ export const AdminTestimonials: React.FC<AdminTestimonialsProps> = ({
       // 3. Update component state
       const updatedList = testimonials.map(t => t.id === updatedItem.id ? updatedItem : t);
       setTestimonials(updatedList);
+
+      // Report updated unread count
+      const unreadCount = updatedList.filter(t => !t.is_read).length;
+      if (onTestimonialCountChange) {
+        onTestimonialCountChange(unreadCount);
+      }
 
       // 4. Update local cache
       try {
@@ -810,7 +895,7 @@ export const AdminTestimonials: React.FC<AdminTestimonialsProps> = ({
                           <button
                             type="button"
                             onClick={() => handleMove(item.id, 'up')}
-                            disabled={testimonials.findIndex(t => t.id === item.id) <= 0}
+                            disabled={filteredTestimonials.findIndex(t => t.id === item.id) <= 0}
                             className="p-1 text-gray-400 hover:text-amber-400 disabled:opacity-20 disabled:hover:text-gray-400 cursor-pointer disabled:cursor-not-allowed transition-colors"
                             title="Subir (exibir antes na página de histórias)"
                           >
@@ -819,7 +904,7 @@ export const AdminTestimonials: React.FC<AdminTestimonialsProps> = ({
                           <button
                             type="button"
                             onClick={() => handleMove(item.id, 'down')}
-                            disabled={testimonials.findIndex(t => t.id === item.id) >= testimonials.length - 1}
+                            disabled={filteredTestimonials.findIndex(t => t.id === item.id) >= filteredTestimonials.length - 1}
                             className="p-1 text-gray-400 hover:text-amber-400 disabled:opacity-20 disabled:hover:text-gray-400 cursor-pointer disabled:cursor-not-allowed transition-colors"
                             title="Descer (exibir depois na página de histórias)"
                           >

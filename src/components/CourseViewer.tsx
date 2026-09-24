@@ -22,8 +22,7 @@ import {
   CheckSquare,
   Puzzle,
   Headphones,
-  FileCode,
-  RotateCcw
+  FileCode
 } from 'lucide-react';
 import WhatsAppIcon from './WhatsAppIcon';
 import { motion, AnimatePresence } from 'motion/react';
@@ -487,77 +486,44 @@ export default function CourseViewer({ courseId, userId, onClose, initialCourse,
     const viewerUrl = isGoogleDrive ? googleDocsUrl : (pdfViewerMode === 'direct' ? directUrl : googleDocsUrl);
 
     return (
-      <div className="w-full h-full relative group/pdf bg-[#1a1a1a] overflow-hidden rounded-[2rem] sm:rounded-[3rem]">
+      <div className="w-full h-full relative group/pdf bg-[#121214] overflow-hidden rounded-[calc(2.2rem-2.5px)] sm:rounded-[calc(3rem-2.5px)]">
         {/* Subtle Paper Texture Background */}
         <div className="absolute inset-0 opacity-10 pointer-events-none bg-[radial-gradient(#ffffff_1px,transparent_1px)] [background-size:20px_20px]" />
+
+        {/* Top Specular Light Reflection */}
+        <div className="absolute top-0 inset-x-8 h-[1px] bg-gradient-to-r from-transparent via-white/40 to-transparent z-30 pointer-events-none" />
         
-        <iframe 
-          key={`${activeChapter?.id || 'pdf'}-${pdfViewerMode}-${pdfReloadCount}`}
-          src={viewerUrl}
-          className="w-full h-full border-none relative z-10"
-          title={activeChapter?.title || course?.title || 'Material PDF'}
-          allow="fullscreen"
-          loading="lazy"
-        />
+        {/* PDF viewer iframe */}
+        <div className="w-full h-full relative overflow-hidden">
+          <iframe 
+            key={`${activeChapter?.id || 'pdf'}-${pdfViewerMode}-${pdfReloadCount}`}
+            src={viewerUrl}
+            className="w-full h-full border-none relative z-10"
+            title={activeChapter?.title || course?.title || 'Material PDF'}
+            allow="fullscreen"
+            loading="lazy"
+          />
+        </div>
         
-        {/* Elegant Book Binding Shadow Effect */}
-        <div className="absolute inset-y-0 left-0 w-8 bg-gradient-to-r from-black/40 to-transparent z-20 pointer-events-none" />
-        <div className="absolute inset-y-0 right-0 w-2 bg-gradient-to-l from-black/20 to-transparent z-20 pointer-events-none" />
+        {/* Elegant Book Binding Depth Effect */}
+        <div className="absolute inset-y-0 left-0 w-8 bg-gradient-to-r from-black/50 to-transparent z-20 pointer-events-none" />
+        <div className="absolute inset-y-0 right-0 w-3 bg-gradient-to-l from-black/20 to-transparent z-20 pointer-events-none" />
 
-        {/* Floating Controls Bar in Top-Right */}
-        <div className="absolute top-4 right-4 sm:top-6 sm:right-6 z-50 flex items-center gap-2">
-          {!isGoogleDrive && (
-            <div className="bg-black/85 backdrop-blur-md border border-white/10 p-1 rounded-2xl flex items-center shadow-2xl">
-              <button
-                type="button"
-                onClick={() => setPdfViewerMode('google')}
-                className={`px-3 py-1.5 rounded-xl text-[10px] font-bold tracking-wider uppercase transition-all ${
-                  pdfViewerMode === 'google'
-                    ? 'bg-primary text-black shadow-md'
-                    : 'text-gray-400 hover:text-white'
-                }`}
-                title="Visualizador Google Docs"
-              >
-                Google Docs
-              </button>
-              <button
-                type="button"
-                onClick={() => setPdfViewerMode('direct')}
-                className={`px-3 py-1.5 rounded-xl text-[10px] font-bold tracking-wider uppercase transition-all ${
-                  pdfViewerMode === 'direct'
-                    ? 'bg-primary text-black shadow-md'
-                    : 'text-gray-400 hover:text-white'
-                }`}
-                title="Visualizador Direto / Nativo"
-              >
-                Direto
-              </button>
-            </div>
-          )}
-
-          <button
-            type="button"
-            onClick={() => {
-              setPdfReloadCount(prev => prev + 1);
-              toast.info('Recarregando documento...');
-            }}
-            className="bg-black/80 hover:bg-black text-white hover:text-primary p-3 sm:p-3.5 rounded-2xl transition-all border border-white/10 shadow-xl cursor-pointer hover:scale-105 active:scale-95"
-            title="Recarregar Visualizador de PDF"
-          >
-            <RotateCcw size={18} />
-          </button>
-
+        {/* Floating Controls Bar: ONLY View Fullscreen */}
+        <div className="absolute top-3.5 right-3.5 sm:top-5 sm:right-5 z-50">
           <button 
+            type="button"
             onClick={() => {
               window.open(cleanUrl, '_blank');
               if (settings?.course_pdf_auto_complete_fullscreen && activeChapter?.id) {
                 markChapterComplete(activeChapter.id);
               }
             }}
-            className="bg-primary hover:bg-primary/90 text-black p-3 sm:p-3.5 rounded-2xl transition-all hover:scale-105 active:scale-95 shadow-[0_8px_32px_rgba(var(--primary-rgb),0.3)] flex items-center justify-center group/btn cursor-pointer"
+            className="bg-black/85 hover:bg-black text-white hover:text-primary border border-white/20 hover:border-primary/50 px-3.5 py-2 sm:px-4 sm:py-2.5 rounded-2xl transition-all duration-200 hover:scale-105 active:scale-95 shadow-[0_8px_25px_rgba(0,0,0,0.7)] backdrop-blur-xl flex items-center gap-2 text-[11px] sm:text-xs font-black tracking-wider uppercase cursor-pointer group/btn"
             title={t('course.view_fullscreen') || "View Fullscreen"}
           >
-            <Maximize2 size={18} className="group-hover/btn:rotate-12 transition-transform" />
+            <Maximize2 size={15} className="group-hover/btn:rotate-12 transition-transform duration-300" />
+            <span>{t('course.view_fullscreen') || "View Fullscreen"}</span>
           </button>
         </div>
       </div>
@@ -1099,10 +1065,10 @@ export default function CourseViewer({ courseId, userId, onClose, initialCourse,
                     initial={{ opacity: 0 }}
                     animate={{ opacity: 1 }}
                     transition={{ delay: 0.2 }}
-                    className={`relative overflow-hidden bg-black transition-all duration-500 w-full ${
+                    className={`relative overflow-hidden transition-all duration-500 w-full ${
                       activeChapter?.content_type === 'pdf' 
-                        ? 'aspect-[1/1.4] sm:aspect-[3/4] max-h-[85vh] rounded-[2rem] sm:rounded-[3rem] border border-white/10 ring-8 ring-white/5 shadow-2xl' 
-                        : 'aspect-video rounded-2xl sm:rounded-3xl border border-white/15 shadow-[0_20px_50px_rgba(0,0,0,0.8)] ring-1 ring-white/10'
+                        ? 'aspect-[1/1.4] sm:aspect-[3/4] max-h-[85vh] rounded-[2.2rem] sm:rounded-[3rem] p-[2px] bg-gradient-to-b from-white/35 via-white/10 to-white/20 shadow-[0_25px_60px_-15px_rgba(0,0,0,0.95),0_0_35px_rgba(255,255,255,0.08)] ring-1 ring-white/20' 
+                        : 'bg-black aspect-video rounded-2xl sm:rounded-3xl border border-white/15 shadow-[0_20px_50px_rgba(0,0,0,0.8)] ring-1 ring-white/10'
                     }`}
                   >
                     {activeChapter?.content_type === 'video' ? (

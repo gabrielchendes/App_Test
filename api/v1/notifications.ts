@@ -584,11 +584,14 @@ async function sendPushNotification(
           if (response.failureCount > 0) {
             response.responses.forEach((resp, idx) => {
               if (!resp.success) {
-                const errCode = resp.error?.code;
+                const errCode = resp.error?.code || '';
                 if (
                   errCode === 'messaging/invalid-registration-token' ||
                   errCode === 'messaging/registration-token-not-registered' ||
-                  errCode === 'messaging/mismatched-credential'
+                  errCode === 'messaging/mismatched-credential' ||
+                  errCode === 'messaging/invalid-argument' ||
+                  errCode.includes('token') ||
+                  errCode.includes('not-registered')
                 ) {
                   failedTokens.push(batchTokens[idx]);
                 }
@@ -706,15 +709,17 @@ async function sendPushNotification(
       };
     }
     
-    // Clean up stale tokens asynchronously
+    // Clean up stale tokens asynchronously via supabaseAdmin (bypassing RLS)
     if (failedTokens.length > 0) {
-      client
-        .from('push_tokens')
-        .delete()
-        .in('token', failedTokens)
-        .then(({ error: delErr }: any) => {
-          if (delErr) console.warn('[Notifications API] Error cleaning failed tokens:', delErr);
-        });
+      try {
+        await supabaseAdmin
+          .from('push_tokens')
+          .delete()
+          .in('token', failedTokens);
+        console.log(`[Notifications API] Successfully pruned ${failedTokens.length} expired token(s)`);
+      } catch (delErr) {
+        console.warn('[Notifications API] Error cleaning failed tokens with admin:', delErr);
+      }
     }
 
     const isSuccessful = totalSuccess > 0 || topicSent;
@@ -723,9 +728,12 @@ async function sendPushNotification(
       count: isSuccessful ? Math.max(userIdsWithPush.length, userIds.length) : 0, 
       usersCount: isSuccessful ? Math.max(userIdsWithPush.length, userIds.length) : 0,
       deviceTokensCount: totalSuccess,
-      failed: totalFailure, 
       tokensFound: registrationTokens.length,
-      topicSent
+      topicSent,
+      ...(totalFailure > 0 ? { unreachedCount: totalFailure } : {}),
+      reason: !isSuccessful && totalFailure > 0 
+        ? `${totalFailure} token(s) de dispositivo expiraram ou são inválidos.` 
+        : undefined
     };
   } catch (e: any) {
     console.error('[Notifications API] Error sending push notification:', e);

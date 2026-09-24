@@ -21,6 +21,7 @@ import { supabase } from '../lib/supabase';
 import { Testimonial } from '../types/lms';
 import { AppSettings } from '../contexts/SettingsContext';
 import { toast } from 'sonner';
+import { applyTestimonialOrder } from '../lib/utils';
 
 interface InspiringStoriesPageProps {
   onBack: () => void;
@@ -140,7 +141,18 @@ export const InspiringStoriesPage: React.FC<InspiringStoriesPageProps> = ({
         }
       } catch (e) {}
 
-      setStories(allApproved);
+      // Recupera ordem opcional do cache local se existente
+      let orderedIds: string[] = [];
+      try {
+        const localOrder = localStorage.getItem('app_testimonials_order');
+        if (localOrder) {
+          const parsed = JSON.parse(localOrder);
+          if (Array.isArray(parsed)) orderedIds = parsed;
+        }
+      } catch {}
+
+      const finalSortedStories = applyTestimonialOrder(allApproved, orderedIds);
+      setStories(finalSortedStories);
     } catch (err) {
       console.warn('[InspiringStories] Exception fetching stories:', err);
       setStories([]);

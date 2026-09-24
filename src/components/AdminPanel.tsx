@@ -77,6 +77,7 @@ import {
   HelpCircle,
   Info,
   Sparkles,
+  Heart,
   Package,
   MousePointer2,
   PlayCircle,
@@ -1336,6 +1337,11 @@ export default function AdminPanel({ user }: AdminPanelProps) {
       if ('favicon_url' in payload) {
         if (!payload.custom_texts) payload.custom_texts = { ...(settings?.custom_texts || {}) };
         payload.custom_texts['config.favicon_url'] = payload.favicon_url || '';
+      }
+
+      // Garante que a ordem ou dados de depoimentos nunca sejam gravados em app_settings
+      if (payload.custom_texts && 'testimonials_order' in payload.custom_texts) {
+        delete payload.custom_texts['testimonials_order'];
       }
 
       // Use update instead of upsert to only require UPDATE RLS permissions
@@ -5662,9 +5668,9 @@ export default function AdminPanel({ user }: AdminPanelProps) {
                                 <Sparkles size={20} />
                               </div>
                               <div>
-                                <h4 className="font-bold text-white">Botão de Depoimentos na Home</h4>
+                                <h4 className="font-bold text-white">Card & Botões de Depoimentos na Home</h4>
                                 <p className="text-xs text-gray-400">
-                                  Permite que as alunas enviem seus depoimentos e resultados no final da tela inicial.
+                                  Permite que as alunas enviem seus depoimentos e vejam histórias inspiradoras no final da tela inicial.
                                 </p>
                               </div>
                             </div>
@@ -5673,7 +5679,11 @@ export default function AdminPanel({ user }: AdminPanelProps) {
                               onClick={async () => {
                                 setIsSavingSettings(true);
                                 await updateSettings({ 
-                                  enable_testimonials: localSettings?.enable_testimonials !== false
+                                  enable_testimonials: localSettings?.enable_testimonials !== false,
+                                  custom_texts: {
+                                    ...settings.custom_texts,
+                                    ...draftCustomTexts
+                                  }
                                 });
                                 setIsSavingSettings(false);
                               }}
@@ -5714,6 +5724,78 @@ export default function AdminPanel({ user }: AdminPanelProps) {
                                 }`}
                               />
                             </button>
+                          </div>
+
+                          {/* Text Customization for Testimonial Card and Buttons */}
+                          <div className="pt-4 border-t border-white/5 space-y-5">
+                            <h6 className="text-xs font-black text-gray-400 uppercase tracking-widest">
+                              Personalização dos Textos e Botões
+                            </h6>
+                            
+                            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                              <div className="space-y-2">
+                                <label className="text-[11px] font-bold text-gray-400 uppercase tracking-wider">Título Principal</label>
+                                <input
+                                  type="text"
+                                  value={draftCustomTexts['home.testimonial_title'] !== undefined ? draftCustomTexts['home.testimonial_title'] : (settings.custom_texts?.['home.testimonial_title'] || 'Share Your Results')}
+                                  onChange={(e) => setDraftCustomTexts({ ...draftCustomTexts, 'home.testimonial_title': e.target.value })}
+                                  placeholder="Share Your Results"
+                                  className="w-full bg-black/50 border border-white/10 rounded-xl px-4 py-2.5 text-xs text-white placeholder-gray-600 focus:border-amber-400 outline-none"
+                                />
+                              </div>
+
+                              <div className="space-y-2">
+                                <label className="text-[11px] font-bold text-gray-400 uppercase tracking-wider">Subtítulo / Descrição</label>
+                                <input
+                                  type="text"
+                                  value={draftCustomTexts['home.testimonial_subtitle'] !== undefined ? draftCustomTexts['home.testimonial_subtitle'] : (settings.custom_texts?.['home.testimonial_subtitle'] || 'Share your story and how this course helped you write a new chapter. Your story inspires our entire community!')}
+                                  onChange={(e) => setDraftCustomTexts({ ...draftCustomTexts, 'home.testimonial_subtitle': e.target.value })}
+                                  placeholder="Share your story and how this course helped..."
+                                  className="w-full bg-black/50 border border-white/10 rounded-xl px-4 py-2.5 text-xs text-white placeholder-gray-600 focus:border-amber-400 outline-none"
+                                />
+                              </div>
+
+                              <div className="space-y-2">
+                                <label className="text-[11px] font-bold text-amber-400 uppercase tracking-wider">Texto do Botão Principal (Enviar Depoimento)</label>
+                                <input
+                                  type="text"
+                                  value={draftCustomTexts['home.testimonial_button'] !== undefined ? draftCustomTexts['home.testimonial_button'] : (settings.custom_texts?.['home.testimonial_button'] || 'Share my Results')}
+                                  onChange={(e) => setDraftCustomTexts({ ...draftCustomTexts, 'home.testimonial_button': e.target.value })}
+                                  placeholder="Share my Results"
+                                  className="w-full bg-black/50 border border-amber-500/30 rounded-xl px-4 py-2.5 text-xs text-white placeholder-gray-600 focus:border-amber-400 outline-none"
+                                />
+                              </div>
+
+                              <div className="space-y-2">
+                                <label className="text-[11px] font-bold text-gray-300 uppercase tracking-wider">Texto do Botão Secundário (Ver Histórias)</label>
+                                <input
+                                  type="text"
+                                  value={draftCustomTexts['home.read_testimonials_button'] !== undefined ? draftCustomTexts['home.read_testimonials_button'] : (settings.custom_texts?.['home.read_testimonials_button'] || 'Read Success Stories From Other Women')}
+                                  onChange={(e) => setDraftCustomTexts({ ...draftCustomTexts, 'home.read_testimonials_button': e.target.value })}
+                                  placeholder="Read Success Stories From Other Women"
+                                  className="w-full bg-black/50 border border-white/10 rounded-xl px-4 py-2.5 text-xs text-white placeholder-gray-600 focus:border-amber-400 outline-none"
+                                />
+                              </div>
+                            </div>
+
+                            {/* Live Buttons Preview */}
+                            <div className="p-5 rounded-2xl bg-black/40 border border-white/5 space-y-3 mt-4 text-center">
+                              <p className="text-[10px] font-black text-gray-500 uppercase tracking-widest">Pré-visualização dos Botões</p>
+                              <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-amber-500/10 border border-amber-500/30 text-amber-400 text-[10px] font-black uppercase tracking-widest mx-auto">
+                                <Heart size={11} className="text-amber-400 fill-amber-400 shrink-0" />
+                                <span>{draftCustomTexts['home.testimonial_tag'] || settings.custom_texts?.['home.testimonial_tag'] || 'REAL STORIES'}</span>
+                              </div>
+                              <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-center gap-3 max-w-lg mx-auto">
+                                <div className="flex-1 min-h-[50px] inline-flex items-center justify-center gap-2 px-5 py-3 rounded-2xl bg-gradient-to-r from-amber-400 via-amber-300 to-amber-500 text-zinc-950 font-black text-xs uppercase tracking-wider border border-amber-200/80 shadow-md">
+                                  <span className="truncate">{draftCustomTexts['home.testimonial_button'] || settings.custom_texts?.['home.testimonial_button'] || 'Share my Results'}</span>
+                                  <ArrowRight size={14} className="shrink-0" />
+                                </div>
+                                <div className="flex-1 min-h-[50px] inline-flex items-center justify-center gap-2 px-5 py-3 rounded-2xl bg-zinc-900 text-white font-black text-xs uppercase tracking-wider border border-white/15">
+                                  <Heart size={14} className="text-amber-400 fill-amber-400 shrink-0" />
+                                  <span className="truncate">{draftCustomTexts['home.read_testimonials_button'] || settings.custom_texts?.['home.read_testimonials_button'] || 'Read Success Stories From Other Women'}</span>
+                                </div>
+                              </div>
+                            </div>
                           </div>
                         </div>
 

@@ -165,20 +165,65 @@ serve(async (req) => {
     const buyerName = payload.data?.buyer?.name || payload.buyer?.name || payload.name || "Cliente Hotmart";
     const transactionId = payload.data?.purchase?.transaction || payload.transaction || payload.prod || ("HOTMART_" + Date.now());
 
-    // Suporte inteligente a ID de produto em Testes (Sandbox id = 0) vs Produção
-    const numericProductId = payload.data?.product?.id ?? payload.prod ?? payload.product_id ?? payload.data?.subscription?.product?.id;
-    const ucodeProductId = payload.data?.product?.ucode;
+    // 1. CORREÇÃO NA EXTRAÇÃO DO ID DO PRODUTO (HOTMART SANDBOX / PRODUÇÃO / COMBOS):
+    // Em ambiente de testes/Sandbox ou eventos com combos, a Hotmart envia data.product.id = 0 na raiz do payload.
+    // Varremos também data.product.content.products[0].id e data.product.content.products[0].ucode,
+    // garantindo capturar o ID correto do produto (ex: 4774438) tanto em Sandbox quanto em produção.
+    const isValidId = (val) => {
+      if (val === undefined || val === null) return false;
+      const s = String(val).trim();
+      return s !== "" && s !== "0" && s !== "null" && s !== "undefined";
+    };
+
+    const contentProducts = Array.isArray(payload.data?.product?.content?.products)
+      ? payload.data.product.content.products
+      : [];
+
+    const firstContentProd = contentProducts[0] || {};
+    const contentProdId = firstContentProd.id;
+    const contentProdUcode = firstContentProd.ucode;
+    const contentProdName = firstContentProd.name;
+
+    const rootNumericId = payload.data?.product?.id ?? payload.prod ?? payload.product_id ?? payload.data?.subscription?.product?.id;
+    const rootUcode = payload.data?.product?.ucode;
+    const rootName = payload.data?.product?.name;
 
     let hotmartProductId = "";
-    if (numericProductId !== undefined && numericProductId !== null && String(numericProductId).trim() !== "" && String(numericProductId).trim() !== "0") {
-      hotmartProductId = String(numericProductId).trim();
-    } else if (ucodeProductId && String(ucodeProductId).trim() !== "") {
-      hotmartProductId = String(ucodeProductId).trim();
-    } else if (numericProductId !== undefined && numericProductId !== null && String(numericProductId).trim() !== "") {
-      hotmartProductId = String(numericProductId).trim();
+    let ucodeProductId = "";
+
+    if (isValidId(rootNumericId)) {
+      hotmartProductId = String(rootNumericId).trim();
+    } else if (isValidId(contentProdId)) {
+      hotmartProductId = String(contentProdId).trim();
+    } else if (rootUcode && String(rootUcode).trim() !== "") {
+      hotmartProductId = String(rootUcode).trim();
+    } else if (contentProdUcode && String(contentProdUcode).trim() !== "") {
+      hotmartProductId = String(contentProdUcode).trim();
+    } else if (rootNumericId !== undefined && rootNumericId !== null && String(rootNumericId).trim() !== "") {
+      hotmartProductId = String(rootNumericId).trim();
     }
 
-    console.log(`[Hotmart Edge Function] Processando evento "${event}" para ${email}, Produto ID/Ucode: ${hotmartProductId || '0 (Sandbox)'}, Transação: ${transactionId}`);
+    if (rootUcode && String(rootUcode).trim() !== "") {
+      ucodeProductId = String(rootUcode).trim();
+    } else if (contentProdUcode && String(contentProdUcode).trim() !== "") {
+      ucodeProductId = String(contentProdUcode).trim();
+    }
+
+    const searchKeys = [];
+    if (hotmartProductId) searchKeys.push(hotmartProductId);
+    if (isValidId(rootNumericId)) searchKeys.push(String(rootNumericId).trim());
+    if (isValidId(contentProdId)) searchKeys.push(String(contentProdId).trim());
+    if (rootUcode && String(rootUcode).trim()) searchKeys.push(String(rootUcode).trim());
+    if (contentProdUcode && String(contentProdUcode).trim()) searchKeys.push(String(contentProdUcode).trim());
+
+    for (const cp of contentProducts) {
+      if (isValidId(cp.id)) searchKeys.push(String(cp.id).trim());
+      if (cp.ucode && String(cp.ucode).trim()) searchKeys.push(String(cp.ucode).trim());
+    }
+
+    const uniqueSearchKeys = Array.from(new Set(searchKeys.filter(Boolean)));
+
+    console.log(`[Hotmart Edge Function] Processando evento "${event}" para ${email}, Produto ID: ${hotmartProductId || '0 (Sandbox)'}, Ucode: ${ucodeProductId || 'N/A'}, Content Prod ID: ${contentProdId || 'N/A'}, Transação: ${transactionId}`);
 
     // 5. IDEMPOTÊNCIA INTELIGENTE: Verificar se transação/evento já foi processado E se o usuário ainda existe
     if (transactionId && event) {
@@ -254,8 +299,8 @@ serve(async (req) => {
     let productType: "main_product" | "course" | "package" | "ai_subscription" = "main_product";
     let targetIds: string[] = [];
 
-    if (hotmartProductId || ucodeProductId) {
-      const searchKeys = Array.from(new Set([hotmartProductId, ucodeProductId].filter(Boolean) as string[]));
+    if (uniqueSearchKeys.length > 0) {
+      const searchKeys = uniqueSearchKeys;
 
       // a) Verifica na tabela hotmart_products
       let mapping: any = null;

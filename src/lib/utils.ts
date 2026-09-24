@@ -62,3 +62,31 @@ export async function safeFetch(url: string, options: RequestInit = {}, retries 
   }
   return { error: 'Network request failed' };
 }
+
+/**
+ * Orders a list of items based on a predefined array of IDs.
+ * Items present in orderedIds appear first in that exact sequence;
+ * any unlisted items are preserved after the ordered items.
+ */
+export function applyTestimonialOrder<T extends { id: string }>(items: T[], orderedIds?: string[] | null): T[] {
+  if (!Array.isArray(orderedIds) || orderedIds.length === 0) {
+    return items;
+  }
+  const idMap = new Map(items.map(t => [t.id, t]));
+  const orderedList: T[] = [];
+
+  orderedIds.forEach(id => {
+    const item = idMap.get(id);
+    if (item) {
+      orderedList.push(item);
+      idMap.delete(id);
+    }
+  });
+
+  idMap.forEach(remaining => {
+    orderedList.push(remaining);
+  });
+
+  return orderedList;
+}
+
