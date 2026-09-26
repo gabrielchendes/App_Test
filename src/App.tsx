@@ -225,7 +225,17 @@ export default function App() {
         clearTimeout(forceStopLoading);
         // Record presence / last activity timestamp safely in background
         if (event === 'SIGNED_IN' || event === 'INITIAL_SESSION') {
-          supabase.from('profiles').update({ updated_at: new Date().toISOString() }).eq('id', session.user.id).then();
+          const lastSignIn = session.user.last_sign_in_at;
+          const updatePayload: Record<string, any> = { updated_at: new Date().toISOString() };
+          if (lastSignIn) {
+            updatePayload.last_sign_in_at = lastSignIn;
+          }
+          supabase.from('profiles').update(updatePayload).eq('id', session.user.id).then(({ error }: any) => {
+            if (error && (error.code === '42703' || error.message?.includes('last_sign_in_at'))) {
+              // Fallback if last_sign_in_at column does not exist yet on profiles
+              supabase.from('profiles').update({ updated_at: new Date().toISOString() }).eq('id', session.user.id).then();
+            }
+          });
         }
       } else if (event === 'SIGNED_OUT' || (event as any) === 'USER_DELETED') {
         setUser(null);

@@ -14,7 +14,8 @@ const isRevokedKey = (key?: string) => {
     trimmed === 'undefined' || 
     trimmed === 'null' ||
     trimmed === 'placeholder-key' ||
-    (!trimmed.startsWith('eyJ') && !trimmed.startsWith('sbp_') && !trimmed.startsWith('sb_secret_') && !trimmed.startsWith('sb_publishable_'))
+    trimmed.startsWith('sb_secret_') ||
+    (!trimmed.startsWith('eyJ') && !trimmed.startsWith('sbp_') && !trimmed.startsWith('sb_publishable_'))
   );
 };
 
@@ -198,6 +199,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         return await handleProductDelete(req, res);
       case 'product-sync-migration':
         return await handleProductSyncMigration(req, res);
+      case 'package-delete-cleanup':
+        return await handlePackageDeleteCleanup(req, res);
       case 'webhook-events-list':
         return await handleWebhookEventsList(req, res);
       case 'webhook-simulate':
@@ -230,12 +233,33 @@ async function handleUsersList(req: VercelRequest, res: VercelResponse) {
     let authUsers: any[] = [];
     try {
       const listDataRes = await supabaseAdmin.auth.admin.listUsers();
-      if (listDataRes?.data?.users) {
+      if (listDataRes?.data?.users && listDataRes.data.users.length > 0) {
         authUsers = listDataRes.data.users;
       }
     } catch (e: any) {
       console.warn('[Admin API] listUsers fallback due to:', e.message);
     }
+
+    // Fallback: If auth admin list is empty, try RPC get_users_with_last_sign_in
+    if (authUsers.length === 0) {
+      try {
+        const { data: rpcUsers, error: rpcErr } = await client.rpc('get_users_with_last_sign_in');
+        if (!rpcErr && Array.isArray(rpcUsers) && rpcUsers.length > 0) {
+          authUsers = rpcUsers;
+        }
+      } catch (e: any) {
+        // RPC might not exist yet
+      }
+    }
+
+    // Get the authenticated caller's own user record (contains caller's real last_sign_in_at)
+    let callerUser: any = null;
+    try {
+      const { data: callerData } = await client.auth.getUser();
+      if (callerData?.user) {
+        callerUser = callerData.user;
+      }
+    } catch {}
 
     const [profilesRes, purchasesRes, pushTokensRes, hotmartEventsRes] = await Promise.all([
       (async () => { try { return await client.from('profiles').select('*'); } catch { return await supabaseAdmin.from('profiles').select('*'); } })(),
@@ -265,14 +289,14 @@ async function handleUsersList(req: VercelRequest, res: VercelResponse) {
       }
     }
     
-    // If authUsers is available from service role, merge them. Otherwise, synthesize from profiles.
+    // If authUsers is available from service role or RPC, merge them. Otherwise, synthesize from profiles.
     let baseList = authUsers;
     if (baseList.length === 0 && profiles.length > 0) {
       baseList = profiles.map(p => ({
         id: p.id,
         email: p.email,
         created_at: p.created_at || (p as any).updated_at || new Date().toISOString(),
-        last_sign_in_at: (p as any).last_sign_in_at || (p as any).updated_at || null,
+        last_sign_in_at: (p as any).last_sign_in_at || (p as any).last_access || null,
         user_metadata: { 
           full_name: p.full_name || (p.email ? eventBuyerMap.get(p.email.toLowerCase().trim())?.name : undefined),
           phone: p.email ? eventBuyerMap.get(p.email.toLowerCase().trim())?.phone : undefined
@@ -308,7 +332,15 @@ async function handleUsersList(req: VercelRequest, res: VercelResponse) {
 
       const resolvedFullName = u.user_metadata?.full_name || profile?.full_name || evData?.name || '';
       const resolvedPhone = u.user_metadata?.phone || (profile as any)?.phone || evData?.phone || '';
-      const resolvedLastAccess = u.last_sign_in_at || (profile as any)?.last_sign_in_at || (profile as any)?.updated_at || null;
+      
+      const isCaller = callerUser && (callerUser.id === u.id || (callerUser.email && callerUser.email.toLowerCase().trim() === uEmail));
+      const resolvedLastAccess = 
+        u.last_sign_in_at || 
+        (profile as any)?.last_sign_in_at || 
+        (profile as any)?.last_access || 
+        (isCaller ? callerUser.last_sign_in_at : null) || 
+        (profile as any)?.updated_at ||
+        null;
 
       return { 
         ...u, 
@@ -544,6 +576,7 @@ async function handleUserPasswordChange(req: VercelRequest, res: VercelResponse)
 
 async function handleAccessToggle(req: VercelRequest, res: VercelResponse) {
   const { userId, userEmail, hasAccess, courseId, action } = req.body;
+  const client = getScopedClient(req);
   
   try {
     if (!userId) return res.status(400).json({ error: 'userId is required' });
@@ -552,7 +585,7 @@ async function handleAccessToggle(req: VercelRequest, res: VercelResponse) {
     if (courseId && action) {
       const cleanCourseId = String(courseId).trim();
 
-      const { data: settings } = await supabaseAdmin
+      const { data: settings } = await client
         .from('app_settings')
         .select('custom_texts')
         .eq('id', 1)
@@ -565,7 +598,7 @@ async function handleAccessToggle(req: VercelRequest, res: VercelResponse) {
 
       if (!isAiSub && !isMainProd) {
         // Check DB hotmart_products
-        const { data: dbProd } = await supabaseAdmin
+        const { data: dbProd } = await client
           .from('hotmart_products')
           .select('product_type')
           .or(`hotmart_product_id.eq.${cleanCourseId},id.eq.${cleanCourseId}`)
@@ -601,7 +634,7 @@ async function handleAccessToggle(req: VercelRequest, res: VercelResponse) {
 
         // 1. Safe profile lookup
         if (isUUID(cleanUserId)) {
-          const { data } = await supabaseAdmin
+          const { data } = await client
             .from('profiles')
             .select('id, email')
             .eq('id', cleanUserId)
@@ -611,7 +644,7 @@ async function handleAccessToggle(req: VercelRequest, res: VercelResponse) {
 
         if (!targetProfile && (cleanUserEmail || cleanUserId.includes('@'))) {
           const emailToFind = (cleanUserEmail || cleanUserId).toLowerCase();
-          const { data } = await supabaseAdmin
+          const { data } = await client
             .from('profiles')
             .select('id, email')
             .eq('email', emailToFind)
@@ -642,7 +675,7 @@ async function handleAccessToggle(req: VercelRequest, res: VercelResponse) {
 
         // 3. Update Profiles Table
         if (effectiveId) {
-          const { error: updateErr } = await supabaseAdmin
+          const { error: updateErr } = await client
             .from('profiles')
             .update({
               has_unlimited_ai: shouldGrant,
@@ -651,7 +684,7 @@ async function handleAccessToggle(req: VercelRequest, res: VercelResponse) {
             .eq('id', effectiveId);
 
           if (updateErr) {
-            await supabaseAdmin.from('profiles').upsert({
+            await client.from('profiles').upsert({
               id: effectiveId,
               email: effectiveEmail || undefined,
               has_unlimited_ai: shouldGrant,
@@ -661,7 +694,7 @@ async function handleAccessToggle(req: VercelRequest, res: VercelResponse) {
         }
 
         if (effectiveEmail) {
-          await supabaseAdmin
+          await client
             .from('profiles')
             .update({
               has_unlimited_ai: shouldGrant,
@@ -708,7 +741,7 @@ async function handleAccessToggle(req: VercelRequest, res: VercelResponse) {
 
           if (shouldGrant) {
             for (const uid of userIdentifiers) {
-              const { data: existingP } = await supabaseAdmin
+              const { data: existingP } = await client
                 .from('purchases')
                 .select('id')
                 .eq('user_id', uid)
@@ -716,7 +749,7 @@ async function handleAccessToggle(req: VercelRequest, res: VercelResponse) {
                 .maybeSingle();
 
               if (!existingP) {
-                await supabaseAdmin
+                await client
                   .from('purchases')
                   .insert({
                     user_id: uid,
@@ -730,20 +763,20 @@ async function handleAccessToggle(req: VercelRequest, res: VercelResponse) {
             // Revoke
             for (const uid of userIdentifiers) {
               if (isUUID(uid)) {
-                await supabaseAdmin
+                await client
                   .from('purchases')
                   .delete()
                   .eq('user_id', uid)
                   .in('product_id', aiProductIdsToDelete);
               }
               if (uid.includes('@')) {
-                const { data: prof } = await supabaseAdmin
+                const { data: prof } = await client
                   .from('profiles')
                   .select('id')
                   .ilike('email', uid)
                   .maybeSingle();
                 if (prof?.id) {
-                  await supabaseAdmin
+                  await client
                     .from('purchases')
                     .delete()
                     .eq('user_id', prof.id)
@@ -764,7 +797,7 @@ async function handleAccessToggle(req: VercelRequest, res: VercelResponse) {
 
       if (isMainProd) {
         const shouldGrant = action === 'grant';
-        const { error: pErr } = await supabaseAdmin
+        const { error: pErr } = await client
           .from('profiles')
           .update({ 
             has_access: shouldGrant, 
@@ -788,7 +821,7 @@ async function handleAccessToggle(req: VercelRequest, res: VercelResponse) {
         // If it's a UUID, it could be a course OR a package
         targetCourseIds.push(courseId);
         
-        const { data: pkgData } = await supabaseAdmin
+        const { data: pkgData } = await client
           .from('course_packages')
           .select('id, package_courses(course_id)')
           .eq('id', courseId)
@@ -802,14 +835,14 @@ async function handleAccessToggle(req: VercelRequest, res: VercelResponse) {
           }
         } else {
           // Check if it's a course with a linked package
-          const { data: courseData } = await supabaseAdmin
+          const { data: courseData } = await client
             .from('courses')
             .select('linked_package_id')
             .eq('id', courseId)
             .maybeSingle();
             
           if (courseData?.linked_package_id) {
-            const { data: pData } = await supabaseAdmin.from('course_packages').select('id, package_courses(course_id)').eq('id', courseData.linked_package_id).maybeSingle();
+            const { data: pData } = await client.from('course_packages').select('id, package_courses(course_id)').eq('id', courseData.linked_package_id).maybeSingle();
             if (pData) {
                const pkgIds = pData.package_courses?.map((pc: any) => pc.course_id) || [];
                targetCourseIds = [...new Set([pData.id, ...pkgIds])];
@@ -819,7 +852,7 @@ async function handleAccessToggle(req: VercelRequest, res: VercelResponse) {
         }
       } else {
         // If not a UUID, it's definitely a Hotmart ID or invalid
-        const { data: pkgData } = await supabaseAdmin
+        const { data: pkgData } = await client
           .from('course_packages')
           .select('id, package_courses(course_id)')
           .eq('hotmart_product_id', courseId)
@@ -830,7 +863,7 @@ async function handleAccessToggle(req: VercelRequest, res: VercelResponse) {
           targetCourseIds = [...new Set([pkgData.id, ...expandedIds])];
           console.log(`[Admin API] Found package by hotmart ID ${courseId}, expanded to ${targetCourseIds.length} items (excluding non-UUID)`);
         } else {
-          const { data: courseData } = await supabaseAdmin
+          const { data: courseData } = await client
             .from('courses')
             .select('id, linked_package_id')
             .eq('hotmart_product_id', courseId)
@@ -842,7 +875,7 @@ async function handleAccessToggle(req: VercelRequest, res: VercelResponse) {
             
             // Check for linked package
             if (courseData.linked_package_id) {
-              const { data: pData } = await supabaseAdmin.from('course_packages').select('id, package_courses(course_id)').eq('id', courseData.linked_package_id).maybeSingle();
+              const { data: pData } = await client.from('course_packages').select('id, package_courses(course_id)').eq('id', courseData.linked_package_id).maybeSingle();
               if (pData) {
                  const pkgIds = pData.package_courses?.map((pc: any) => pc.course_id) || [];
                  targetCourseIds = [...new Set([pData.id, ...pkgIds])];
@@ -873,7 +906,7 @@ async function handleAccessToggle(req: VercelRequest, res: VercelResponse) {
         if (action === 'grant') {
           const transactionId = `manual_${Date.now()}_${cid.substring(0, 8)}`;
           
-          const { data: existing, error: checkError } = await supabaseAdmin
+          const { data: existing, error: checkError } = await client
             .from('purchases')
             .select('product_id')
             .match({ user_id: userId, product_id: cid })
@@ -894,8 +927,8 @@ async function handleAccessToggle(req: VercelRequest, res: VercelResponse) {
           
           // Reusable Grant Function with nested fallbacks
           const grantWithFallbacks = async (idToGrant: string) => {
-            // Attempt 1: Full insert
-            const { error: e1 } = await supabaseAdmin.from('purchases').insert({
+            // Attempt 1: Full insert with scoped client
+            const { error: e1 } = await client.from('purchases').insert({
               user_id: userId,
               product_id: idToGrant,
               transaction_id: transactionId,
@@ -906,8 +939,8 @@ async function handleAccessToggle(req: VercelRequest, res: VercelResponse) {
             
             // If Code 23503: FK Constraint. Check if it's a known package
             if (e1.code === '23503') {
-              const { data: pkgById } = await supabaseAdmin.from('course_packages').select('id').eq('id', idToGrant).maybeSingle();
-              const { data: pkgByHotmart } = pkgById ? {data: null} : await supabaseAdmin.from('course_packages').select('id').eq('hotmart_product_id', idToGrant).maybeSingle();
+              const { data: pkgById } = await client.from('course_packages').select('id').eq('id', idToGrant).maybeSingle();
+              const { data: pkgByHotmart } = pkgById ? {data: null} : await client.from('course_packages').select('id').eq('hotmart_product_id', idToGrant).maybeSingle();
               if (pkgById || pkgByHotmart) {
                 // If it's a package, expansion happened earlier, so it's "fine" that the package record itself fails if FK is strict
                 return { status: 'skipped_package_fk', info: 'Package record not saved due to database restriction (FK), but its courses were processed.' };
@@ -919,7 +952,7 @@ async function handleAccessToggle(req: VercelRequest, res: VercelResponse) {
             // If Column missing errors (42703 or PGRST204) - Silence these as they are handled by fallbacks
             if (e1.code === '42703' || e1.code === 'PGRST204') {
               // Attempt 2: Remove transaction_id
-              const { error: e2 } = await supabaseAdmin.from('purchases').insert({
+              const { error: e2 } = await client.from('purchases').insert({
                 user_id: userId,
                 product_id: idToGrant,
                 is_manual: true
@@ -927,13 +960,26 @@ async function handleAccessToggle(req: VercelRequest, res: VercelResponse) {
               if (!e2) return { status: 'granted_minimal' };
 
               // Attempt 3: Remove is_manual
-              const { error: e3 } = await supabaseAdmin.from('purchases').insert({
+              const { error: e3 } = await client.from('purchases').insert({
                 user_id: userId,
                 product_id: idToGrant
               });
               if (!e3) return { status: 'granted_minimal' };
               
               return { status: 'error', error: e3.message, code: e3.code };
+            }
+
+            // Fallback for RLS or unexpected policy errors
+            if (e1.code === '42501' || (e1.message && e1.message.includes('row-level security'))) {
+              try {
+                const { error: eAdmin } = await supabaseAdmin.from('purchases').insert({
+                  user_id: userId,
+                  product_id: idToGrant,
+                  transaction_id: transactionId,
+                  is_manual: true
+                });
+                if (!eAdmin) return { status: 'granted' };
+              } catch (_) {}
             }
 
             console.error(`[Admin API] Grant failed for ${idToGrant}:`, e1);
@@ -945,10 +991,20 @@ async function handleAccessToggle(req: VercelRequest, res: VercelResponse) {
 
         } else if (action === 'revoke') {
           console.log(`[Admin API] Revoking purchase for user ${userId}, product ${cid}`);
-          const { error: deleteError } = await supabaseAdmin
+          let { error: deleteError } = await client
             .from('purchases')
             .delete()
             .match({ user_id: userId, product_id: cid });
+          
+          if (deleteError) {
+            try {
+              const { error: adminDel } = await supabaseAdmin
+                .from('purchases')
+                .delete()
+                .match({ user_id: userId, product_id: cid });
+              if (!adminDel) deleteError = null;
+            } catch (_) {}
+          }
           
           if (deleteError) {
             console.error(`[Admin API] DeleteError for user ${userId}, product ${cid}:`, deleteError);
@@ -963,8 +1019,8 @@ async function handleAccessToggle(req: VercelRequest, res: VercelResponse) {
         const s = r.status;
         return (typeof s === 'string' && s.includes('granted')) || 
                s === 'revoked' || 
-               s === 'already_exists' ||
-               s === 'skipped_package_fk' ||
+               s === 'already_exists' || 
+               s === 'skipped_package_fk' || 
                s === 'granted_minimal';
       });
       console.log(`[Admin API] Toggle results: ${JSON.stringify(results)}, hasAnySuccess: ${hasAnySuccess}`);
@@ -984,7 +1040,7 @@ async function handleAccessToggle(req: VercelRequest, res: VercelResponse) {
     }
 
     // Default to profile global access toggle if course params are missing
-    const { error: updateError } = await supabaseAdmin.from('profiles').update({ has_access: hasAccess }).eq('id', userId);
+    const { error: updateError } = await client.from('profiles').update({ has_access: hasAccess }).eq('id', userId);
     if (updateError) {
       // If column doesn't exist, we don't want to crash the whole admin panel
       if (updateError.code === '42703') {
@@ -1360,9 +1416,10 @@ async function getFallbackCatalog(settings: any): Promise<any[]> {
   return [];
 }
 
-async function saveFallbackCatalog(catalog: any[]): Promise<void> {
+async function saveFallbackCatalog(catalog: any[], client?: any): Promise<void> {
   try {
-    const { data: settings } = await supabaseAdmin
+    const db = client || supabaseAdmin;
+    const { data: settings } = await db
       .from('app_settings')
       .select('custom_texts')
       .eq('id', 1)
@@ -1371,7 +1428,7 @@ async function saveFallbackCatalog(catalog: any[]): Promise<void> {
     const customTexts = settings?.custom_texts || {};
     customTexts['hotmart_products_catalog'] = catalog;
 
-    await supabaseAdmin
+    await db
       .from('app_settings')
       .upsert({ id: 1, custom_texts: customTexts }, { onConflict: 'id' });
   } catch (e) {
@@ -1381,23 +1438,25 @@ async function saveFallbackCatalog(catalog: any[]): Promise<void> {
 
 async function handleProductsList(req: VercelRequest, res: VercelResponse) {
   try {
-    const syncResult = await autoDiscoverProducts();
+    const client = getScopedClient(req);
+    const syncResult = await autoDiscoverProducts(client);
     return res.status(200).json(syncResult.catalog);
   } catch (err: any) {
     return res.status(500).json({ error: err.message });
   }
 }
 
-async function autoDiscoverProducts(): Promise<{ catalog: any[], migratedCount: number }> {
+async function autoDiscoverProducts(client?: any): Promise<{ catalog: any[], migratedCount: number }> {
   let migratedCount = 0;
   let catalog: any[] = [];
+  const db = client || supabaseAdmin;
 
   // Parallelize initial queries
   const [productsRes, coursesRes, packagesRes, settingsRes] = await Promise.all([
-    (async () => { try { const { data } = await supabaseAdmin.from('hotmart_products').select('*'); return data; } catch { return null; } })(),
-    (async () => { try { const { data } = await supabaseAdmin.from('courses').select('id, title, hotmart_product_id, is_free, is_bonus, is_package_exclusive_bonus, checkout_url'); return data; } catch { return null; } })(),
-    (async () => { try { const { data } = await supabaseAdmin.from('course_packages').select('id, title, hotmart_product_id'); return data; } catch { return null; } })(),
-    (async () => { try { const { data } = await supabaseAdmin.from('app_settings').select('custom_texts').eq('id', 1).maybeSingle(); return data; } catch { return null; } })()
+    (async () => { try { const { data } = await db.from('hotmart_products').select('*'); return data; } catch { return null; } })(),
+    (async () => { try { const { data } = await db.from('courses').select('id, title, hotmart_product_id, is_free, is_bonus, is_package_exclusive_bonus, checkout_url'); return data; } catch { return null; } })(),
+    (async () => { try { const { data } = await db.from('course_packages').select('id, title, hotmart_product_id'); return data; } catch { return null; } })(),
+    (async () => { try { const { data } = await db.from('app_settings').select('custom_texts').eq('id', 1).maybeSingle(); return data; } catch { return null; } })()
   ]);
 
   if (productsRes && productsRes.length > 0) {
@@ -1413,12 +1472,22 @@ async function autoDiscoverProducts(): Promise<{ catalog: any[], migratedCount: 
   const courseMap = new Map<string, any>();
   courses.forEach((c: any) => courseMap.set(c.id, c));
 
-  // Clean catalog: remove course items that are now free, bonus, or package-exclusive
+  const packageMap = new Map<string, any>();
+  packages.forEach((p: any) => packageMap.set(p.id, p));
+
+  const initialCatalogCount = catalog.length;
+  const removedProductIds: string[] = [];
+
+  // Clean catalog: remove course items that are now free, bonus, package-exclusive, or deleted; and remove deleted packages
   catalog = catalog.filter(item => {
     if (item.product_type === 'course' && item.internal_target_id) {
       const c = courseMap.get(item.internal_target_id);
-      if (!c) return false; // Course deleted
+      if (!c) {
+        removedProductIds.push(item.id);
+        return false; // Course deleted
+      }
       if (c.is_free === true || c.is_bonus === true || c.is_package_exclusive_bonus === true) {
+        removedProductIds.push(item.id);
         return false;
       }
       if (item.hotmart_product_id?.startsWith('CURSO_') && (!c.hotmart_product_id || c.hotmart_product_id.trim() === '')) {
@@ -1427,8 +1496,38 @@ async function autoDiscoverProducts(): Promise<{ catalog: any[], migratedCount: 
         item.hotmart_product_id = c.hotmart_product_id.trim();
       }
     }
+
+    if (item.product_type === 'package') {
+      if (item.internal_target_id) {
+        const p = packageMap.get(item.internal_target_id);
+        if (!p) {
+          removedProductIds.push(item.id);
+          return false; // Package was deleted from course_packages!
+        }
+      } else {
+        // If package has no internal_target_id, check if any package matches its title or hotmart id
+        const matchingPkg = packages.find((p: any) => 
+          (p.title && item.name && item.name.toLowerCase().includes(p.title.toLowerCase())) ||
+          (p.hotmart_product_id && item.hotmart_product_id && String(p.hotmart_product_id).trim() === String(item.hotmart_product_id).trim())
+        );
+        if (!matchingPkg) {
+          removedProductIds.push(item.id);
+          return false; // Orphan package, remove it!
+        }
+      }
+    }
     return true;
   });
+
+  // If any products were removed (such as deleted packages/courses), clean from database and update fallback catalog immediately
+  if (removedProductIds.length > 0 || catalog.length !== initialCatalogCount) {
+    for (const rId of removedProductIds) {
+      try {
+        await db.from('hotmart_products').delete().or(`id.eq.${rId},hotmart_product_id.eq.${rId}`);
+      } catch (e) {}
+    }
+    await saveFallbackCatalog(catalog, db);
+  }
 
   const existingHotmartIds = new Set(
     catalog
@@ -1560,11 +1659,11 @@ async function autoDiscoverProducts(): Promise<{ catalog: any[], migratedCount: 
     }
   }
 
-  // Only persist to database if new products were discovered
-  if (migratedCount > 0) {
+  // Only persist to database if new products were discovered or catalog changed
+  if (migratedCount > 0 || removedProductIds.length > 0 || catalog.length !== initialCatalogCount) {
     for (const item of catalog) {
       try {
-        await supabaseAdmin.from('hotmart_products').upsert({
+        await db.from('hotmart_products').upsert({
           hotmart_product_id: item.hotmart_product_id,
           name: item.name,
           product_type: item.product_type,
@@ -1575,7 +1674,7 @@ async function autoDiscoverProducts(): Promise<{ catalog: any[], migratedCount: 
         }, { onConflict: 'hotmart_product_id' });
       } catch (e) {}
     }
-    await saveFallbackCatalog(catalog);
+    await saveFallbackCatalog(catalog, db);
   }
 
   // Sort catalog so main_product is always first
@@ -1596,13 +1695,14 @@ async function handleProductSave(req: VercelRequest, res: VercelResponse) {
       return res.status(400).json({ error: 'Required fields: Product Name and Product Type.' });
     }
 
+    const client = getScopedClient(req);
     const cleanHotmartId = hotmart_product_id ? String(hotmart_product_id).trim() : '';
 
     if (!name || !String(name).trim()) {
       return res.status(400).json({ error: 'Product name is required.' });
     }
 
-    const { data: settings } = await supabaseAdmin
+    const { data: settings } = await client
       .from('app_settings')
       .select('custom_texts')
       .eq('id', 1)
@@ -1613,7 +1713,7 @@ async function handleProductSave(req: VercelRequest, res: VercelResponse) {
     if (cleanHotmartId) {
       // 1. Check uniqueness in DB table hotmart_products
       try {
-        const { data: existingProd } = await supabaseAdmin
+        const { data: existingProd } = await client
           .from('hotmart_products')
           .select('id, name')
           .eq('hotmart_product_id', cleanHotmartId)
@@ -1648,7 +1748,7 @@ async function handleProductSave(req: VercelRequest, res: VercelResponse) {
     // Special handling for main_product and ai_subscription
     if (product_type === 'main_product' || product_type === 'ai_subscription') {
       try {
-        await supabaseAdmin
+        await client
           .from('hotmart_products')
           .delete()
           .eq('product_type', product_type)
@@ -1664,7 +1764,7 @@ async function handleProductSave(req: VercelRequest, res: VercelResponse) {
         customTexts['hotmart.ai_product_id'] = cleanHotmartId;
       }
       try {
-        await supabaseAdmin
+        await client
           .from('app_settings')
           .upsert({ id: 1, custom_texts: customTexts }, { onConflict: 'id' });
       } catch (e) {}
@@ -1672,7 +1772,7 @@ async function handleProductSave(req: VercelRequest, res: VercelResponse) {
 
     // Try saving to hotmart_products table
     try {
-      const { data, error } = await supabaseAdmin
+      const { data, error } = await client
         .from('hotmart_products')
         .upsert(payload, { onConflict: cleanHotmartId ? 'hotmart_product_id' : 'id' })
         .select()
@@ -1696,19 +1796,19 @@ async function handleProductSave(req: VercelRequest, res: VercelResponse) {
         catalog.unshift(payload);
       }
     }
-    await saveFallbackCatalog(catalog);
+    await saveFallbackCatalog(catalog, client);
 
     // Also sync hotmart_product_id to course / package if targeted
     if (product_type === 'course' && internal_target_id) {
       try {
-        await supabaseAdmin
+        await client
           .from('courses')
           .update({ hotmart_product_id: payload.hotmart_product_id })
           .eq('id', internal_target_id);
       } catch (e) {}
     } else if (product_type === 'package' && internal_target_id) {
       try {
-        await supabaseAdmin
+        await client
           .from('course_packages')
           .update({ hotmart_product_id: payload.hotmart_product_id })
           .eq('id', internal_target_id);
@@ -1726,8 +1826,10 @@ async function handleProductDelete(req: VercelRequest, res: VercelResponse) {
     const { id } = req.body;
     if (!id) return res.status(400).json({ error: 'Product ID is required.' });
 
+    const client = getScopedClient(req);
+
     // Prevent deleting main_product
-    const { data: settings } = await supabaseAdmin
+    const { data: settings } = await client
       .from('app_settings')
       .select('custom_texts')
       .eq('id', 1)
@@ -1741,15 +1843,51 @@ async function handleProductDelete(req: VercelRequest, res: VercelResponse) {
     }
 
     try {
-      await supabaseAdmin
+      await client
         .from('hotmart_products')
         .delete()
-        .eq('id', id);
+        .or(`id.eq.${id},hotmart_product_id.eq.${id}`);
     } catch (e) {}
+
+    // If target was a package, also clean course_packages if applicable
+    if (targetProd?.product_type === 'package' && targetProd.internal_target_id) {
+      try {
+        await client.from('course_packages').delete().eq('id', targetProd.internal_target_id);
+      } catch (e) {}
+    }
 
     // Also remove from fallback
     catalog = catalog.filter(p => p.id !== id && p.hotmart_product_id !== id);
-    await saveFallbackCatalog(catalog);
+    await saveFallbackCatalog(catalog, client);
+
+    return res.status(200).json({ success: true });
+  } catch (err: any) {
+    return res.status(500).json({ error: err.message });
+  }
+}
+
+async function handlePackageDeleteCleanup(req: VercelRequest, res: VercelResponse) {
+  try {
+    const { packageId } = req.body || {};
+    if (!packageId) return res.status(400).json({ error: 'packageId is required.' });
+
+    const client = getScopedClient(req);
+
+    // 1. Delete from hotmart_products
+    try {
+      await client.from('hotmart_products').delete().eq('internal_target_id', packageId);
+    } catch (_) {}
+
+    // 2. Remove from fallback catalog
+    const { data: settings } = await client
+      .from('app_settings')
+      .select('custom_texts')
+      .eq('id', 1)
+      .maybeSingle();
+
+    let catalog = await getFallbackCatalog(settings);
+    catalog = catalog.filter((p: any) => p.internal_target_id !== packageId && p.id !== packageId);
+    await saveFallbackCatalog(catalog, client);
 
     return res.status(200).json({ success: true });
   } catch (err: any) {
@@ -1759,7 +1897,8 @@ async function handleProductDelete(req: VercelRequest, res: VercelResponse) {
 
 async function handleProductSyncMigration(req: VercelRequest, res: VercelResponse) {
   try {
-    const result = await autoDiscoverProducts();
+    const client = getScopedClient(req);
+    const result = await autoDiscoverProducts(client);
     return res.status(200).json({ success: true, migratedCount: result.migratedCount, catalog: result.catalog });
   } catch (err: any) {
     return res.status(500).json({ error: err.message });

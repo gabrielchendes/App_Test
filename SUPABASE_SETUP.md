@@ -1069,4 +1069,76 @@ $$;
 GRANT EXECUTE ON FUNCTION public.delete_user_complete(UUID) TO authenticated, service_role, anon;
 ```
 
+---
+
+## 16. Sincronização e Visualização de "Último Acesso" (`last_sign_in_at`) no Painel Administrativo
+
+Para que o painel administrativo exiba o **último acesso real** de cada usuário (armazenado nativamente pelo Supabase Auth em `auth.users.last_sign_in_at`), execute o script SQL abaixo no **SQL Editor** do seu painel Supabase:
+
+```sql
+-- 1. Adicionar coluna last_sign_in_at na tabela public.profiles
+ALTER TABLE public.profiles ADD COLUMN IF NOT EXISTS last_sign_in_at TIMESTAMPTZ;
+
+-- 2. Trigger para sincronizar auth.users.last_sign_in_at diretamente no profile quando o aluno faz login
+CREATE OR REPLACE FUNCTION public.sync_user_last_sign_in()
+RETURNS TRIGGER
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public, auth
+AS $$
+BEGIN
+  IF NEW.last_sign_in_at IS DISTINCT FROM OLD.last_sign_in_at THEN
+    UPDATE public.profiles
+    SET last_sign_in_at = NEW.last_sign_in_at
+    WHERE id = NEW.id;
+  END IF;
+  RETURN NEW;
+END;
+$$;
+
+DROP TRIGGER IF EXISTS on_auth_user_last_sign_in ON auth.users;
+CREATE TRIGGER on_auth_user_last_sign_in
+AFTER UPDATE OF last_sign_in_at ON auth.users
+FOR EACH ROW
+EXECUTE FUNCTION public.sync_user_last_sign_in();
+
+-- 3. Função RPC segura para o painel administrativo listar os horários de último acesso direto de auth.users
+CREATE OR REPLACE FUNCTION public.get_users_with_last_sign_in()
+RETURNS TABLE (
+  id UUID,
+  email TEXT,
+  last_sign_in_at TIMESTAMPTZ,
+  created_at TIMESTAMPTZ
+)
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public, auth
+AS $$
+DECLARE
+  v_caller_is_admin BOOLEAN := false;
+BEGIN
+  SELECT COALESCE(is_admin, false) INTO v_caller_is_admin 
+  FROM public.profiles 
+  WHERE id = auth.uid();
+
+  IF auth.role() = 'service_role' OR v_caller_is_admin = true OR auth.uid() IN (SELECT id FROM public.profiles WHERE is_admin = true) THEN
+    RETURN QUERY
+    SELECT u.id, u.email::TEXT, u.last_sign_in_at, u.created_at
+    FROM auth.users u;
+  ELSE
+    RAISE EXCEPTION 'Acesso negado: apenas administradores podem consultar usuários.';
+  END IF;
+END;
+$$;
+
+GRANT EXECUTE ON FUNCTION public.get_users_with_last_sign_in() TO authenticated, service_role, anon;
+
+-- 4. Preencher retroativamente os usuários que já fizeram login no sistema
+UPDATE public.profiles p
+SET last_sign_in_at = u.last_sign_in_at
+FROM auth.users u
+WHERE p.id = u.id AND u.last_sign_in_at IS NOT NULL;
+```
+
+
 

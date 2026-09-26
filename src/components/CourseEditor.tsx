@@ -471,6 +471,9 @@ export default function CourseEditor({
     }
   }, [selectedChapterId, chapters]);
 
+  const isUUID = (str?: string) =>
+    /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(str || '');
+
   useEffect(() => {
     if (!externalPackages) {
       fetchPackages();
@@ -478,7 +481,7 @@ export default function CourseEditor({
       setPackages(externalPackages);
     }
     
-    if (courseId) {
+    if (courseId && courseId !== 'undefined' && courseId !== 'null' && isUUID(courseId)) {
       fetchCourseData();
     } else {
       if (initialCourseData) {
@@ -559,6 +562,10 @@ export default function CourseEditor({
   }, [course.linked_package_id, packages]);
 
   const fetchCourseData = async () => {
+    if (!courseId || courseId === 'undefined' || courseId === 'null' || !isUUID(courseId)) {
+      setLoading(false);
+      return;
+    }
     try {
       setLoading(true);
       
@@ -617,7 +624,7 @@ export default function CourseEditor({
 
   const handleLessonCreatedByAi = async (chapterData: any) => {
     try {
-      let currentCourseId = courseId;
+      let currentCourseId = (courseId && courseId !== 'undefined' && courseId !== 'null' && isUUID(courseId)) ? courseId : null;
       if (!currentCourseId) {
         if (!course.title) {
           toast.error('Informe o título do curso antes de adicionar aulas.');
@@ -778,7 +785,7 @@ export default function CourseEditor({
         hide_single_module_header: course.hide_single_module_header !== false
       };
 
-      if (courseId) {
+      if (courseId && courseId !== 'undefined' && courseId !== 'null' && isUUID(courseId)) {
         let { error } = await supabase.from('courses').update(courseData).eq('id', courseId);
         if (error && error.message?.includes('hide_single_module_header')) {
           delete (courseData as any).hide_single_module_header;

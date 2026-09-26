@@ -273,6 +273,7 @@ export default function AdminPanel({ user }: AdminPanelProps) {
   const [simTestEvent, setSimTestEvent] = useState('PURCHASE_APPROVED');
   const [simTestProductId, setSimTestProductId] = useState('');
   const [simResult, setSimResult] = useState<any>(null);
+  const [selectedWebhookLog, setSelectedWebhookLog] = useState<any | null>(null);
   const [customWebhookInput, setCustomWebhookInput] = useState('');
   const [customWebhookTokenInput, setCustomWebhookTokenInput] = useState('');
   const [showWebhookToken, setShowWebhookToken] = useState(false);
@@ -891,17 +892,52 @@ export default function AdminPanel({ user }: AdminPanelProps) {
             headers: { 'Authorization': `Bearer ${token}` }
           });
           if (data && !data.error) {
-            setAllUsers(Array.isArray(data) ? data : []);
+            let list = Array.isArray(data) ? data : [];
+            if (session?.user?.last_sign_in_at) {
+              list = list.map((u: any) => {
+                const isCurrent = u.id === session.user.id || (session.user.email && u.email?.toLowerCase() === session.user.email?.toLowerCase());
+                if (isCurrent && !u.last_sign_in_at) {
+                  return { ...u, last_sign_in_at: session.user.last_sign_in_at };
+                }
+                return u;
+              });
+            }
+            setAllUsers(list);
           } else {
             let { data: profiles, error: profErr } = await supabase
               .from('profiles')
               .select('*')
-              .order('created_at', { ascending: false });
+              .order('updated_at', { ascending: false });
             if (profErr) {
               const res = await supabase.from('profiles').select('*');
               profiles = res.data;
             }
-            setAllUsers(profiles || []);
+
+            // Fallback RPC check for last sign in
+            let rpcUsersMap = new Map();
+            try {
+              const { data: rpcUsers } = await supabase.rpc('get_users_with_last_sign_in');
+              if (Array.isArray(rpcUsers)) {
+                rpcUsers.forEach((ru: any) => {
+                  if (ru.id) rpcUsersMap.set(ru.id, ru);
+                });
+              }
+            } catch {}
+
+            let list = (profiles || []).map((p: any) => {
+              const rpcUser = rpcUsersMap.get(p.id);
+              const isCurrent = session?.user && (session.user.id === p.id || session.user.email?.toLowerCase() === p.email?.toLowerCase());
+              const resolvedLast = rpcUser?.last_sign_in_at || p.last_sign_in_at || (isCurrent ? session.user.last_sign_in_at : null) || p.updated_at || null;
+              return {
+                ...p,
+                last_sign_in_at: resolvedLast,
+                user_metadata: {
+                  full_name: p.full_name,
+                  phone: (p as any).phone
+                }
+              };
+            });
+            setAllUsers(list);
           }
         } catch (e) {
           try {
@@ -949,8 +985,23 @@ export default function AdminPanel({ user }: AdminPanelProps) {
       ]);
 
       if (productsRes && !productsRes.error) {
-        const rawList: any[] = Array.isArray(productsRes) ? [...productsRes] : [];
+        let rawList: any[] = Array.isArray(productsRes) ? [...productsRes] : [];
         
+        // Reconcile packages: ensure packages that were deleted from course_packages are never displayed
+        try {
+          const { data: currentPkgs } = await supabase.from('course_packages').select('id');
+          const activePkgIds = new Set((currentPkgs || []).map((p: any) => p.id));
+          rawList = rawList.filter(item => {
+            if (item.product_type === 'package') {
+              if (item.internal_target_id) {
+                return activePkgIds.has(item.internal_target_id);
+              }
+              return false; // Package without valid internal_target_id is an orphan, do not display
+            }
+            return true;
+          });
+        } catch (_) {}
+
         // Sanitize duplicates by product_type and hotmart_product_id
         const cleanedList: any[] = [];
         const seenHotmartIds = new Set<string>();
@@ -999,8 +1050,20 @@ export default function AdminPanel({ user }: AdminPanelProps) {
         setMappedProducts(cleanedList);
       }
 
-      if (eventsRes && !eventsRes.error) {
-        setWebhookLogs(Array.isArray(eventsRes) ? eventsRes : []);
+      if (eventsRes && !eventsRes.error && Array.isArray(eventsRes)) {
+        setWebhookLogs(eventsRes);
+      } else {
+        // Fallback: carregar diretamente da tabela hotmart_events
+        try {
+          const { data: directLogs } = await supabase
+            .from('hotmart_events')
+            .select('*')
+            .order('processed_at', { ascending: false })
+            .limit(100);
+          if (directLogs) {
+            setWebhookLogs(directLogs);
+          }
+        } catch (_) {}
       }
 
       if (showToast) {
@@ -1549,10 +1612,21 @@ export default function AdminPanel({ user }: AdminPanelProps) {
           })
         });
 
-        if (!response || response.error) throw new Error(response?.error || 'Erro ao comunicar com o servidor');
+        if (!response || response.error) {
+          const hasAnySuccess = response?.details?.some((r: any) =>
+            (typeof r.status === 'string' && r.status.includes('granted')) ||
+            r.status === 'already_exists' ||
+            r.status === 'skipped_package_fk' ||
+            r.status === 'revoked'
+          );
+          if (!hasAnySuccess) {
+            throw new Error(response?.error || 'Erro ao comunicar com o servidor');
+          }
+        }
 
         if (isUnlocked) {
-          setUserPurchases(prev => prev.filter(id => id !== productId));
+          const expandedIds = pkg.package_courses?.map((pc: any) => pc.course_id) || [];
+          setUserPurchases(prev => prev.filter(id => id !== productId && !expandedIds.includes(id)));
           toast.success('Pacote removido');
         } else {
           // When liberating a package locally, also unlock all its courses if we have the info
@@ -1754,6 +1828,9 @@ export default function AdminPanel({ user }: AdminPanelProps) {
 
   const handleDeletePackage = async (packageId: string) => {
     setCoursePackages(prev => prev.filter(p => p.id !== packageId));
+    // Remove imediatamente da Central de Produtos no estado local
+    setMappedProducts(prev => prev.filter(p => !(p.product_type === 'package' && (p.internal_target_id === packageId || p.id === packageId))));
+
     try {
       const { error } = await supabase
         .from('course_packages')
@@ -1761,7 +1838,29 @@ export default function AdminPanel({ user }: AdminPanelProps) {
         .eq('id', packageId);
 
       if (error) throw error;
-      
+
+      // Remove da tabela hotmart_products
+      try {
+        await supabase
+          .from('hotmart_products')
+          .delete()
+          .eq('internal_target_id', packageId);
+      } catch (_) {}
+
+      // Purga do catálogo salvo no backend
+      const { data: { session } } = await supabase.auth.getSession();
+      if (session?.access_token) {
+        await safeFetch('/api/v1/admin?action=package-delete-cleanup', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${session.access_token}`
+          },
+          body: JSON.stringify({ packageId })
+        }).catch(() => {});
+      }
+
+      await fetchCentralProducts();
       toast.success('Pacote excluído com sucesso!');
     } catch (err: any) {
       toast.error('Erro ao excluir pacote: ' + err.message);
@@ -2423,7 +2522,7 @@ export default function AdminPanel({ user }: AdminPanelProps) {
                                     )}
                                   </td>
                                   <td className="px-6 py-4 text-xs text-gray-500 font-medium">
-                                    {(u.last_sign_in_at || u.updated_at) ? new Date(u.last_sign_in_at || u.updated_at).toLocaleString('pt-BR') : 'Nunca'}
+                                    {u.last_sign_in_at ? new Date(u.last_sign_in_at).toLocaleString('pt-BR') : 'Nunca acessou'}
                                   </td>
                                   <td className="px-6 py-4 text-right pr-8">
                                     <div className="flex justify-end gap-2 text-right">
@@ -2501,7 +2600,7 @@ export default function AdminPanel({ user }: AdminPanelProps) {
                               </div>
                               <div className="flex items-center gap-4 mt-3">
                                 <div className="flex items-center gap-2 text-[10px] font-black text-gray-600 uppercase tracking-widest bg-white/5 px-2 py-1 rounded-lg">
-                                  <Clock size={12} /> Último Acesso: {(selectedUserForCourses?.last_sign_in_at || selectedUserForCourses?.updated_at) ? new Date(selectedUserForCourses.last_sign_in_at || selectedUserForCourses.updated_at).toLocaleString('pt-BR') : 'Nunca'}
+                                  <Clock size={12} /> Último Acesso: {selectedUserForCourses?.last_sign_in_at ? new Date(selectedUserForCourses.last_sign_in_at).toLocaleString('pt-BR') : 'Nunca acessou'}
                                 </div>
                                 <div className="flex items-center gap-2 text-[10px] font-black text-gray-600 uppercase tracking-widest bg-white/5 px-2 py-1 rounded-lg">
                                   <BookOpen size={12} /> {userPurchases.length} Cursos Liberados
@@ -4029,9 +4128,14 @@ export default function AdminPanel({ user }: AdminPanelProps) {
                             onChange={(e) => setSimTestEvent(e.target.value)}
                             className="w-full bg-black border border-white/10 rounded-xl px-4 py-3 text-sm text-white focus:border-amber-500 outline-none"
                           >
-                            <option value="PURCHASE_APPROVED">Compra completa</option>
-                            <option value="PURCHASE_REFUNDED">Reembolso/Cancelamento</option>
-                            <option value="SUBSCRIPTION_INACTIVE">Assinatura inativa</option>
+                            <option value="PURCHASE_APPROVED">PURCHASE_APPROVED (Compra Aprovada)</option>
+                            <option value="PURCHASE_COMPLETE">PURCHASE_COMPLETE (Compra Completa)</option>
+                            <option value="PURCHASE_CANCELED">PURCHASE_CANCELED (Compra Cancelada)</option>
+                            <option value="PURCHASE_REFUNDED">PURCHASE_REFUNDED (Reembolso)</option>
+                            <option value="PURCHASE_PROTEST">PURCHASE_PROTEST (Protesto / Disputa)</option>
+                            <option value="SUBSCRIPTION_CANCELLATION">SUBSCRIPTION_CANCELLATION (Cancelamento de Assinatura)</option>
+                            <option value="PURCHASE_CHARGEBACK">PURCHASE_CHARGEBACK (Chargeback)</option>
+                            <option value="SUBSCRIPTION_INACTIVE">SUBSCRIPTION_INACTIVE (Assinatura Inativa)</option>
                           </select>
                         </div>
                       </div>
@@ -4155,33 +4259,146 @@ export default function AdminPanel({ user }: AdminPanelProps) {
                                 <th className="p-4">Evento</th>
                                 <th className="p-4">ID Produto</th>
                                 <th className="p-4">Status</th>
+                                <th className="p-4 text-right">Ação</th>
                               </tr>
                             </thead>
                             <tbody className="divide-y divide-white/5">
                               {webhookLogs.map((log) => (
-                                <tr key={log.id} className="hover:bg-white/5 transition-colors">
+                                <tr 
+                                  key={log.id} 
+                                  onClick={() => setSelectedWebhookLog(log)}
+                                  className="hover:bg-white/5 transition-colors cursor-pointer group"
+                                  title="Clique para ver o payload completo deste evento"
+                                >
                                   <td className="p-4 font-mono text-gray-400">
                                     {new Date(log.processed_at || log.created_at).toLocaleString('pt-BR')}
                                   </td>
-                                  <td className="p-4 font-bold text-white">{log.buyer_email}</td>
+                                  <td className="p-4 font-bold text-white group-hover:text-amber-400 transition-colors">
+                                    {log.buyer_email}
+                                  </td>
                                   <td className="p-4">
-                                    <span className={`px-2 py-0.5 rounded font-bold text-[10px] ${
-                                      log.event.includes('APPROVED') || log.event.includes('COMPLETE') ? 'bg-emerald-500/20 text-emerald-300' :
-                                      log.event.includes('REFUND') || log.event.includes('CANCEL') ? 'bg-red-500/20 text-red-300' : 'bg-blue-500/20 text-blue-300'
+                                    <span className={`px-2 py-0.5 rounded font-bold text-[10px] border ${
+                                      log.event.includes('APPROVED') || log.event.includes('COMPLETE') 
+                                        ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/30' 
+                                        : log.event.includes('REFUND') || log.event.includes('CANCEL') || log.event.includes('CHARGEBACK') || log.event.includes('PROTEST') || log.event.includes('INACTIVE')
+                                        ? 'bg-red-500/20 text-red-300 border-red-500/30' 
+                                        : 'bg-blue-500/20 text-blue-300 border-blue-500/30'
                                     }`}>
                                       {log.event}
                                     </span>
                                   </td>
                                   <td className="p-4 font-mono text-amber-300">{log.hotmart_product_id || 'N/A'}</td>
                                   <td className="p-4">
-                                    <span className="px-2 py-0.5 rounded font-bold text-[10px] bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
+                                    <span className={`px-2 py-0.5 rounded font-bold text-[10px] border ${
+                                      log.status === 'processed'
+                                        ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20'
+                                        : 'bg-red-500/10 text-red-400 border-red-500/20'
+                                    }`}>
                                       {log.status}
                                     </span>
+                                  </td>
+                                  <td className="p-4 text-right">
+                                    <button
+                                      type="button"
+                                      onClick={(e) => {
+                                        e.stopPropagation();
+                                        setSelectedWebhookLog(log);
+                                      }}
+                                      className="px-3 py-1.5 bg-white/5 hover:bg-amber-500/20 text-gray-400 hover:text-amber-300 border border-white/10 rounded-lg text-[10px] font-bold uppercase tracking-wider transition-all"
+                                    >
+                                      Ver JSON
+                                    </button>
                                   </td>
                                 </tr>
                               ))}
                             </tbody>
                           </table>
+                        </div>
+                      )}
+
+                      {/* Modal de Detalhes do Log do Webhook */}
+                      {selectedWebhookLog && (
+                        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-md animate-in fade-in duration-200">
+                          <div className="bg-zinc-900 border border-white/10 rounded-3xl w-full max-w-3xl overflow-hidden shadow-2xl flex flex-col max-h-[90vh]">
+                            <div className="flex items-center justify-between p-6 border-b border-white/10 bg-black/40">
+                              <div className="space-y-1">
+                                <div className="flex items-center gap-2">
+                                  <span className={`px-2.5 py-0.5 rounded text-[10px] font-black uppercase tracking-wider border ${
+                                    selectedWebhookLog.event.includes('APPROVED') || selectedWebhookLog.event.includes('COMPLETE')
+                                      ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/30'
+                                      : 'bg-red-500/20 text-red-300 border-red-500/30'
+                                  }`}>
+                                    {selectedWebhookLog.event}
+                                  </span>
+                                  <span className="text-xs text-gray-400 font-mono">
+                                    {new Date(selectedWebhookLog.processed_at || selectedWebhookLog.created_at).toLocaleString('pt-BR')}
+                                  </span>
+                                </div>
+                                <h3 className="text-lg font-bold text-white">
+                                  {selectedWebhookLog.buyer_email}
+                                </h3>
+                              </div>
+                              <button
+                                onClick={() => setSelectedWebhookLog(null)}
+                                className="p-2 text-gray-400 hover:text-white rounded-xl hover:bg-white/5 transition-colors"
+                              >
+                                <X size={20} />
+                              </button>
+                            </div>
+
+                            <div className="p-6 space-y-4 overflow-y-auto custom-scrollbar">
+                              <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 bg-black/50 p-4 rounded-2xl border border-white/5 text-xs">
+                                <div>
+                                  <span className="text-[10px] text-gray-500 uppercase tracking-widest block font-bold">Transação</span>
+                                  <span className="font-mono text-white font-bold">{selectedWebhookLog.transaction_id || 'N/A'}</span>
+                                </div>
+                                <div>
+                                  <span className="text-[10px] text-gray-500 uppercase tracking-widest block font-bold">ID Hotmart</span>
+                                  <span className="font-mono text-amber-400 font-bold">{selectedWebhookLog.hotmart_product_id || 'N/A'}</span>
+                                </div>
+                                <div>
+                                  <span className="text-[10px] text-gray-500 uppercase tracking-widest block font-bold">Status</span>
+                                  <span className="font-bold text-emerald-400 uppercase">{selectedWebhookLog.status}</span>
+                                </div>
+                                <div>
+                                  <span className="text-[10px] text-gray-500 uppercase tracking-widest block font-bold">Data Processamento</span>
+                                  <span className="font-mono text-gray-300 text-[11px]">
+                                    {new Date(selectedWebhookLog.processed_at).toLocaleTimeString('pt-BR')}
+                                  </span>
+                                </div>
+                              </div>
+
+                              <div className="space-y-2">
+                                <div className="flex items-center justify-between">
+                                  <span className="text-xs font-bold uppercase tracking-wider text-gray-400">
+                                    Payload JSON Recebido da Hotmart
+                                  </span>
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      navigator.clipboard.writeText(JSON.stringify(selectedWebhookLog.payload || {}, null, 2));
+                                      toast.success('Payload JSON copiado para a área de transferência!');
+                                    }}
+                                    className="px-3 py-1 bg-amber-500/10 hover:bg-amber-500/20 text-amber-300 border border-amber-500/30 rounded-lg text-xs font-bold flex items-center gap-1.5 transition-all"
+                                  >
+                                    <Copy size={12} /> Copiar JSON
+                                  </button>
+                                </div>
+                                <pre className="bg-black/90 p-4 rounded-2xl border border-white/10 text-xs font-mono text-amber-300 overflow-x-auto whitespace-pre-wrap max-h-80 custom-scrollbar">
+                                  {JSON.stringify(selectedWebhookLog.payload || {}, null, 2)}
+                                </pre>
+                              </div>
+                            </div>
+
+                            <div className="p-4 border-t border-white/10 bg-black/40 flex justify-end">
+                              <button
+                                onClick={() => setSelectedWebhookLog(null)}
+                                className="px-5 py-2.5 bg-white/10 hover:bg-white/20 text-white rounded-xl text-xs font-bold uppercase tracking-wider transition-all"
+                              >
+                                Fechar
+                              </button>
+                            </div>
+                          </div>
                         </div>
                       )}
                     </div>
@@ -8369,7 +8586,7 @@ export default function AdminPanel({ user }: AdminPanelProps) {
           </div>
         }>
           <CourseEditor 
-            courseId={editingCourseId || undefined} 
+            courseId={editingCourseId && editingCourseId !== 'undefined' && editingCourseId !== 'null' ? editingCourseId : undefined} 
             packages={coursePackages}
             initialCourseData={manualEditorInitialCourse || undefined}
             initialModulesData={manualEditorInitialModules || undefined}

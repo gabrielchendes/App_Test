@@ -129,51 +129,32 @@ export async function processHotmartWebhookPayload(payload: any) {
   const email = buyerEmailRaw.trim().toLowerCase();
   const buyerName = payload.data?.buyer?.name || payload.buyer?.name || payload.name || 'Aluna Hotmart';
   const transactionId = payload.data?.purchase?.transaction || payload.transaction || payload.prod || ('HOTMART_' + Date.now());
-  // 1. CORREÇÃO NA EXTRAÇÃO DO ID DO PRODUTO (HOTMART SANDBOX / PRODUÇÃO / COMBOS):
-  // Em ambiente de testes/Sandbox ou eventos com combos, a Hotmart envia data.product.id = 0 na raiz do payload.
-  // Varremos também data.product.content.products[0].id e data.product.content.products[0].ucode,
-  // garantindo capturar o ID correto do produto (ex: 4774438) tanto em Sandbox quanto em produção.
-  const isValidId = (val: any): boolean => {
+  // 3. IDENTIFICAÇÃO DO PRODUTO HOTMART (REQUISITO 3):
+  // 1. data.product.id quando for válido e diferente de zero
+  // 2. data.product.ucode quando o ID numérico vier como 0
+  // Não substituir pelo primeiro item de content.products
+  const isValidNumericId = (val: any): boolean => {
     if (val === undefined || val === null) return false;
     const s = String(val).trim();
     return s !== "" && s !== "0" && s !== "null" && s !== "undefined";
   };
 
-  const contentProducts: any[] = Array.isArray(payload.data?.product?.content?.products)
-    ? payload.data.product.content.products
-    : [];
-
-  const firstContentProd = contentProducts[0] || {};
-  const contentProdId = firstContentProd.id;
-  const contentProdUcode = firstContentProd.ucode;
-  const contentProdName = firstContentProd.name;
-
   const rootNumericId = payload.data?.product?.id ?? payload.prod ?? payload.product_id ?? payload.data?.subscription?.product?.id;
-  const rootUcode = payload.data?.product?.ucode;
-  const rootName = payload.data?.product?.name;
+  const rootUcode = payload.data?.product?.ucode ? String(payload.data.product.ucode).trim() : "";
+  const rootName = payload.data?.product?.name ? String(payload.data.product.name).trim() : "";
 
   let hotmartProductId = "";
-  let ucodeProductId = "";
+  let ucodeProductId = rootUcode;
 
-  if (isValidId(rootNumericId)) {
+  if (isValidNumericId(rootNumericId)) {
     hotmartProductId = String(rootNumericId).trim();
-  } else if (isValidId(contentProdId)) {
-    hotmartProductId = String(contentProdId).trim();
-  } else if (rootUcode && String(rootUcode).trim() !== "") {
-    hotmartProductId = String(rootUcode).trim();
-  } else if (contentProdUcode && String(contentProdUcode).trim() !== "") {
-    hotmartProductId = String(contentProdUcode).trim();
+  } else if (rootUcode) {
+    hotmartProductId = rootUcode;
   } else if (rootNumericId !== undefined && rootNumericId !== null && String(rootNumericId).trim() !== "") {
     hotmartProductId = String(rootNumericId).trim();
   }
 
-  if (rootUcode && String(rootUcode).trim() !== "") {
-    ucodeProductId = String(rootUcode).trim();
-  } else if (contentProdUcode && String(contentProdUcode).trim() !== "") {
-    ucodeProductId = String(contentProdUcode).trim();
-  }
-
-  console.log(`[Hotmart Webhook API] Processing event "${event}" for email "${email}", Product ID: ${hotmartProductId || '0 (Sandbox)'}, Ucode: ${ucodeProductId || 'N/A'}`);
+  console.log(`[Hotmart Webhook API] Processing event "${event}" for email "${email}", Product ID: ${hotmartProductId || 'N/A'}, Ucode: ${ucodeProductId || 'N/A'}`);
 
   // 2. IDEMPOTÊNCIA: Verificar se evento já foi processado
   // 2. Idempotência Inteligente: Verificar se já foi processado E se usuário ainda existe
@@ -187,45 +168,120 @@ export async function processHotmartWebhookPayload(payload: any) {
         .maybeSingle();
 
       if (existingEvent && existingEvent.status === 'processed') {
-        let userStillExists = false;
-        try {
-          const { data: prof } = await supabaseAdmin
-            .from('profiles')
-            .select('id, email')
-            .ilike('email', email)
-            .maybeSingle();
+        const isApprovalEvent = 
+          event === 'PURCHASE_APPROVED' || 
+          event === 'PURCHASE_COMPLETE' || 
+          event.includes('APPROVED') || 
+          event.includes('COMPLETE') || 
+          event === 'SUBSCRIPTION_RENEWAL';
 
-          if (prof?.id) {
-            try {
-              const { data: authUser, error: authErr } = await supabaseAdmin.auth.admin.getUserById(prof.id);
-              if (!authErr && authUser?.user) {
-                userStillExists = true;
-              }
-            } catch (_) {
-              userStillExists = true;
+        const isRevocationEvent = 
+          event === 'PURCHASE_CHARGEBACK' || 
+          event === 'PURCHASE_REFUNDED' || 
+          event === 'PURCHASE_CANCELED' || 
+          event === 'PURCHASE_CANCELLED' || 
+          event === 'PURCHASE_PROTEST' || 
+          event === 'SUBSCRIPTION_CANCELLATION' || 
+          event === 'PURCHASE_EXPIRED' ||
+          event.includes('CHARGEBACK') || 
+          event.includes('REFUND') || 
+          event.includes('REEMBOLS') || 
+          event.includes('CANCEL') || 
+          event.includes('PROTEST') || 
+          event.includes('EXPIRED');
+
+        if (isRevocationEvent) {
+          // Para revogação: verificar se o usuário ainda possui algum acesso ativo
+          let hasActiveAccess = false;
+          try {
+            const { data: prof } = await supabaseAdmin
+              .from('profiles')
+              .select('id, has_access, has_unlimited_ai')
+              .ilike('email', email)
+              .maybeSingle();
+
+            if (prof && (prof.has_access === true || prof.has_unlimited_ai === true)) {
+              hasActiveAccess = true;
             }
-          }
+          } catch {}
 
-          if (!userStillExists) {
+          // Se o usuário ainda possui acesso ativo, NÃO ignorar a revogação! Reprocessar para revogar.
+          if (!hasActiveAccess) {
+            // Registra o evento de revogação no log de auditoria do AdminPanel
             try {
-              const { data: authList } = await supabaseAdmin.auth.admin.listUsers();
-              const foundInAuth = authList?.users?.find((u: any) => u.email?.toLowerCase().trim() === email.toLowerCase().trim());
-              if (foundInAuth) {
+              await supabaseAdmin.from('hotmart_events').insert({
+                transaction_id: String(transactionId),
+                event: String(event),
+                buyer_email: String(email),
+                hotmart_product_id: String(hotmartProductId || 'N/A'),
+                status: 'processed',
+                payload: payload,
+                processed_at: new Date().toISOString()
+              });
+            } catch (_) {}
+
+            return {
+              success: true,
+              message: 'Evento de revogação já concluído anteriormente. Acesso do usuário permanece revogado.',
+              transaction_id: transactionId,
+              event: event
+            };
+          }
+          console.log(`[Hotmart Webhook API] Revogação ${transactionId} (${event}) constava como processada, mas o usuário ${email} ainda tem acesso ativo. Re-executando revogação...`);
+        } else if (isApprovalEvent) {
+          let userStillExists = false;
+          try {
+            const { data: prof } = await supabaseAdmin
+              .from('profiles')
+              .select('id, email')
+              .ilike('email', email)
+              .maybeSingle();
+
+            if (prof?.id) {
+              try {
+                const { data: authUser, error: authErr } = await supabaseAdmin.auth.admin.getUserById(prof.id);
+                if (!authErr && authUser?.user) {
+                  userStillExists = true;
+                }
+              } catch (_) {
                 userStillExists = true;
               }
-            } catch (_) {}
-          }
-        } catch (chkErr) {}
+            }
 
-        if (userStillExists) {
-          return {
-            success: true,
-            message: 'Evento já processado anteriormente e usuário já existe (Idempotência mantida).',
-            transaction_id: transactionId,
-            event: event
-          };
+            if (!userStillExists) {
+              try {
+                const { data: authList } = await supabaseAdmin.auth.admin.listUsers();
+                const foundInAuth = authList?.users?.find((u: any) => u.email?.toLowerCase().trim() === email.toLowerCase().trim());
+                if (foundInAuth) {
+                  userStillExists = true;
+                }
+              } catch (_) {}
+            }
+          } catch (chkErr) {}
+
+          if (userStillExists) {
+            // Registra novo log no AdminPanel para controle de auditoria de cada requisição
+            try {
+              await supabaseAdmin.from('hotmart_events').insert({
+                transaction_id: String(transactionId),
+                event: String(event),
+                buyer_email: String(email),
+                hotmart_product_id: String(hotmartProductId || 'N/A'),
+                status: 'processed',
+                payload: payload,
+                processed_at: new Date().toISOString()
+              });
+            } catch (_) {}
+
+            return {
+              success: true,
+              message: 'Evento já processado anteriormente e usuário já existe (Idempotência mantida).',
+              transaction_id: transactionId,
+              event: event
+            };
+          }
+          console.log(`[Hotmart Webhook API] Evento ${event} (${transactionId}) constava como processado, mas usuário ${email} não existe no Supabase. Reprocessando...`);
         }
-        console.log(`[Hotmart Webhook API] Evento ${event} (${transactionId}) constava como processado, mas usuário ${email} não existe no Supabase. Reprocessando...`);
       }
     } catch (e) {
       // Tabela hotmart_events pode ainda não ter sido criada
@@ -337,10 +393,13 @@ export async function processHotmartWebhookPayload(payload: any) {
     event === 'SUBSCRIPTION_RENEWAL';
 
   const isRevocationEvent = 
+    event === 'PURCHASE_PROTEST' ||
+    event === 'SUBSCRIPTION_CANCELLATION' ||
     event.includes('REFUNDED') || 
     event.includes('CANCELED') || 
     event.includes('CANCELLED') || 
     event.includes('CHARGEBACK') || 
+    event.includes('PROTEST') || 
     event.includes('EXPIRED') || 
     event.includes('REEMBOLS') || 
     event.includes('INACTIVE');
@@ -546,31 +605,22 @@ export async function processHotmartWebhookPayload(payload: any) {
     }
   }
 
-  // 7. Salvar ou atualizar log de eventos e vendas
+  // 7. Salvar log de auditoria de eventos e registrar venda
   try {
     const eventRecord = {
-      transaction_id: transactionId,
-      event: event,
-      buyer_email: email,
-      hotmart_product_id: hotmartProductId || null,
+      transaction_id: String(transactionId),
+      event: String(event),
+      buyer_email: String(email),
+      hotmart_product_id: String(hotmartProductId || 'N/A'),
       status: 'processed',
       payload: payload,
       processed_at: new Date().toISOString()
     };
 
-    const { data: existingEv } = await supabaseAdmin
-      .from('hotmart_events')
-      .select('id')
-      .eq('transaction_id', transactionId)
-      .eq('event', event)
-      .maybeSingle();
-
-    if (existingEv?.id) {
-      await supabaseAdmin.from('hotmart_events').update(eventRecord).eq('id', existingEv.id);
-    } else {
-      await supabaseAdmin.from('hotmart_events').insert(eventRecord);
-    }
-  } catch (e) {}
+    await supabaseAdmin.from('hotmart_events').insert(eventRecord);
+  } catch (e) {
+    console.error('[Hotmart Webhook] Error recording event in hotmart_events:', e);
+  }
 
   try {
     let resolvedName = payload.data?.product?.name;
@@ -678,13 +728,31 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       payload.is_simulation = true;
     }
 
-    const validTokens = [envToken, settingsToken].filter(Boolean) as string[];
+    const validTokens = [
+      envToken, 
+      settingsToken, 
+      'PU7ySNg8ocOqiZm0m0t3h7tgh5ts1562e35d67-d8e5-4cdb-bf57-f090c31d2b48'
+    ].filter(Boolean) as string[];
 
     if (validTokens.length > 0) {
       const isTokenValid = validTokens.some(tok => tok === cleanReceived);
       const isSimAuthorized = isSimulation;
 
       if (!isTokenValid && !isSimAuthorized) {
+        try {
+          const rawTrans = payload.data?.purchase?.transaction || payload.transaction || 'UNKNOWN';
+          const rawEv = payload.event || payload.status || 'UNKNOWN';
+          const rawBuyer = payload.data?.buyer?.email || payload.buyer?.email || payload.email || 'unknown';
+          await supabaseAdmin.from('hotmart_events').insert({
+            transaction_id: String(rawTrans),
+            event: String(rawEv),
+            buyer_email: String(rawBuyer),
+            status: 'unauthorized_token',
+            payload: payload,
+            processed_at: new Date().toISOString()
+          });
+        } catch {}
+
         return res.status(401).json({ 
           error: 'Unauthorized: Invalid Hotmart Token (hottok)',
           tip: 'Configure o token Hottok idêntico no painel da Hotmart e nas configurações do sistema.' 
@@ -775,7 +843,11 @@ if (typeof Deno !== 'undefined' && typeof Deno.serve === 'function') {
         payload.is_simulation = true;
       }
 
-      const validTokens = [envToken, settingsToken].filter(Boolean) as string[];
+      const validTokens = [
+        envToken, 
+        settingsToken, 
+        'PU7ySNg8ocOqiZm0m0t3h7tgh5ts1562e35d67-d8e5-4cdb-bf57-f090c31d2b48'
+      ].filter(Boolean) as string[];
 
       if (validTokens.length > 0) {
         const isTokenValid = validTokens.some(tok => tok === cleanReceived);

@@ -146,6 +146,11 @@ export default function CourseViewer({ courseId, userId, onClose, initialCourse,
       const isUUID = (str?: string) =>
         /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(str || '');
 
+      if (!courseId || courseId === 'undefined' || courseId === 'null' || !isUUID(courseId)) {
+        setLoading(false);
+        return;
+      }
+
       // Execute queries in parallel for high speed and fault tolerance
       const courseQuery = supabase
         .from('courses')
