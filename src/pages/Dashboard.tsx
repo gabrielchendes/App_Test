@@ -14,7 +14,7 @@ import { InspiringStoriesPage } from '../components/InspiringStoriesPage';
 import PullToRefresh from '../components/PullToRefresh';
 import WhatsAppIcon from '../components/WhatsAppIcon';
 import SmartHomeHeader from '../components/SmartHomeHeader';
-import { getDeviceType, isPWAInstalled } from '../lib/pwa';
+import { getDeviceType, isPWAInstalled, getDeferredPrompt, promptPWAInstall } from '../lib/pwa';
 import { toast } from 'sonner';
 import { X, ShoppingBag, Loader2, Play, BookOpen, Star, Sparkles, Mail as MailIcon, MessageCircle, Book, Bell, Smartphone, ChevronRight } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
@@ -167,8 +167,8 @@ export default function Dashboard({ user }: DashboardProps) {
   }, [activeTab]);
   const [showWelcomeModal, setShowWelcomeModal] = useState(false);
   const [showPWAInstall, setShowPWAInstall] = useState(false);
-  const [deferredPrompt, setDeferredPrompt] = useState<any>(null);
-  const [canInstall, setCanInstall] = useState(!isPWAInstalled());
+  const [deferredPrompt, setDeferredPrompt] = useState<any>(() => getDeferredPrompt());
+  const [canInstall, setCanInstall] = useState(() => !isPWAInstalled() && !!getDeferredPrompt());
 
   // Check installation status smoothly without background polling
   useEffect(() => {
@@ -1114,16 +1114,21 @@ export default function Dashboard({ user }: DashboardProps) {
           isOpen={showPWAInstall} 
           onClose={() => setShowPWAInstall(false)}
           onInstall={async () => {
-            if (deferredPrompt) {
-              deferredPrompt.prompt();
-              const { outcome } = await deferredPrompt.userChoice;
-              if (outcome === 'accepted') {
-                setDeferredPrompt(null);
-                setCanInstall(false);
-                return true;
+            const prompt = deferredPrompt || getDeferredPrompt();
+            if (prompt) {
+              try {
+                await prompt.prompt();
+                const { outcome } = await prompt.userChoice;
+                if (outcome === 'accepted') {
+                  setDeferredPrompt(null);
+                  setCanInstall(false);
+                  return true;
+                }
+              } catch (e) {
+                console.error('Error invoking install prompt:', e);
               }
             }
-            return false;
+            return await promptPWAInstall();
           }}
         />
       </Suspense>

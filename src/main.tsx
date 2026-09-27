@@ -22,6 +22,9 @@ if (typeof window !== 'undefined' && 'serviceWorker' in navigator && !isIframe) 
     });
   } catch (err) {
     console.warn('Service Worker registration skipped or failed under this environment context:', err);
+    navigator.serviceWorker.register('/sw.js', { scope: '/' }).catch(e => {
+      console.warn('Fallback SW registration error:', e);
+    });
   }
 }
 

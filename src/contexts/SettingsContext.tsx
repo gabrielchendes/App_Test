@@ -268,7 +268,7 @@ export function SettingsProvider({ children }: { children: React.ReactNode }) {
       }
     }
 
-    // Update PWA icon (Apple Touch Icon)
+    // Update PWA icon (Apple Touch Icon & Android Manifest)
     if (s.pwa_icon_url) {
       let appleLink = document.querySelector("link[rel='apple-touch-icon']") as HTMLLinkElement;
       if (!appleLink) {
@@ -277,6 +277,56 @@ export function SettingsProvider({ children }: { children: React.ReactNode }) {
         document.getElementsByTagName('head')[0].appendChild(appleLink);
       }
       appleLink.href = s.pwa_icon_url;
+
+      try {
+        const manifestLink = document.querySelector("link[rel='manifest']") as HTMLLinkElement;
+        const iconSrc = s.pwa_icon_url;
+        const dynamicManifest = {
+          id: '/',
+          name: s.app_name || 'Missing Trigger',
+          short_name: s.app_name ? s.app_name.slice(0, 12) : 'Trigger',
+          description: s.app_name || 'Exclusive members area with premium content.',
+          start_url: '/',
+          scope: '/',
+          display: 'standalone',
+          orientation: 'portrait',
+          background_color: s.background_color || '#0b0c10',
+          theme_color: s.primary_color || '#0b0c10',
+          icons: [
+            {
+              src: iconSrc,
+              sizes: '192x192',
+              type: 'image/png',
+              purpose: 'any maskable'
+            },
+            {
+              src: iconSrc,
+              sizes: '512x512',
+              type: 'image/png',
+              purpose: 'any maskable'
+            },
+            {
+              src: iconSrc,
+              sizes: '192x192',
+              type: 'image/png',
+              purpose: 'any'
+            },
+            {
+              src: iconSrc,
+              sizes: '512x512',
+              type: 'image/png',
+              purpose: 'any'
+            }
+          ]
+        };
+        const blob = new Blob([JSON.stringify(dynamicManifest)], { type: 'application/json' });
+        const manifestUrl = URL.createObjectURL(blob);
+        if (manifestLink) {
+          manifestLink.href = manifestUrl;
+        }
+      } catch (e) {
+        console.warn('Could not update dynamic manifest:', e);
+      }
     }
   };
 

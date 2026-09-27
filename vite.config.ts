@@ -13,6 +13,7 @@ export default defineConfig(({mode}) => {
       VitePWA({
         registerType: 'autoUpdate',
         injectRegister: false,
+        includeAssets: ['favicon.svg', 'apple-touch-icon.png', 'icon-192.png', 'icon-512.png'],
         devOptions: {
           enabled: false,
         },
@@ -21,7 +22,7 @@ export default defineConfig(({mode}) => {
           clientsClaim: true,
           skipWaiting: true,
           importScripts: ['/firebase-messaging-sw.js'],
-          globPatterns: ['**/*.{js,css,html,ico,png,svg,webmanifest}'],
+          globPatterns: ['**/*.{js,css,html,ico,png,svg,webmanifest,json}'],
           globIgnores: [
             '**/AdminPanel*.js',
             '**/CourseEditor*.js',
@@ -78,23 +79,52 @@ export default defineConfig(({mode}) => {
           ]
         },
         manifest: {
+          id: '/',
           name: 'Missing Trigger',
-          short_name: 'Missing Trigger',
-          description: ' Exclusive members area with premium content.',
-          theme_color: '#0f0f0f',
-          background_color: '#0f0f0f',
+          short_name: 'Trigger',
+          description: 'Exclusive members area with premium content.',
+          theme_color: '#0b0c10',
+          background_color: '#0b0c10',
           display: 'standalone',
+          orientation: 'portrait',
           start_url: '/',
+          scope: '/',
           icons: [
             {
               src: '/icon-192.png',
               sizes: '192x192',
-              type: 'image/png'
+              type: 'image/png',
+              purpose: 'any maskable'
             },
             {
               src: '/icon-512.png',
               sizes: '512x512',
-              type: 'image/png'
+              type: 'image/png',
+              purpose: 'any maskable'
+            },
+            {
+              src: '/icon-192.png',
+              sizes: '192x192',
+              type: 'image/png',
+              purpose: 'any'
+            },
+            {
+              src: '/icon-512.png',
+              sizes: '512x512',
+              type: 'image/png',
+              purpose: 'any'
+            },
+            {
+              src: '/icon-192.png',
+              sizes: '192x192',
+              type: 'image/png',
+              purpose: 'maskable'
+            },
+            {
+              src: '/icon-512.png',
+              sizes: '512x512',
+              type: 'image/png',
+              purpose: 'maskable'
             }
           ]
         }

@@ -598,6 +598,9 @@ CREATE POLICY "Todos podem ver posts" ON public.community_posts FOR SELECT USING
 DROP POLICY IF EXISTS "Usuários autenticados podem postar" ON public.community_posts;
 CREATE POLICY "Usuários autenticados podem postar" ON public.community_posts FOR INSERT WITH CHECK (auth.uid() IS NOT NULL);
 
+DROP POLICY IF EXISTS "Dono ou Admin pode atualizar post" ON public.community_posts;
+CREATE POLICY "Dono ou Admin pode atualizar post" ON public.community_posts FOR UPDATE USING (auth.uid() = user_id OR public.is_admin());
+
 DROP POLICY IF EXISTS "Dono ou Admin pode deletar post" ON public.community_posts;
 CREATE POLICY "Dono ou Admin pode deletar post" ON public.community_posts FOR DELETE USING (auth.uid() = user_id OR public.is_admin());
 
@@ -617,6 +620,12 @@ CREATE POLICY "Usuários autenticados podem dar like" ON public.post_likes FOR I
 
 DROP POLICY IF EXISTS "Usuários autenticados podem comentar" ON public.post_comments;
 CREATE POLICY "Usuários autenticados podem comentar" ON public.post_comments FOR INSERT WITH CHECK (auth.uid() IS NOT NULL);
+
+DROP POLICY IF EXISTS "Dono ou Admin pode atualizar comentários" ON public.post_comments;
+CREATE POLICY "Dono ou Admin pode atualizar comentários" ON public.post_comments FOR UPDATE USING (auth.uid() = user_id OR public.is_admin());
+
+DROP POLICY IF EXISTS "Dono ou Admin pode deletar comentários" ON public.post_comments;
+CREATE POLICY "Dono ou Admin pode deletar comentários" ON public.post_comments FOR DELETE USING (auth.uid() = user_id OR public.is_admin());
 
 DROP POLICY IF EXISTS "Dono pode remover seu like" ON public.post_likes;
 CREATE POLICY "Dono pode remover seu like" ON public.post_likes FOR DELETE USING (auth.uid() = user_id);

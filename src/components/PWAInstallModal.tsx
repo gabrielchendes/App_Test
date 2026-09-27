@@ -3,13 +3,13 @@ import { motion, AnimatePresence } from 'motion/react';
 import { Share, PlusSquare, Download, X, Check, Smartphone, Monitor, ChevronLeft, ChevronRight, Apple, Play } from 'lucide-react';
 import { useI18n } from '../contexts/I18nContext';
 import { languagePresets } from '../constants/languagePresets';
-import { getDeviceType, setPWADismissed } from '../lib/pwa';
+import { getDeviceType, setPWADismissed, getDeferredPrompt, promptPWAInstall, isPWAInstalled, subscribeToPrompt } from '../lib/pwa';
 import { useSettings } from '../contexts/SettingsContext';
 
 interface PWAInstallModalProps {
   isOpen: boolean;
   onClose: () => void;
-  onInstall?: () => void;
+  onInstall?: () => Promise<boolean> | void;
 }
 
 interface PWAColumnProps {
@@ -116,6 +116,28 @@ export default function PWAInstallModal({ isOpen, onClose, onInstall }: PWAInsta
   const device = getDeviceType();
   const adminDisplayMode = settings.custom_texts?.['pwa.display_mode'] === 'desktop' ? 'desktop' : 'mobile';
   const showDualMobile = device === 'desktop' && adminDisplayMode === 'mobile';
+
+  const [canPromptInstall, setCanPromptInstall] = useState(() => !isPWAInstalled() && !!getDeferredPrompt());
+
+  useEffect(() => {
+    const updateInstallState = () => {
+      setCanPromptInstall(!isPWAInstalled() && !!getDeferredPrompt());
+    };
+
+    updateInstallState();
+    const unsubscribe = subscribeToPrompt(updateInstallState);
+
+    window.addEventListener('beforeinstallprompt', updateInstallState);
+    window.addEventListener('pwa-prompt-available', updateInstallState);
+    window.addEventListener('appinstalled', updateInstallState);
+
+    return () => {
+      unsubscribe();
+      window.removeEventListener('beforeinstallprompt', updateInstallState);
+      window.removeEventListener('pwa-prompt-available', updateInstallState);
+      window.removeEventListener('appinstalled', updateInstallState);
+    };
+  }, []);
   
   const [currentSlideIos, setCurrentSlideIos] = useState(0);
   const [currentSlideAndroid, setCurrentSlideAndroid] = useState(0);
@@ -349,6 +371,38 @@ export default function PWAInstallModal({ isOpen, onClose, onInstall }: PWAInsta
                       onManualInteraction={handleManualInteraction}
                       isAutoScrollingRef={isAutoScrollingAndroid}
                     />
+
+                    {/* Botão de Instalação Direta no Android (Prompt Nativo) */}
+                    {canPromptInstall && (
+                      <motion.button
+                        initial={{ opacity: 0, scale: 0.95 }}
+                        animate={{ opacity: 1, scale: 1 }}
+                        whileHover={{ scale: 1.02 }}
+                        whileTap={{ scale: 0.98 }}
+                        onClick={async () => {
+                          try {
+                            if (onInstall) {
+                              const success = await onInstall();
+                              if (success) {
+                                onClose();
+                                return;
+                              }
+                            }
+                            const success = await promptInstall();
+                            if (success) {
+                              onClose();
+                            }
+                          } catch (err) {
+                            console.error('Error invoking direct Android install:', err);
+                          }
+                        }}
+                        className="w-full mt-2 group relative overflow-hidden flex items-center justify-center gap-2.5 py-3.5 md:py-4 px-6 bg-gradient-to-r from-emerald-500 to-emerald-400 text-black font-black uppercase tracking-wider rounded-2xl md:rounded-3xl shadow-xl shadow-emerald-500/25 transition-all text-xs md:text-sm cursor-pointer border border-emerald-300/40"
+                      >
+                        <div className="absolute inset-0 bg-gradient-to-r from-transparent via-white/40 to-transparent -translate-x-full group-hover:translate-x-full transition-transform duration-1000" />
+                        <Download className="w-4 h-4 md:w-5 md:h-5 text-black shrink-0 animate-bounce" />
+                        <span>Instalar Aplicativo</span>
+                      </motion.button>
+                    )}
                   </div>
                 )}
 
@@ -376,7 +430,26 @@ export default function PWAInstallModal({ isOpen, onClose, onInstall }: PWAInsta
                 <div className="grid grid-cols-2 gap-3 md:gap-4 px-2 md:px-4 pb-4">
                   <button
                     onClick={async () => {
-                      const isGotItMode = (device === 'ios' || showDualMobile || adminDisplayMode === 'mobile');
+                      if (canPromptInstall) {
+                        try {
+                          if (onInstall) {
+                            const success = await onInstall();
+                            if (success) {
+                              onClose();
+                              return;
+                            }
+                          }
+                          const success = await promptInstall();
+                          if (success) {
+                            onClose();
+                            return;
+                          }
+                        } catch (e) {
+                          console.warn('Install button error:', e);
+                        }
+                      }
+
+                      const isGotItMode = (device === 'ios' || showDualMobile || adminDisplayMode === 'mobile') && !canPromptInstall;
                       if (isGotItMode) {
                         onClose();
                       } else if (onInstall) {
@@ -390,10 +463,13 @@ export default function PWAInstallModal({ isOpen, onClose, onInstall }: PWAInsta
                         onClose();
                       }
                     }}
-                    className="group relative overflow-hidden flex items-center justify-center gap-2 py-3 md:py-5 px-4 md:px-6 bg-primary text-black font-black uppercase tracking-tighter rounded-2xl md:rounded-3xl hover:brightness-110 active:scale-95 transition-all text-xs md:text-sm shadow-2xl shadow-primary/30"
+                    className="group relative overflow-hidden flex items-center justify-center gap-2 py-3 md:py-5 px-4 md:px-6 bg-primary text-black font-black uppercase tracking-tighter rounded-2xl md:rounded-3xl hover:brightness-110 active:scale-95 transition-all text-xs md:text-sm shadow-2xl shadow-primary/30 cursor-pointer"
                   >
                     <div className="absolute inset-0 bg-gradient-to-tr from-white/0 via-white/40 to-white/0 -translate-x-full group-hover:translate-x-full transition-transform duration-1000" />
-                    {(device === 'ios' || showDualMobile || adminDisplayMode === 'mobile') ? (t('pwa.got_it') || 'ENTENDI') : (settings.custom_texts?.['pwa.install_button'] || t('pwa.install_button') || 'INSTALAR')}
+                    {canPromptInstall 
+                      ? (settings.custom_texts?.['pwa.install_button'] || t('pwa.install_button') || 'INSTALAR APLICATIVO')
+                      : ((device === 'ios' || showDualMobile || adminDisplayMode === 'mobile') ? (t('pwa.got_it') || 'ENTENDI') : (settings.custom_texts?.['pwa.install_button'] || t('pwa.install_button') || 'INSTALAR'))
+                    }
                   </button>
                   <button
                     onClick={handleDismiss}

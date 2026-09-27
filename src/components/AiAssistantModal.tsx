@@ -1,10 +1,12 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { Send, X, User as UserIcon, RefreshCw, Copy, Check, AlertCircle, Loader2, GraduationCap, ArrowLeft, Clock, Lock, ExternalLink, ShoppingBag, Sparkles } from 'lucide-react';
+import { Send, X, User as UserIcon, RefreshCw, Copy, Check, AlertCircle, Loader2, GraduationCap, ArrowLeft, Clock, Lock, ExternalLink, ShoppingBag, Sparkles, Infinity as InfinityIcon, Info, HelpCircle } from 'lucide-react';
 import { GlowingSpinner } from './GlowingSpinner';
 import { toast } from 'sonner';
 import { useSettings } from '../contexts/SettingsContext';
 import { supabase, isSupabaseConfigured } from '../lib/supabase';
+import HtmlAppViewer from './HtmlAppViewer';
+import { DEFAULT_UNLIMITED_INFO_HTML } from '../constants/defaultUnlimitedHtml';
 
 interface Message {
   id: string;
@@ -53,6 +55,30 @@ export default function AiAssistantModal({ userId, userEmail, userName, userAvat
   const limitToast = settings?.custom_texts?.['ai_expert.limit_reached_toast'] || 'You have reached your message limit for this period.';
   const copiedToast = settings?.custom_texts?.['ai_expert.copied_toast'] || 'Response copied!';
   const inputDisabledPlaceholder = settings?.custom_texts?.['ai_expert.input_disabled_placeholder'] || 'Message limit reached for this period.';
+
+  // Unlimited Explanation HTML Modal state and texts
+  const [showUnlimitedInfoModal, setShowUnlimitedInfoModal] = useState(false);
+  const customUnlimitedHtml = settings?.custom_texts?.['ai_expert.unlimited_html'];
+  const resolvedUnlimitedHtml = (customUnlimitedHtml && customUnlimitedHtml.trim())
+    ? customUnlimitedHtml.trim()
+    : DEFAULT_UNLIMITED_INFO_HTML;
+  const unlimitedModalTitle = settings?.custom_texts?.['ai_expert.unlimited_modal_title'] || `How Unlimited Works • Ask ${settings?.custom_texts?.['ai_expert.name'] || 'Victoria'}`;
+  const unlimitedBtnLabel = settings?.custom_texts?.['ai_expert.unlimited_btn_label'] || 'Unlimited';
+  const unlimitedBtnTooltip = settings?.custom_texts?.['ai_expert.unlimited_btn_tooltip'] || 'Get Unlimited Messages';
+  const learnMoreButtonText = settings?.custom_texts?.['ai_expert.learn_more_button_text'] || 'How Unlimited Works • Learn More';
+
+  // Listen for iframe checkout messages
+  useEffect(() => {
+    const handleMsg = (e: MessageEvent) => {
+      if (e.data?.type === 'purchase') {
+        if (buyMoreUrl) {
+          window.open(buyMoreUrl, '_blank');
+        }
+      }
+    };
+    window.addEventListener('message', handleMsg);
+    return () => window.removeEventListener('message', handleMsg);
+  }, [buyMoreUrl]);
 
   const expertName = settings?.custom_texts?.['ai_expert.name'] || 'Victoria';
   const expertSubtitle = settings?.custom_texts?.['ai_expert.subtitle'] || 'Psychologist & Relationship Expert';
@@ -584,12 +610,12 @@ export default function AiAssistantModal({ userId, userEmail, userName, userAvat
 
             <div className="flex items-center gap-1.5 sm:gap-2 shrink-0">
               <button
-                onClick={handleClear}
-                title="Reset conversation"
-                className="group relative p-2.5 sm:p-3 hover:bg-white/10 rounded-2xl transition-all active:scale-95 bg-white/5 border border-white/10 overflow-hidden shrink-0 cursor-pointer text-gray-400 hover:text-white"
+                onClick={() => setShowUnlimitedInfoModal(true)}
+                title={unlimitedBtnTooltip}
+                className="group relative px-2.5 py-2 sm:px-3.5 sm:py-2.5 rounded-2xl transition-all active:scale-95 bg-gradient-to-r from-amber-500/20 via-pink-500/20 to-purple-500/20 hover:from-amber-500/30 hover:to-rose-500/30 border border-amber-500/40 text-amber-300 hover:text-amber-200 shadow-md shadow-amber-500/10 flex items-center gap-1.5 cursor-pointer shrink-0"
               >
-                <div className="absolute inset-0 bg-gradient-to-br from-amber-400/10 to-transparent opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none" />
-                <RefreshCw size={16} className="relative z-10" />
+                <InfinityIcon size={16} className="text-amber-400 shrink-0" />
+                <span className="hidden sm:inline text-xs font-black tracking-wide uppercase">{unlimitedBtnLabel}</span>
               </button>
               <button
                 onClick={handleClose}
@@ -741,11 +767,17 @@ export default function AiAssistantModal({ userId, userEmail, userName, userAvat
                       <span>{buyMoreButtonText || "Upgrade to Unlimited Monthly"}</span>
                       <ExternalLink size={14} className="opacity-80" />
                     </a>
-                  ) : (
-                    <div className="p-3 bg-amber-500/10 border border-amber-500/20 rounded-2xl text-xs text-amber-300 font-medium">
-                      Configure the purchase link in Admin Panel &gt; IA Settings to enable instant online checkout!
-                    </div>
-                  )}
+                  ) : null}
+
+                  {/* Learn More / How Unlimited Works button */}
+                  <button
+                    type="button"
+                    onClick={() => setShowUnlimitedInfoModal(true)}
+                    className="w-full inline-flex items-center justify-center gap-2 px-5 py-3 rounded-2xl bg-zinc-800/90 hover:bg-zinc-700/90 text-amber-300 hover:text-amber-200 border border-amber-500/35 font-bold text-xs sm:text-sm tracking-wide transition-all shadow-md active:scale-95 cursor-pointer"
+                  >
+                    <Info size={16} className="text-amber-400 shrink-0" />
+                    <span>{learnMoreButtonText}</span>
+                  </button>
 
                   {/* Verify / Refresh Button */}
                   <button
@@ -809,6 +841,91 @@ export default function AiAssistantModal({ userId, userEmail, userName, userAvat
               </form>
             </div>
           </div>
+
+          {/* Unlimited Explanation HTML Modal */}
+          <AnimatePresence>
+            {showUnlimitedInfoModal && (
+              <motion.div
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                exit={{ opacity: 0 }}
+                className="fixed inset-0 z-[120] bg-black/85 backdrop-blur-md flex flex-col justify-center items-center p-0 sm:p-4 md:p-6"
+              >
+                <motion.div
+                  initial={{ opacity: 0, scale: 0.96, y: 15 }}
+                  animate={{ opacity: 1, scale: 1, y: 0 }}
+                  exit={{ opacity: 0, scale: 0.96, y: 15 }}
+                  className="bg-[#090d16] border border-white/15 w-full h-full sm:h-[92vh] sm:max-w-4xl sm:rounded-3xl flex flex-col overflow-hidden shadow-2xl relative"
+                >
+                  {/* Modal Top Bar */}
+                  <div className="flex items-center justify-between px-4 sm:px-6 py-3.5 border-b border-white/10 bg-black/80 backdrop-blur-xl shrink-0">
+                    <div className="flex items-center gap-2.5 min-w-0">
+                      <div className="w-8 h-8 rounded-xl bg-gradient-to-br from-amber-500/20 to-pink-500/20 border border-amber-500/30 flex items-center justify-center text-amber-400 shrink-0">
+                        <InfinityIcon size={16} />
+                      </div>
+                      <div className="min-w-0">
+                        <h3 className="text-white font-bold text-sm sm:text-base leading-tight truncate">
+                          {unlimitedModalTitle}
+                        </h3>
+                        <p className="text-[11px] text-gray-400 truncate">
+                          {settings?.custom_texts?.['ai_expert.name'] || 'Victoria'} • VIP
+                        </p>
+                      </div>
+                    </div>
+
+                    <div className="flex items-center gap-2 shrink-0">
+                      {buyMoreUrl && (
+                        <a
+                          href={buyMoreUrl}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="hidden sm:inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl bg-gradient-to-r from-amber-500 to-pink-600 hover:from-amber-600 hover:to-pink-700 text-white font-bold text-xs shadow-md transition-all active:scale-95"
+                        >
+                          <Sparkles size={13} />
+                          <span>{buyMoreButtonText || 'Upgrade Now'}</span>
+                          <ExternalLink size={12} className="opacity-80" />
+                        </a>
+                      )}
+                      <button
+                        type="button"
+                        onClick={() => setShowUnlimitedInfoModal(false)}
+                        className="p-2 hover:bg-white/10 rounded-xl transition-all text-gray-400 hover:text-white cursor-pointer"
+                        title="Close"
+                      >
+                        <X size={20} />
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* Modal Body / Iframe */}
+                  <div className="flex-1 w-full h-full overflow-hidden bg-[#090d16] relative">
+                    <iframe
+                      title="Unlimited Info"
+                      srcDoc={resolvedUnlimitedHtml}
+                      className="w-full h-full border-none"
+                      sandbox="allow-scripts allow-popups allow-popups-to-escape-sandbox allow-same-origin allow-forms allow-top-navigation"
+                    />
+                  </div>
+
+                  {/* Mobile Sticky Footer if checkout link is available */}
+                  {buyMoreUrl && (
+                    <div className="sm:hidden p-3 border-t border-white/10 bg-black/90 backdrop-blur-lg shrink-0">
+                      <a
+                        href={buyMoreUrl}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="w-full flex items-center justify-center gap-2 py-3 rounded-xl bg-gradient-to-r from-amber-500 via-pink-500 to-rose-600 text-white font-black text-xs uppercase tracking-wider shadow-lg"
+                      >
+                        <Sparkles size={15} />
+                        <span>{buyMoreButtonText || 'Upgrade to Unlimited'}</span>
+                        <ExternalLink size={13} />
+                      </a>
+                    </div>
+                  )}
+                </motion.div>
+              </motion.div>
+            )}
+          </AnimatePresence>
         </motion.div>
       )}
     </AnimatePresence>

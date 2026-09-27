@@ -84,7 +84,9 @@ import {
   RotateCcw,
   EyeOff,
   MessageSquareQuote,
-  Lock
+  Lock,
+  Infinity as InfinityIcon,
+  FileCode
 } from 'lucide-react';
 import WhatsAppIcon from './WhatsAppIcon';
 import { toast } from 'sonner';
@@ -93,6 +95,7 @@ import { useI18n } from '../contexts/I18nContext';
 import { AdminTestimonials } from './AdminTestimonials';
 import { safeParse, safeFetch } from '../lib/utils';
 import { dataCache } from '../lib/cache';
+import { DEFAULT_UNLIMITED_INFO_HTML } from '../constants/defaultUnlimitedHtml';
 import { lazyWithRetry } from '../lib/lazyWithRetry';
 import { languagePresets } from '../constants/languagePresets';
 
@@ -282,6 +285,7 @@ export default function AdminPanel({ user }: AdminPanelProps) {
   const [courseStats, setCourseStats] = useState<Record<string, { lessons: number, materials: number }>>({});
   const [loadingCourses, setLoadingCourses] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
+  const [previewUnlimitedHtmlModal, setPreviewUnlimitedHtmlModal] = useState(false);
   
   // Editor states
   const [editingCourseId, setEditingCourseId] = useState<string | null>(null);
@@ -4832,6 +4836,125 @@ export default function AdminPanel({ user }: AdminPanelProps) {
                         )}
                       </div>
                     </div>
+
+                    {/* Section 5: Página Explicativa do Plano Ilimitado (HTML Customizado) */}
+                    <div className="bg-zinc-900/60 rounded-3xl border border-white/10 p-6 md:p-8 space-y-6">
+                      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-4 border-b border-white/10">
+                        <div className="flex items-center gap-3">
+                          <div className="p-2.5 bg-gradient-to-br from-amber-500/20 to-pink-500/20 rounded-xl text-amber-400 border border-amber-500/30">
+                            <InfinityIcon size={22} />
+                          </div>
+                          <div>
+                            <h4 className="font-bold text-white text-base">Página Explicativa do Plano Ilimitado (HTML)</h4>
+                            <p className="text-xs text-gray-500">Cadastre a página explicativa que será aberta ao clicar no ícone de Mensagens Ilimitadas ou no botão 'Saiba Mais'.</p>
+                          </div>
+                        </div>
+
+                        <div className="flex items-center gap-2">
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setDraftCustomTexts({
+                                ...draftCustomTexts,
+                                'ai_expert.unlimited_html': DEFAULT_UNLIMITED_INFO_HTML
+                              });
+                              toast.success('Modelo HTML padrão restaurado! Não se esqueça de clicar em Salvar Alterações.');
+                            }}
+                            className="flex items-center gap-1.5 px-3 py-2 bg-white/5 hover:bg-white/10 text-amber-400 border border-amber-500/30 rounded-xl text-xs font-bold transition-all cursor-pointer"
+                            title="Restaurar Modelo HTML Padrão"
+                          >
+                            <RotateCcw size={14} />
+                            <span>Restaurar Padrão</span>
+                          </button>
+
+                          <button
+                            type="button"
+                            onClick={() => setPreviewUnlimitedHtmlModal(true)}
+                            className="flex items-center gap-1.5 px-3 py-2 bg-gradient-to-r from-amber-500/20 to-pink-500/20 hover:from-amber-500/30 hover:to-pink-500/30 text-white border border-white/20 rounded-xl text-xs font-bold transition-all cursor-pointer shadow-sm"
+                            title="Pré-visualizar como a página será exibida para o usuário"
+                          >
+                            <Eye size={14} />
+                            <span>Visualizar Página</span>
+                          </button>
+                        </div>
+                      </div>
+
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                        <div className="space-y-2">
+                          <label className="text-xs font-black text-gray-400 uppercase tracking-widest">Título da Modal / Janela Explicativa</label>
+                          <input
+                            type="text"
+                            value={draftCustomTexts['ai_expert.unlimited_modal_title'] ?? settings.custom_texts?.['ai_expert.unlimited_modal_title'] ?? 'How the Unlimited Plan Works • Ask Victoria'}
+                            onChange={(e) => setDraftCustomTexts({ ...draftCustomTexts, 'ai_expert.unlimited_modal_title': e.target.value })}
+                            className="w-full bg-black border border-white/10 rounded-2xl px-4 py-3.5 text-white text-sm focus:border-rose-500 outline-none"
+                            placeholder="Ex: How the Unlimited Plan Works • Ask Victoria"
+                          />
+                          <p className="text-[11px] text-gray-500">Título exibido na barra superior ao abrir a explicação do plano.</p>
+                        </div>
+
+                        <div className="space-y-2">
+                          <label className="text-xs font-black text-gray-400 uppercase tracking-widest">Texto do Botão no Alerta de Limite</label>
+                          <input
+                            type="text"
+                            value={draftCustomTexts['ai_expert.learn_more_button_text'] ?? settings.custom_texts?.['ai_expert.learn_more_button_text'] ?? 'How Unlimited Works • Learn More'}
+                            onChange={(e) => setDraftCustomTexts({ ...draftCustomTexts, 'ai_expert.learn_more_button_text': e.target.value })}
+                            className="w-full bg-black border border-white/10 rounded-2xl px-4 py-3.5 text-white text-sm focus:border-rose-500 outline-none"
+                            placeholder="Ex: How Unlimited Works • Learn More"
+                          />
+                          <p className="text-[11px] text-gray-500">Texto do botão de 'Saiba Mais' exibido quando o limite de mensagens for atingido.</p>
+                        </div>
+
+                        <div className="space-y-2">
+                          <label className="text-xs font-black text-gray-400 uppercase tracking-widest">Rótulo do Botão no Topo do Chat (Desktop)</label>
+                          <input
+                            type="text"
+                            value={draftCustomTexts['ai_expert.unlimited_btn_label'] ?? settings.custom_texts?.['ai_expert.unlimited_btn_label'] ?? 'Unlimited'}
+                            onChange={(e) => setDraftCustomTexts({ ...draftCustomTexts, 'ai_expert.unlimited_btn_label': e.target.value })}
+                            className="w-full bg-black border border-white/10 rounded-2xl px-4 py-3.5 text-white text-sm focus:border-rose-500 outline-none"
+                            placeholder="Ex: Unlimited"
+                          />
+                          <p className="text-[11px] text-gray-500">Texto exibido ao lado do ícone infinito no topo do chat (telas médias/grandes).</p>
+                        </div>
+
+                        <div className="space-y-2">
+                          <label className="text-xs font-black text-gray-400 uppercase tracking-widest">Tooltip / Descrição do Ícone</label>
+                          <input
+                            type="text"
+                            value={draftCustomTexts['ai_expert.unlimited_btn_tooltip'] ?? settings.custom_texts?.['ai_expert.unlimited_btn_tooltip'] ?? 'Get Unlimited Messages'}
+                            onChange={(e) => setDraftCustomTexts({ ...draftCustomTexts, 'ai_expert.unlimited_btn_tooltip': e.target.value })}
+                            className="w-full bg-black border border-white/10 rounded-2xl px-4 py-3.5 text-white text-sm focus:border-rose-500 outline-none"
+                            placeholder="Ex: Get Unlimited Messages"
+                          />
+                          <p className="text-[11px] text-gray-500">Texto exibido ao passar o mouse por cima do ícone no topo do chat.</p>
+                        </div>
+                      </div>
+
+                      {/* HTML Code Editor */}
+                      <div className="space-y-2">
+                        <div className="flex items-center justify-between">
+                          <label className="text-xs font-black text-gray-400 uppercase tracking-widest flex items-center gap-1.5">
+                            <FileCode size={14} className="text-amber-400" />
+                            Código HTML da Página Explicativa
+                          </label>
+                          <span className="text-[11px] text-gray-400">
+                            Aceita HTML5, CSS inline (&lt;style&gt;) e JavaScript
+                          </span>
+                        </div>
+                        <div className="relative border border-white/10 rounded-2xl overflow-hidden focus-within:border-amber-500/60 transition-colors bg-black">
+                          <textarea
+                            rows={16}
+                            value={draftCustomTexts['ai_expert.unlimited_html'] ?? settings.custom_texts?.['ai_expert.unlimited_html'] ?? DEFAULT_UNLIMITED_INFO_HTML}
+                            onChange={(e) => setDraftCustomTexts({ ...draftCustomTexts, 'ai_expert.unlimited_html': e.target.value })}
+                            className="w-full bg-black font-mono text-xs sm:text-sm text-gray-200 p-4 outline-none resize-y leading-relaxed"
+                            placeholder="<!DOCTYPE html><html>...</html>"
+                            spellCheck={false}
+                          />
+                        </div>
+                        <p className="text-[11px] text-gray-500">
+                          Dica: Você pode usar links ou botões com <code className="text-amber-400">href="{settings?.custom_texts?.['ai_expert.buy_more_url'] || 'URL_DO_CHECKOUT'}"</code> ou disparar <code className="text-amber-400">window.parent.postMessage(&#123; type: 'purchase' &#125;, '*')</code> para abrir o link de checkout configurado.
+                        </p>
+                      </div>
+                    </div>
                   </div>
                 )}
                 {activeTab === 'settings' && (
@@ -9183,6 +9306,43 @@ export default function AdminPanel({ user }: AdminPanelProps) {
                 {savingProduct ? <Loader2 className="animate-spin" size={16} /> : <Check size={16} />}
                 {editingProduct ? 'Salvar Alterações' : 'Cadastrar Produto'}
               </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Modal de Pré-visualização da Página HTML da IA Expert */}
+      {previewUnlimitedHtmlModal && (
+        <div className="fixed inset-0 z-[200] bg-black/85 backdrop-blur-md flex items-center justify-center p-2 sm:p-6">
+          <div className="bg-[#090d16] border border-white/20 w-full h-[95vh] max-w-4xl rounded-3xl flex flex-col overflow-hidden shadow-2xl relative">
+            <div className="flex items-center justify-between px-5 py-4 border-b border-white/10 bg-black/80 shrink-0">
+              <div className="flex items-center gap-2.5">
+                <div className="p-2 bg-gradient-to-br from-amber-500/20 to-pink-500/20 rounded-xl text-amber-400 border border-amber-500/30">
+                  <InfinityIcon size={18} />
+                </div>
+                <div>
+                  <h3 className="text-white font-bold text-sm sm:text-base leading-tight">
+                    Pré-visualização: {draftCustomTexts['ai_expert.unlimited_modal_title'] ?? settings.custom_texts?.['ai_expert.unlimited_modal_title'] ?? 'How the Unlimited Plan Works'}
+                  </h3>
+                  <p className="text-[11px] text-gray-400">Assim é como suas alunas verão a página explicativa</p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setPreviewUnlimitedHtmlModal(false)}
+                className="p-2 hover:bg-white/10 rounded-xl text-gray-400 hover:text-white transition-colors cursor-pointer"
+                title="Fechar"
+              >
+                <X size={20} />
+              </button>
+            </div>
+            <div className="flex-1 w-full h-full overflow-hidden bg-[#090d16]">
+              <iframe
+                title="Pré-visualização HTML"
+                srcDoc={(draftCustomTexts['ai_expert.unlimited_html'] ?? settings.custom_texts?.['ai_expert.unlimited_html'] ?? DEFAULT_UNLIMITED_INFO_HTML) || DEFAULT_UNLIMITED_INFO_HTML}
+                className="w-full h-full border-none"
+                sandbox="allow-scripts allow-popups allow-popups-to-escape-sandbox allow-same-origin allow-forms allow-top-navigation"
+              />
             </div>
           </div>
         </div>

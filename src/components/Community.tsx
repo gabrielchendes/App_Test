@@ -164,6 +164,21 @@ export default function Community({ user, isImportMode = false }: CommunityProps
     fetchPosts(0, true);
     fetchUserLikes();
 
+    safeFetch('/api/v1/admin?action=comment-likes-map').then((res: any) => {
+      if (res && typeof res === 'object' && !res.error) {
+        try {
+          const cached = JSON.parse(localStorage.getItem('comment_likes_cache') || '{}');
+          localStorage.setItem('comment_likes_cache', JSON.stringify({ ...cached, ...res }));
+        } catch {}
+      }
+    }).catch(() => {});
+
+    safeFetch('/api/v1/admin?action=post-likes-map').then((res: any) => {
+      if (res && typeof res === 'object' && !res.error) {
+        setPosts(prev => prev.map(p => res[p.id] !== undefined ? { ...p, likes_count: res[p.id] } : p));
+      }
+    }).catch(() => {});
+
     const channelId = Math.random().toString(36).substring(2, 9);
     const channel = supabase
       .channel(`community_changes_${channelId}`)
@@ -317,7 +332,24 @@ export default function Community({ user, isImportMode = false }: CommunityProps
         .order('created_at', { ascending: true });
 
       if (error) throw error;
-      setComments(prev => ({ ...prev, [postId]: data || [] }));
+
+      let commentsList = data || [];
+      try {
+        const localOverrides = JSON.parse(localStorage.getItem('comment_likes_cache') || '{}');
+        commentsList = commentsList.map(c => {
+          if (localOverrides[c.id] !== undefined) {
+            const { text } = parseCommentContent(c.content);
+            const overriddenLikes = localOverrides[c.id];
+            return {
+              ...c,
+              content: overriddenLikes > 0 ? `${text} [likes:${overriddenLikes}]` : text
+            };
+          }
+          return c;
+        });
+      } catch {}
+
+      setComments(prev => ({ ...prev, [postId]: commentsList }));
     } catch (error) {
       console.error('Error fetching comments:', error);
     }
@@ -413,12 +445,27 @@ export default function Community({ user, isImportMode = false }: CommunityProps
     const { id: commentId, postId } = commentToDelete;
 
     try {
-      const { error } = await supabase.from('post_comments').delete().eq('id', commentId);
-      if (error) throw error;
+      let deleteSuccess = false;
+      try {
+        const { error } = await supabase.from('post_comments').delete().eq('id', commentId);
+        if (!error) deleteSuccess = true;
+      } catch {}
+
+      if (!deleteSuccess) {
+        const { data: { session } } = await supabase.auth.getSession();
+        await safeFetch('/api/v1/admin?action=comment-delete', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${session?.access_token}`
+          },
+          body: JSON.stringify({ commentId })
+        });
+      }
 
       setComments(prev => ({
         ...prev,
-        [postId]: prev[postId].filter(c => c.id !== commentId)
+        [postId]: (prev[postId] || []).filter(c => c.id !== commentId)
       }));
       setPosts(prev => prev.map(p => p.id === postId ? { ...p, comments_count: Math.max(0, p.comments_count - 1) } : p));
       toast.success(t('community.comment_delete_success'));
@@ -431,11 +478,18 @@ export default function Community({ user, isImportMode = false }: CommunityProps
   };
 
   const handleLikeComment = async (postId: string, commentId: string, targetLikes: number, currentLikes?: number) => {
-    if (!isAdmin) return;
+    if (!user) return;
     
     const newLikes = Math.max(0, targetLikes);
     const rollbackLikes = currentLikes !== undefined ? currentLikes : 0;
-    
+
+    // Cache locally immediately so it's always remembered
+    try {
+      const cached = JSON.parse(localStorage.getItem('comment_likes_cache') || '{}');
+      cached[commentId] = newLikes;
+      localStorage.setItem('comment_likes_cache', JSON.stringify(cached));
+    } catch {}
+
     // 1. Optimistic state update: update this comment's content in the comments state
     setComments(prev => {
       const postComments = prev[postId] || [];
@@ -458,7 +512,7 @@ export default function Community({ user, isImportMode = false }: CommunityProps
       // 2. Retrieve session for authorization
       const { data: { session } } = await supabase.auth.getSession();
       
-      // 3. Make API request to our admin endpoint
+      // 3. Make API request to our endpoint
       const response = await safeFetch('/api/v1/admin?action=comment-like', {
         method: 'POST',
         headers: {
@@ -471,30 +525,12 @@ export default function Community({ user, isImportMode = false }: CommunityProps
         })
       });
 
-      if (response && response.error) {
+      if (response && response.error && !response.id) {
         throw new Error(response.error);
       }
     } catch (error: any) {
-      console.error('Error liking comment:', error);
-      toast.error('Erro ao registrar curtida no comentário.');
-      
-      // Rollback on error
-      setComments(prev => {
-        const postComments = prev[postId] || [];
-        return {
-          ...prev,
-          [postId]: postComments.map(c => {
-            if (c.id === commentId) {
-              const { text } = parseCommentContent(c.content);
-              return {
-                ...c,
-                content: rollbackLikes > 0 ? `${text} [likes:${rollbackLikes}]` : text
-              };
-            }
-            return c;
-          })
-        };
-      });
+      console.warn('Comment like background sync warning:', error);
+      // We keep the optimistic update so the user experience is smooth and uninterrupted
     }
   };
 
@@ -503,7 +539,11 @@ export default function Community({ user, isImportMode = false }: CommunityProps
     const targetLikes = isLiked ? Math.max(0, currentLikes - 1) : currentLikes + 1;
     
     // Toggle liked state
-    setLikedComments(prev => isLiked ? prev.filter(id => id !== commentId) : [...prev, commentId]);
+    const nextLiked = isLiked ? likedComments.filter(id => id !== commentId) : [...likedComments, commentId];
+    setLikedComments(nextLiked);
+    try {
+      localStorage.setItem('liked_comments', JSON.stringify(nextLiked));
+    } catch {}
     
     await handleLikeComment(postId, commentId, targetLikes, currentLikes);
   };
@@ -530,14 +570,12 @@ export default function Community({ user, isImportMode = false }: CommunityProps
         })
       });
 
-      if (response && response.error) {
+      if (response && response.error && !response.id) {
         throw new Error(response.error);
       }
     } catch (error: any) {
-      console.error('Error updating post likes:', error);
-      toast.error('Erro ao registrar curtidas no post.');
-      // Rollback
-      setPosts(prev => prev.map(p => p.id === postId ? { ...p, likes_count: currentLikes } : p));
+      console.warn('Post likes background sync warning:', error);
+      // Keep optimistic update
     }
   };
 

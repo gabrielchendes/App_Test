@@ -130,13 +130,35 @@
         }
       })();
     </script>
+    <script>
+      // Early beforeinstallprompt capture to guarantee prompt is never missed
+      window.addEventListener('beforeinstallprompt', function(e) {
+        e.preventDefault();
+        window.deferredPWAInstallPrompt = e;
+        window.dispatchEvent(new CustomEvent('pwa-prompt-available', { detail: e }));
+      });
+    </script>
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
     <meta name="referrer" content="no-referrer-when-downgrade" />
     <title>Missing Trigger</title>
     <meta name="description" content="Exclusive members area with premium content." />
     <meta property="og:title" content="Missing Trigger" />
     <meta property="og:description" content="Exclusive members area with premium content." />
+
+    <!-- PWA Web App Manifest & Android / iOS Compatibility -->
+    <link rel="manifest" href="/manifest.json" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <meta name="apple-mobile-web-app-title" content="Missing Trigger" />
+    <meta name="application-name" content="Missing Trigger" />
+
+    <!-- Icons: Favicon, Android & iOS -->
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <link rel="icon" type="image/png" sizes="192x192" href="/icon-192.png" />
+    <link rel="icon" type="image/png" sizes="512x512" href="/icon-512.png" />
+    <link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png" />
+    <link rel="apple-touch-icon" href="/icon-192.png" />
     <script>
       (function() {
         try {
