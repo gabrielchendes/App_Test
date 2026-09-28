@@ -43,6 +43,8 @@ export default function CoursePreviewViewer({ course: rawCourse, onClose, onPurc
   const [pdfReloadCount, setPdfReloadCount] = useState(0);
 
   const isHtmlPreview = course.preview_type === 'html' || 
+    course.preview_type === 'text' ||
+    !course.preview_type ||
     Boolean(course.preview_rich_text && /^\s*<(!DOCTYPE|html|div|main|section|body)/i.test(course.preview_rich_text)) ||
     Boolean(course.preview_rich_text && (course.preview_rich_text.includes('<!--__PWA_HTML_APP__-->') || course.preview_rich_text.includes('<html') || course.preview_rich_text.includes('<body')));
 

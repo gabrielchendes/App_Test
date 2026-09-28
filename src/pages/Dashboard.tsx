@@ -34,7 +34,6 @@ const Community = lazyWithRetry(() => import('../components/Community'));
 const AdminPanel = lazyWithRetry(() => import('../components/AdminPanel'));
 const CourseViewer = lazyWithRetry(() => import('../components/CourseViewer'));
 const CoursePreviewViewer = lazyWithRetry(() => import('../components/CoursePreviewViewer'));
-const CoursePurchaseModal = lazyWithRetry(() => import('../components/CoursePurchaseModal'));
 const PWAInstallModal = lazyWithRetry(() => import('../components/PWAInstallModal'));
 const AiAssistantModal = lazyWithRetry(() => import('../components/AiAssistantModal'));
 const AccessDeniedModal = lazyWithRetry(() => import('../components/AccessDeniedModal'));
@@ -69,7 +68,6 @@ export default function Dashboard({ user }: DashboardProps) {
   const [userProfile, setUserProfile] = useState<{ has_access?: boolean; has_unlimited_ai?: boolean; is_admin?: boolean } | null>(null);
   const [loading, setLoading] = useState(() => !initialCached?.courses?.length);
   const [refreshKey, setRefreshKey] = useState(0);
-  const [selectedCourse, setSelectedCourse] = useState<Course | null>(null);
   const [viewingCourseId, setViewingCourseId] = useState<string | null>(null);
   const [viewingCourse, setViewingCourse] = useState<Course | null>(null);
   const [previewCourse, setPreviewCourse] = useState<Course | null>(null);
@@ -564,20 +562,10 @@ export default function Dashboard({ user }: DashboardProps) {
       });
       setViewingCourseId(course.id);
     } else {
-      setSelectedCourse(course);
+      // Direct access to preview page for paid/locked courses
+      setPreviewCourse(course);
     }
   }, [courses, viewingCourseId, isUnlocked, courseStats, user?.id]);
-
-  const handleSimulatePurchase = useCallback(async () => {
-    if (!selectedCourse) return;
-    
-    if (selectedCourse.checkout_url) {
-      window.location.href = selectedCourse.checkout_url;
-      return;
-    }
-
-    toast.error(t('course.purchase_unavailable') || 'This course does not yet have a purchase link.');
-  }, [selectedCourse]);
 
   const getCourseProgress = useCallback((courseId: string) => {
     const chaptersInCourse = courseChapters[courseId] || [];
@@ -1019,40 +1007,6 @@ export default function Dashboard({ user }: DashboardProps) {
         </div>
       )}
 
-      <Suspense fallback={null}>
-        <CoursePurchaseModal
-          isOpen={!!selectedCourse}
-          onClose={() => setSelectedCourse(null)}
-          title={selectedCourse?.title || ''}
-          subtitle={selectedCourse?.subtitle}
-          description={selectedCourse?.description || ''}
-          image={selectedCourse?.premium_cover_url || selectedCourse?.cover_url || ''}
-          price={selectedCourse?.price || 0}
-          oldPrice={selectedCourse?.old_price}
-          benefits={selectedCourse?.benefits}
-          ctaText={selectedCourse?.cta_text}
-          previewEnabled={selectedCourse?.preview_enabled}
-          previewUrl={selectedCourse?.preview_url}
-          previewText={selectedCourse?.preview_text}
-          socialProof={selectedCourse?.social_proof}
-          showLifetimeBadge={selectedCourse?.show_lifetime_badge}
-          premiumBadgeText={selectedCourse?.premium_badge_text}
-          offerBadgeText={selectedCourse?.offer_badge_text}
-          lifetimeBadgeText={selectedCourse?.lifetime_badge_text}
-          paymentLabelText={selectedCourse?.payment_label_text}
-          securePaymentLabel={selectedCourse?.secure_payment_label}
-          instantAccessLabel={selectedCourse?.instant_access_label}
-          modalType={selectedCourse?.modal_type}
-          modalHtml={selectedCourse?.modal_html}
-          onPurchase={handleSimulatePurchase}
-          onPreview={() => {
-            if (selectedCourse) {
-              setPreviewCourse(selectedCourse);
-            }
-          }}
-        />
-      </Suspense>
-
       {/* Improved Course Preview Experience */}
       <AnimatePresence>
         {previewCourse && (
@@ -1109,29 +1063,31 @@ export default function Dashboard({ user }: DashboardProps) {
         />
       </Suspense>
       
-      <Suspense fallback={null}>
-        <PWAInstallModal 
-          isOpen={showPWAInstall} 
-          onClose={() => setShowPWAInstall(false)}
-          onInstall={async () => {
-            const prompt = deferredPrompt || getDeferredPrompt();
-            if (prompt) {
-              try {
-                await prompt.prompt();
-                const { outcome } = await prompt.userChoice;
-                if (outcome === 'accepted') {
-                  setDeferredPrompt(null);
-                  setCanInstall(false);
-                  return true;
+      {showPWAInstall && (
+        <Suspense fallback={null}>
+          <PWAInstallModal 
+            isOpen={showPWAInstall} 
+            onClose={() => setShowPWAInstall(false)}
+            onInstall={async () => {
+              const prompt = deferredPrompt || getDeferredPrompt();
+              if (prompt) {
+                try {
+                  await prompt.prompt();
+                  const { outcome } = await prompt.userChoice;
+                  if (outcome === 'accepted') {
+                    setDeferredPrompt(null);
+                    setCanInstall(false);
+                    return true;
+                  }
+                } catch (e) {
+                  console.error('Error invoking install prompt:', e);
                 }
-              } catch (e) {
-                console.error('Error invoking install prompt:', e);
               }
-            }
-            return await promptPWAInstall();
-          }}
-        />
-      </Suspense>
+              return await promptPWAInstall();
+            }}
+          />
+        </Suspense>
+      )}
 
       {/* Access Denied / Inactive Subscription Overlay */}
       {userProfile && userProfile.has_access === false && !isAdmin && (

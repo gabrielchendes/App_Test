@@ -1,5 +1,5 @@
 import React, { useState, useRef } from 'react';
-import { User, Lock, Mail, Save, Loader2, Camera, Bell, LogOut, Download, Smartphone } from 'lucide-react';
+import { User, Lock, Mail, Save, Loader2, Camera, Bell, LogOut, Download, Smartphone, Calendar, MapPin } from 'lucide-react';
 import { GlowingSpinner } from './GlowingSpinner';
 import { supabase } from '../lib/supabase';
 import { User as SupabaseUser } from '@supabase/supabase-js';
@@ -8,6 +8,7 @@ import imageCompression from 'browser-image-compression';
 import { useSettings } from '../contexts/SettingsContext';
 import { useI18n } from '../contexts/I18nContext';
 import { requestNotificationPermission } from '../lib/pushNotifications';
+import { cn } from '../lib/utils';
 
 interface ProfileProps {
   user: SupabaseUser;
@@ -15,14 +16,107 @@ interface ProfileProps {
   onInstall?: () => void;
 }
 
+// US Phone format mask: (XXX) XXX-XXXX
+const formatUSPhone = (val: string): string => {
+  const digits = val.replace(/\D/g, '');
+  if (!digits) return '';
+  if (digits.length <= 3) {
+    return `(${digits}`;
+  }
+  if (digits.length <= 6) {
+    return `(${digits.slice(0, 3)}) ${digits.slice(3)}`;
+  }
+  if (digits.length <= 10) {
+    return `(${digits.slice(0, 3)}) ${digits.slice(3, 6)}-${digits.slice(6)}`;
+  }
+  // Allow additional numbers while preserving standard mask prefix
+  return `(${digits.slice(0, 3)}) ${digits.slice(3, 6)}-${digits.slice(6, 10)} ${digits.slice(10)}`;
+};
+
+// US Date format mask: MM/DD/YYYY
+const formatDateOfBirth = (val: string): string => {
+  const digits = val.replace(/\D/g, '').slice(0, 8);
+  if (!digits) return '';
+  if (digits.length <= 2) {
+    return digits;
+  }
+  if (digits.length <= 4) {
+    return `${digits.slice(0, 2)}/${digits.slice(2)}`;
+  }
+  return `${digits.slice(0, 2)}/${digits.slice(2, 4)}/${digits.slice(4)}`;
+};
+
+// Validation: Month 01-12, Day 01-31 according to month, Year 1900 to current
+const validateDateOfBirth = (val: string): string | null => {
+  if (!val || val.trim() === '') return null;
+  const parts = val.split('/');
+  if (parts.length !== 3 || val.length !== 10) {
+    return 'Please enter a valid date in MM/DD/YYYY format';
+  }
+  const month = parseInt(parts[0], 10);
+  const day = parseInt(parts[1], 10);
+  const year = parseInt(parts[2], 10);
+
+  if (isNaN(month) || isNaN(day) || isNaN(year)) {
+    return 'Please enter a valid date in MM/DD/YYYY format';
+  }
+
+  if (month < 1 || month > 12) {
+    return 'Please enter a valid month (01–12)';
+  }
+
+  const isLeapYear = (year % 4 === 0 && year % 100 !== 0) || year % 400 === 0;
+  const daysInMonth = [31, isLeapYear ? 29 : 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
+  const maxDay = daysInMonth[month - 1];
+
+  if (day < 1 || day > maxDay) {
+    return `Please enter a valid day (01–${maxDay}) for month ${String(month).padStart(2, '0')}`;
+  }
+
+  const currentYear = new Date().getFullYear();
+  if (year < 1900 || year > currentYear) {
+    return `Please enter a valid year between 1900 and ${currentYear}`;
+  }
+
+  return null;
+};
+
 export default function Profile({ user, canInstall, onInstall }: ProfileProps) {
   const { settings } = useSettings();
   const { t } = useI18n();
   const [fullName, setFullName] = useState(user.user_metadata?.full_name || '');
+  
+  // Parse initial phone and country code (default to '1' for US standard +1)
   const initialPhone = user.user_metadata?.phone || '';
-  // Try to parse country code (assuming it's the first 2-3 digits after +)
-  const [countryCode, setCountryCode] = useState(initialPhone.startsWith('+') ? initialPhone.substring(1, 4) : '');
-  const [phoneBody, setPhoneBody] = useState(initialPhone.startsWith('+') ? initialPhone.substring(initialPhone.length > 4 ? 4 : 1) : initialPhone);
+  const parseInitialPhone = () => {
+    if (initialPhone.startsWith('+')) {
+      const match = initialPhone.match(/^\+(\d{1,4})\s*(.*)$/);
+      if (match) {
+        return {
+          code: match[1] || '1',
+          body: match[2] ? match[2].trim() : ''
+        };
+      }
+    }
+    return {
+      code: user.user_metadata?.country_code || '1',
+      body: initialPhone
+    };
+  };
+
+  const parsedPhone = parseInitialPhone();
+  // Pre-fill country code with '1' for US +1 default
+  const [countryCode, setCountryCode] = useState(parsedPhone.code || '1');
+  const [phoneBody, setPhoneBody] = useState(formatUSPhone(parsedPhone.body));
+  
+  // Date of Birth and City fields
+  const [dateOfBirth, setDateOfBirth] = useState(() => {
+    const rawDob = user.user_metadata?.date_of_birth || user.user_metadata?.birthdate || '';
+    return formatDateOfBirth(rawDob);
+  });
+  const [dobError, setDobError] = useState<string | null>(null);
+  const [city, setCity] = useState(user.user_metadata?.city || '');
+
   const [avatarUrl, setAvatarUrl] = useState(user.user_metadata?.avatar_url || '');
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
@@ -36,6 +130,43 @@ export default function Profile({ user, canInstall, onInstall }: ProfileProps) {
     permission: typeof Notification !== 'undefined' ? Notification.permission : 'not-supported',
     tokenGenerated: false
   });
+
+  const handlePhoneChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const inputVal = e.target.value;
+    if (phoneBody.endsWith(') ') && inputVal === phoneBody.slice(0, -2)) {
+      setPhoneBody(formatUSPhone(phoneBody.slice(0, -3)));
+      return;
+    }
+    if (phoneBody.endsWith('-') && inputVal === phoneBody.slice(0, -1)) {
+      setPhoneBody(formatUSPhone(phoneBody.slice(0, -2)));
+      return;
+    }
+    setPhoneBody(formatUSPhone(inputVal));
+  };
+
+  const handleDobChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const inputVal = e.target.value;
+    if (dateOfBirth.endsWith('/') && inputVal === dateOfBirth.slice(0, -1)) {
+      setDateOfBirth(formatDateOfBirth(dateOfBirth.slice(0, -2)));
+      setDobError(null);
+      return;
+    }
+    const formatted = formatDateOfBirth(inputVal);
+    setDateOfBirth(formatted);
+    if (formatted.length === 10) {
+      setDobError(validateDateOfBirth(formatted));
+    } else if (formatted.length === 0) {
+      setDobError(null);
+    }
+  };
+
+  const handleDobBlur = () => {
+    if (dateOfBirth && dateOfBirth.length > 0) {
+      setDobError(validateDateOfBirth(dateOfBirth));
+    } else {
+      setDobError(null);
+    }
+  };
 
   const handleLogout = async () => {
     setLoggingOut(true);
@@ -53,6 +184,17 @@ export default function Profile({ user, canInstall, onInstall }: ProfileProps) {
   const handleUpdateProfile = async (e: React.FormEvent) => {
     e.preventDefault();
     setLoading(true);
+
+    // Validate Date of Birth if entered
+    if (dateOfBirth && dateOfBirth.trim() !== '') {
+      const errorMsg = validateDateOfBirth(dateOfBirth);
+      if (errorMsg) {
+        setDobError(errorMsg);
+        toast.error(errorMsg);
+        setLoading(false);
+        return;
+      }
+    }
 
     try {
       // Step 1: Get session first to ensure it's loaded
@@ -78,16 +220,34 @@ export default function Profile({ user, canInstall, onInstall }: ProfileProps) {
       }
 
       // Update Auth metadata
-      const fullPhone = `+${countryCode}${phoneBody}`;
+      const cleanDigits = phoneBody.replace(/\D/g, '');
+      const fullPhone = cleanDigits ? `+${countryCode || '1'} ${phoneBody}` : '';
       const { error: authError } = await supabase.auth.updateUser({
         data: { 
           full_name: fullName,
           phone: fullPhone,
-          avatar_url: avatarUrl
+          country_code: countryCode || '1',
+          avatar_url: avatarUrl,
+          date_of_birth: dateOfBirth,
+          city: city
         }
       });
 
       if (authError) throw authError;
+
+      // Also try to update profiles table if available
+      try {
+        await supabase.from('profiles').update({
+          full_name: fullName,
+          avatar_url: avatarUrl,
+          phone: fullPhone,
+          date_of_birth: dateOfBirth,
+          city: city,
+          updated_at: new Date().toISOString()
+        }).eq('id', currentUser.id);
+      } catch (profileErr) {
+        console.warn('Profiles table sync optional error:', profileErr);
+      }
 
       toast.success(t('profile.update_success') || 'Perfil atualizado com sucesso!');
     } catch (error: any) {
@@ -265,38 +425,91 @@ export default function Profile({ user, canInstall, onInstall }: ProfileProps) {
           </div>
 
           <div className="space-y-2">
-            <label className="text-xs font-black text-gray-500 uppercase tracking-widest">{t('profile.phone_label') || 'Telefone (WhatsApp)'}</label>
+            <label className="text-xs font-black text-gray-500 uppercase tracking-widest">{t('profile.phone_label') || 'Phone'}</label>
             <div className="grid grid-cols-[100px_minmax(0,1fr)] gap-2 w-full">
               <div className="space-y-1 min-w-0">
                 <div className="flex items-center gap-1.5 px-3 py-3 bg-black/40 rounded-xl border border-white/10 focus-within:border-primary/50 transition-colors w-full overflow-hidden">
                   <span className="text-gray-400 font-bold text-sm flex-shrink-0">+</span>
                   <input
-                    type="text"
+                    type="tel"
+                    inputMode="numeric"
                     value={countryCode}
                     onChange={(e) => setCountryCode(e.target.value.replace(/\D/g, '').substring(0, 4))}
-                    placeholder="00"
+                    placeholder="1"
                     maxLength={4}
                     className="bg-transparent border-none outline-none w-full text-white placeholder:text-gray-600 text-base min-w-0"
                   />
                 </div>
                 <span className="text-[9px] text-gray-500 font-bold uppercase tracking-tighter block px-1 truncate">
-                  {t('profile.phone_country_code') || 'Código País'}
+                  {t('profile.phone_country_code') || 'Country Code'}
                 </span>
               </div>
               <div className="space-y-1 text-left min-w-0">
                 <div className="flex items-center gap-3 px-3 py-3 bg-black/40 rounded-xl border border-white/10 focus-within:border-primary/50 transition-colors w-full overflow-hidden">
                   <input
-                    type="text"
+                    type="tel"
+                    inputMode="numeric"
+                    autoComplete="tel-national"
                     value={phoneBody}
-                    onChange={(e) => setPhoneBody(e.target.value.replace(/\D/g, ''))}
-                    placeholder="(00) 00000-0000"
-                    className="bg-transparent border-none outline-none w-full text-white placeholder:text-gray-600 text-base min-w-0"
+                    onChange={handlePhoneChange}
+                    placeholder="(555) 000-0000"
+                    className="bg-transparent border-none outline-none w-full text-white placeholder:text-gray-600 text-base min-w-0 font-mono sm:font-sans"
                   />
                 </div>
                 <span className="text-[9px] text-gray-500 font-bold uppercase tracking-tighter block px-1 truncate">
-                  {t('profile.phone_number_label') || 'Número com DDD'}
+                  {t('profile.phone_number_label') || 'Phone with area code'}
                 </span>
               </div>
+            </div>
+          </div>
+
+          {/* Date of Birth Field */}
+          <div className="space-y-2">
+            <div className="flex items-center justify-between">
+              <label className="text-xs font-black text-gray-500 uppercase tracking-widest">
+                Date of Birth
+              </label>
+              <span className="text-[10px] text-gray-500 font-mono">MM/DD/YYYY</span>
+            </div>
+            <div className={cn(
+              "flex items-center gap-3 px-4 py-3 bg-black/40 rounded-xl border transition-colors",
+              dobError ? "border-red-500/80 focus-within:border-red-500 ring-1 ring-red-500/20" : "border-white/10 focus-within:border-primary/50"
+            )}>
+              <Calendar size={18} className={dobError ? "text-red-400" : "text-gray-400"} />
+              <input
+                type="tel"
+                inputMode="numeric"
+                autoComplete="bday"
+                value={dateOfBirth}
+                onChange={handleDobChange}
+                onBlur={handleDobBlur}
+                placeholder="MM/DD/YYYY"
+                maxLength={10}
+                className="bg-transparent border-none outline-none flex-1 text-white placeholder:text-gray-600 text-base font-mono sm:font-sans"
+              />
+            </div>
+            {dobError && (
+              <p className="text-[11px] text-red-400 font-medium px-1 flex items-center gap-1.5 animate-in fade-in slide-in-from-top-1 duration-200">
+                <span>⚠️</span> {dobError}
+              </p>
+            )}
+          </div>
+
+          {/* City Field */}
+          <div className="space-y-2">
+            <label className="text-xs font-black text-gray-500 uppercase tracking-widest">
+              City
+            </label>
+            <div className="flex items-center gap-3 px-4 py-3 bg-black/40 rounded-xl border border-white/10 focus-within:border-primary/50 transition-colors">
+              <MapPin size={18} className="text-gray-400" />
+              <input
+                type="text"
+                autoComplete="address-level2"
+                value={city}
+                onChange={(e) => setCity(e.target.value)}
+                placeholder="e.g. Austin, New York, Miami"
+                className="bg-transparent border-none outline-none flex-1 text-white placeholder:text-gray-600 text-base"
+              />
             </div>
           </div>
 

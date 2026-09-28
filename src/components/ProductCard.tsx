@@ -27,7 +27,7 @@ const ProductCard = memo(({ product, isUnlocked, progress = 0, stats, settings, 
     if (!isUnlocked) return {
       color: 'indigo',
       badge: t('badge.locked') || 'MÉTODO PREMIUM',
-      cta: t('cta.unlock') || 'ADQUIRIR AGORA',
+      cta: 'BUY NOW',
       bgGlow: 'group-hover:shadow-[0_0_25px_rgba(168,85,247,0.4)]',
       progressBar: 'bg-indigo-500/30'
     };
@@ -128,19 +128,9 @@ const ProductCard = memo(({ product, isUnlocked, progress = 0, stats, settings, 
             alt={product.title}
             loading="lazy"
             decoding="async"
-            className={cn(
-              "w-full h-full object-cover transition-all duration-500",
-              !isUnlocked 
-                ? "blur-[0.8px] contrast-[1.08] saturate-[0.9] group-hover:blur-[0.3px] group-active:blur-[0.3px] active:blur-[0.3px] group-hover:scale-105" 
-                : "group-hover:scale-105"
-            )}
+            className="w-full h-full object-cover transition-all duration-500 group-hover:scale-105"
             referrerPolicy="no-referrer"
           />
-          
-          {/* Ambient tint overlay for locked items */}
-          {!isUnlocked && (
-            <div className="absolute inset-0 bg-gradient-to-t from-amber-950/25 via-black/15 to-transparent pointer-events-none z-10 transition-opacity duration-300 group-hover:opacity-75" />
-          )}
 
           {/* Subtle Vignette for Contrast */}
           <div className="absolute inset-0 bg-gradient-to-t from-black/50 via-transparent to-black/10 z-20 pointer-events-none" />
@@ -150,15 +140,15 @@ const ProductCard = memo(({ product, isUnlocked, progress = 0, stats, settings, 
             <div className="absolute inset-0 flex items-center justify-center pointer-events-none p-3 text-center z-30">
               {/* Golden Soft Aura Glow */}
               <div className="relative">
-                <div className="absolute -inset-2 rounded-2xl bg-gradient-to-r from-amber-500/20 to-amber-300/20 blur-md opacity-50 group-hover:opacity-80 group-hover:blur-lg transition-all duration-500" />
+                <div className="absolute -inset-2 rounded-2xl bg-gradient-to-r from-amber-500/20 to-amber-300/20 blur-md opacity-40 group-hover:opacity-70 group-hover:blur-lg transition-all duration-500" />
                 
                 {/* Main Lock Badge Container */}
                 <motion.div 
                   initial={{ scale: 0.9, opacity: 0 }}
                   animate={{ scale: 1, opacity: 1 }}
-                  className="relative w-12 h-12 sm:w-15 sm:h-15 rounded-2xl bg-black/35 backdrop-blur-[3px] border border-amber-400/60 flex items-center justify-center text-amber-300 shadow-[0_8px_25px_rgba(0,0,0,0.5),0_0_15px_rgba(245,158,11,0.2)] group-hover:border-amber-300 group-hover:bg-black/45 group-hover:shadow-[0_8px_30px_rgba(245,158,11,0.45)] group-hover:scale-110 transition-all duration-500"
+                  className="relative w-11 h-11 sm:w-14 sm:h-14 rounded-2xl bg-black/60 border border-amber-400/80 flex items-center justify-center text-amber-300 shadow-[0_8px_25px_rgba(0,0,0,0.7),0_0_15px_rgba(245,158,11,0.25)] group-hover:border-amber-300 group-hover:bg-black/70 group-hover:shadow-[0_8px_30px_rgba(245,158,11,0.45)] group-hover:scale-110 transition-all duration-500"
                 >
-                  <Lock size={26} strokeWidth={2.2} className="text-amber-300 drop-shadow-[0_0_12px_rgba(251,191,36,0.9)] sm:size-[30px]" />
+                  <Lock size={24} strokeWidth={2.2} className="text-amber-300 drop-shadow-[0_0_10px_rgba(251,191,36,0.9)] sm:size-[28px]" />
                 </motion.div>
               </div>
             </div>

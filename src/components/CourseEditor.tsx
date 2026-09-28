@@ -49,7 +49,7 @@ import CoursePreviewViewer from './CoursePreviewViewer';
 import { AdminChecklistEditor } from './AdminChecklistEditor';
 import { AdminHtmlAppEditor } from './AdminHtmlAppEditor';
 import { normalizePdfUrl } from '../utils/pdfHelper';
-import HtmlAppViewer, { SAMPLE_SALES_MODAL_HTML, SAMPLE_SALES_PREVIEW_HTML } from './HtmlAppViewer';
+import { SAMPLE_SALES_PREVIEW_HTML } from './HtmlAppViewer';
 import { AiLessonGeneratorModal } from './AiLessonGeneratorModal';
 import { AiCourseGeneratorModal } from './AiCourseGeneratorModal';
 import { AiCourseEditModal } from './AiCourseEditModal';
@@ -348,7 +348,7 @@ export default function CourseEditor({
     preview_bonus_title: 'Benefícios Exclusivos Inclusos',
     preview_url: '',
     preview_text: '',
-    preview_enabled: false,
+    preview_enabled: true,
     premium_badge_text: '',
     offer_badge_text: '',
     social_proof: '',
@@ -362,7 +362,7 @@ export default function CourseEditor({
     hotmart_product_id: '',
     preview_title: '',
     preview_subtitle: '',
-    preview_type: 'video',
+    preview_type: 'html',
     preview_video_url: '',
     preview_pdf_url: '',
     pdf_url: '',
@@ -590,7 +590,8 @@ export default function CourseEditor({
         modal_type: funnelParsed.modal_type,
         modal_html: funnelParsed.modal_html,
         benefits: funnelParsed.benefits,
-        preview_type: funnelParsed.preview_type || (effectivePdfUrl ? 'pdf' : 'video'),
+        preview_enabled: true,
+        preview_type: funnelParsed.preview_type || 'html',
         preview_rich_text: funnelParsed.preview_rich_text
       });
 
@@ -741,7 +742,7 @@ export default function CourseEditor({
         cta_text: course.cta_text || '',
         preview_url: course.preview_url || '',
         preview_text: course.preview_text || '',
-        preview_enabled: course.preview_enabled || false,
+        preview_enabled: true,
         premium_cover_url: course.premium_cover_url || '',
         premium_badge_text: course.premium_badge_text || '',
         offer_badge_text: course.offer_badge_text || '',
@@ -873,7 +874,7 @@ export default function CourseEditor({
           cta_text: course.cta_text || '',
           preview_url: course.preview_url || '',
           preview_text: course.preview_text || '',
-          preview_enabled: course.preview_enabled || false,
+          preview_enabled: true,
           premium_cover_url: course.premium_cover_url || '',
           premium_badge_text: course.premium_badge_text || '',
           offer_badge_text: course.offer_badge_text || '',
@@ -1504,242 +1505,30 @@ export default function CourseEditor({
             </div>
           </section>
 
-          {/* Section 2: Configuração Estratégica de Venda */}
+          {/* Section 2: Configuração da Página de Preview */}
           {!course.is_free && !course.is_bonus && (
-            <section className="space-y-12 animate-in fade-in slide-in-from-top-4 duration-500">
+            <section className="space-y-8 animate-in fade-in slide-in-from-top-4 duration-500">
               <div className="flex items-center gap-4">
-                <div className="w-12 h-12 rounded-2xl bg-amber-600/10 flex items-center justify-center text-amber-500 border border-amber-500/20">
-                  <Sparkles size={22} />
+                <div className="w-12 h-12 rounded-2xl bg-primary/10 flex items-center justify-center text-primary border border-primary/20">
+                  <PlayCircle size={22} />
                 </div>
                 <div>
-                  <h3 className="text-2xl font-black uppercase tracking-tighter italic text-white leading-none">Configuração do Funil de Vendas</h3>
-                  <p className="text-[10px] font-bold text-gray-500 uppercase tracking-widest mt-1">Configure o modal de compra e a página de preview</p>
+                  <h3 className="text-2xl font-black uppercase tracking-tighter italic text-white leading-none">Configuração da Página de Preview</h3>
+                  <p className="text-[10px] font-bold text-gray-500 uppercase tracking-widest mt-1">Configure a página de apresentação e vendas exibida ao usuário</p>
                 </div>
               </div>
 
-              {/* STEP 1: COMPRA MODAL */}
-              <div className="bg-zinc-900/40 rounded-[40px] border border-white/10 p-10 space-y-10 shadow-2xl relative overflow-hidden group">
-                <div className="absolute top-0 right-0 w-64 h-64 bg-amber-600/5 blur-[100px] pointer-events-none group-hover:bg-amber-600/10 transition-colors" />
-                
-                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-6 border-b border-white/5">
-                  <div className="flex items-center gap-3">
-                    <div className="w-8 h-8 rounded-full bg-amber-500 text-black flex items-center justify-center font-black text-xs shrink-0">1</div>
-                    <div>
-                      <h4 className="text-lg font-black uppercase italic tracking-tighter text-white">Configuração do Modal de Venda</h4>
-                      <p className="text-[9px] font-bold text-gray-500 uppercase tracking-widest">Informações que aparecem ao clicar no curso bloqueado</p>
-                    </div>
-                  </div>
-
-                  {/* Mode Selector: Padrão vs HTML */}
-                  <div className="flex items-center bg-black/60 p-1 rounded-xl border border-white/10 gap-1 shrink-0">
-                    <button
-                      type="button"
-                      onClick={() => setCourse({ ...course, modal_type: 'standard' })}
-                      className={`px-4 py-2 rounded-lg font-black uppercase text-[10px] tracking-wider transition-all cursor-pointer ${
-                        (course.modal_type || 'standard') === 'standard'
-                          ? 'bg-amber-500 text-black shadow-lg shadow-amber-500/20'
-                          : 'text-gray-400 hover:text-white hover:bg-white/5'
-                      }`}
-                    >
-                      📦 Padrão (Bullets)
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => setCourse({ ...course, modal_type: 'html' })}
-                      className={`px-4 py-2 rounded-lg font-black uppercase text-[10px] tracking-wider transition-all cursor-pointer ${
-                        course.modal_type === 'html'
-                          ? 'bg-amber-500 text-black shadow-lg shadow-amber-500/20'
-                          : 'text-gray-400 hover:text-white hover:bg-white/5'
-                      }`}
-                    >
-                      🌐 HTML Nativo
-                    </button>
-                  </div>
-                </div>
-
-                {course.modal_type === 'html' ? (
-                  <div className="grid lg:grid-cols-2 gap-12 items-start">
-                    <div className="space-y-6">
-                      <AdminHtmlAppEditor
-                        htmlContent={course.modal_html || ''}
-                        onChange={val => setCourse({ ...course, modal_html: val })}
-                        themeColor="amber"
-                        title="Modal de Venda em HTML Customizado"
-                        subtitle="Cole aqui o código HTML completo da oferta do seu modal de vendas ou uma URL externa (https://). Dispare o evento window.parent.postMessage({ type: 'purchase' }, '*') no clique do botão de compra para abrir o checkout automaticamente."
-                        sampleButtonLabel="📋 Exemplo de Modal em HTML"
-                        sampleHtml={SAMPLE_SALES_MODAL_HTML}
-                        placeholder={`<!DOCTYPE html>
-<html lang="pt-BR">
-<head>
-  <meta charset="UTF-8">
-  <title>Oferta Especial</title>
-</head>
-<body>
-  <!-- Conteúdo de venda do seu modal aqui -->
-  <button onclick="window.parent.postMessage({ type: 'purchase' }, '*')">
-    Comprar Agora
-  </button>
-</body>
-</html>`}
-                      />
-                    </div>
-
-                    <div className="space-y-4">
-                      <label className="text-[10px] font-black text-gray-500 uppercase tracking-widest ml-1 text-center block">Pré-visualização do Modal HTML</label>
-                      <div className="bg-zinc-950 rounded-[2.5rem] border border-white/10 overflow-hidden shadow-2xl relative max-w-[340px] mx-auto scale-95 origin-top p-3 max-h-[540px] overflow-y-auto custom-scrollbar">
-                        <HtmlAppViewer
-                          htmlContent={course.modal_html || SAMPLE_SALES_MODAL_HTML}
-                          title={course.title || 'Modal de Venda'}
-                          className="w-full"
-                        />
-                      </div>
-                    </div>
-                  </div>
-                ) : (
-                  <div className="grid lg:grid-cols-2 gap-12">
-                  <div className="space-y-8">
-                    <div className="space-y-2">
-                      <label className="text-[10px] font-black text-gray-500 uppercase tracking-widest ml-1">Subtítulo Emocional (Modal)</label>
-                      <input 
-                        type="text" 
-                        value={course.subtitle || ''}
-                        onChange={e => setCourse({...course, subtitle: e.target.value})}
-                        className="w-full bg-black/40 border border-white/10 rounded-2xl px-6 py-4 text-white focus:border-amber-500 outline-none transition-all placeholder:text-gray-700"
-                        placeholder="Ex: A jornada definitiva para sua autonomia"
-                      />
-                    </div>
-
-                    <div className="space-y-2">
-                      <label className="text-[10px] font-black text-gray-500 uppercase tracking-widest ml-1">Benefícios / Bullets (Um por linha)</label>
-                      <textarea 
-                        value={course.benefits?.join('\n') || ''}
-                        onChange={e => setCourse({...course, benefits: e.target.value.split('\n').filter(b => b.trim() !== '')})}
-                        className="w-full bg-black/40 border border-white/10 rounded-2xl px-6 py-4 text-white focus:border-amber-500 outline-none transition-all min-h-[120px] resize-none placeholder:text-gray-700"
-                        placeholder="Ex: Acesso Vitalício&#10;Suporte 24h&#10;Certificado Incluso"
-                      />
-                    </div>
-
-                    <div className="grid grid-cols-2 gap-6">
-                      <div className="space-y-2">
-                        <label className="text-[10px] font-black text-gray-500 uppercase tracking-widest ml-1">Texto do Botão (CTA)</label>
-                        <input 
-                          type="text" 
-                          value={course.cta_text || ''}
-                          onChange={e => setCourse({...course, cta_text: e.target.value})}
-                          className="w-full bg-black/40 border border-white/10 rounded-2xl px-6 py-4 text-white focus:border-amber-500 outline-none transition-all placeholder:text-gray-700 font-bold"
-                          placeholder="LIBERAR ACESSO"
-                        />
-                      </div>
-                      <div className="space-y-2">
-                        <label className="text-[10px] font-black text-gray-500 uppercase tracking-widest ml-1">Preço Antigo (Riscado)</label>
-                        <input 
-                          type="text" 
-                          value={formatPrice(course.old_price || 0)}
-                          onChange={e => {
-                            const val = parseInt(e.target.value.replace(/\D/g, '')) || 0;
-                            setCourse({...course, old_price: val});
-                          }}
-                          className="w-full bg-black/40 border border-white/10 rounded-2xl px-6 py-4 text-white focus:border-amber-500 outline-none transition-all text-center font-bold"
-                        />
-                      </div>
-                    </div>
-
-                    <div className="space-y-4">
-                      <label className="text-[10px] font-black text-gray-500 uppercase tracking-widest ml-1">Capa Personalizada para o Modal</label>
-                      <div className="grid grid-cols-[120px_1fr] gap-4 bg-black/40 p-3 rounded-2xl border border-white/5">
-                        <div 
-                          onClick={() => {
-                            setCropperType('premium');
-                            setCropperAspect(16/9);
-                            setCropperOpen(true);
-                          }}
-                          className="aspect-video rounded-xl bg-zinc-900 overflow-hidden relative border border-white/5 cursor-pointer group/premiumcover flex items-center justify-center"
-                        >
-                          {(course.premium_cover_url?.trim() || course.cover_url?.trim()) ? (
-                            <img 
-                              src={course.premium_cover_url?.trim() || course.cover_url?.trim()} 
-                              className="w-full h-full object-cover transition-transform group-hover/premiumcover:scale-105" 
-                              referrerPolicy="no-referrer"
-                              onError={(e) => (e.currentTarget.src = 'https://via.placeholder.com/400x225?text=Preview')}
-                            />
-                          ) : (
-                            <div className="flex flex-col items-center justify-center text-gray-600 p-2 text-center">
-                              <ImageIcon size={20} className="opacity-30 mb-1" />
-                              <span className="text-[8px] font-black uppercase text-gray-500">Sem Capa</span>
-                            </div>
-                          )}
-                          <div className="absolute inset-0 bg-black/60 opacity-0 group-hover/premiumcover:opacity-100 flex items-center justify-center transition-opacity text-[8px] font-black text-white uppercase tracking-widest text-center px-1">
-                            Ajustar
-                          </div>
-                        </div>
-                        <div className="space-y-2 flex flex-col justify-center">
-                          <button
-                            type="button"
-                            onClick={() => {
-                              setCropperType('premium');
-                              setCropperAspect(16/9);
-                              setCropperOpen(true);
-                            }}
-                            className="w-full py-2 bg-amber-500/10 hover:bg-amber-500/20 text-amber-400 rounded-lg text-[9px] font-black uppercase tracking-widest transition-colors flex items-center justify-center gap-2 border border-amber-500/20"
-                          >
-                            <ImageIcon size={12} /> Ajustar Capa (16:9)
-                          </button>
-                          <input 
-                            type="text" 
-                            value={course.premium_cover_url || ''}
-                            onChange={e => setCourse({...course, premium_cover_url: e.target.value})}
-                            className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-2 text-[10px] text-gray-400 focus:border-amber-500 outline-none font-mono"
-                            placeholder="Ou digite a URL direta..."
-                          />
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-
-                  <div className="space-y-6">
-                    <label className="text-[10px] font-black text-gray-500 uppercase tracking-widest ml-1 text-center block">Visualização do Modal</label>
-                    <div className="bg-zinc-950 rounded-[2.5rem] border border-white/10 overflow-hidden shadow-2xl relative max-w-[300px] mx-auto scale-95 origin-top">
-                      <div className="relative aspect-video w-full bg-zinc-900 overflow-hidden">
-                        <img 
-                          src={course.premium_cover_url || course.cover_url || 'https://picsum.photos/seed/preview/800/450'} 
-                          className="w-full h-full object-cover opacity-80" 
-                          referrerPolicy="no-referrer"
-                        />
-                        <div className="absolute inset-0 bg-gradient-to-t from-zinc-950 via-transparent to-transparent opacity-60" />
-                      </div>
-                      <div className="p-5 flex flex-col items-center text-center space-y-3">
-                         <h4 className="text-sm font-black text-white uppercase italic tracking-tighter truncate w-full">{course.title || 'Título do Curso'}</h4>
-                         <p className="text-[7px] font-bold text-gray-500 italic line-clamp-1 opacity-70 uppercase tracking-tight">{course.subtitle || 'Subtítulo do curso'}</p>
-                         
-                         <div className="grid grid-cols-2 gap-2 w-full py-2 border-y border-white/5">
-                            {(course.benefits?.length ? course.benefits : ['Acesso Vitalício', 'Certificado']).slice(0, 4).map((b, i) => (
-                              <div key={i} className="flex items-center gap-1.5 overflow-hidden text-left">
-                                <Check size={6} className="text-green-500" />
-                                <span className="text-[6px] font-bold text-gray-400 truncate uppercase tracking-tight">{b}</span>
-                              </div>
-                            ))}
-                         </div>
-
-                         <div className="text-lg font-black text-white italic tracking-tighter leading-none mt-2">{(course.price / 100).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}</div>
-                         <div className="w-full py-2 bg-amber-500 rounded-lg text-[8px] font-black text-black uppercase tracking-[0.1em] italic">
-                           {course.cta_text || 'LIBERAR ACESSO'}
-                         </div>
-                      </div>
-                    </div>
-                  </div>
-                </div>
-                )}
-              </div>
-
-              {/* STEP 2: PÁGINA DE PREVIEW */}
+              {/* PÁGINA DE PREVIEW */}
               <div className="bg-zinc-900/40 rounded-[40px] border border-white/10 p-10 space-y-10 shadow-2xl relative overflow-hidden group">
                 <div className="absolute top-0 right-0 w-64 h-64 bg-primary/5 blur-[100px] pointer-events-none group-hover:bg-primary/10 transition-colors" />
                 
-                <div className="flex items-center justify-between">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-6 border-b border-white/5">
                   <div className="flex items-center gap-3">
-                    <div className="w-8 h-8 rounded-full bg-primary text-white flex items-center justify-center font-black text-xs">2</div>
+                    <div className="p-2 bg-primary/10 rounded-xl text-primary border border-primary/20">
+                      <PlayCircle size={18} />
+                    </div>
                     <div>
-                      <h4 className="text-lg font-black uppercase italic tracking-tighter text-white">Configuração da Página de Preview</h4>
+                      <h4 className="text-lg font-black uppercase italic tracking-tighter text-white">Página de Preview</h4>
                       <p className="text-[9px] font-bold text-gray-500 uppercase tracking-widest">Informações detalhadas da página de venda</p>
                     </div>
                   </div>
@@ -1751,17 +1540,13 @@ export default function CourseEditor({
                     >
                       <Sparkles size={14} className="text-amber-400" /> OTIMIZAR COPY COM IA
                     </button>
-                    <button 
-                      onClick={() => setCourse({...course, preview_enabled: !course.preview_enabled})}
-                      className={`h-10 px-6 rounded-xl border transition-all flex items-center gap-3 font-black text-[10px] tracking-widest ${course.preview_enabled ? 'bg-primary/10 border-primary/30 text-primary' : 'bg-white/5 border-white/10 text-gray-500'}`}
-                    >
-                      <PlayCircle size={16} /> {course.preview_enabled ? 'HABILITADO' : 'DESABILITADO'}
-                    </button>
+                    <div className="h-10 px-5 rounded-xl border border-primary/30 bg-primary/10 text-primary flex items-center gap-2 font-black text-[10px] tracking-widest uppercase shadow-sm">
+                      <Check size={14} className="text-primary" /> SEMPRE HABILITADA
+                    </div>
                   </div>
                 </div>
 
-                {course.preview_enabled && (
-                  <div className="space-y-8 animate-in fade-in zoom-in-95 duration-300">
+                <div className="space-y-8 animate-in fade-in zoom-in-95 duration-300">
                     {/* Seletor de Formato da Página de Preview - HTML é a PRIMEIRA opção */}
                     <div className="p-4 sm:p-5 bg-black/40 border border-white/10 rounded-2xl space-y-3">
                       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
@@ -1783,7 +1568,7 @@ export default function CourseEditor({
 
                       <div className="flex bg-black/60 p-1.5 rounded-xl border border-white/5 gap-1.5">
                         {(['html', 'video', 'pdf', 'link'] as const).map(type => {
-                          const isSelected = (type === 'html' && (course.preview_type === 'html' || course.preview_type === 'text')) || course.preview_type === type;
+                          const isSelected = (type === 'html' && (course.preview_type === 'html' || course.preview_type === 'text' || !course.preview_type)) || course.preview_type === type;
                           return (
                             <button
                               key={type}
@@ -1807,7 +1592,7 @@ export default function CourseEditor({
                     </div>
 
                     {/* SE FOR HTML: Abre SOMENTE o espaço de colar o código HTML, SEM as outras opções */}
-                    {(course.preview_type === 'html' || course.preview_type === 'text') ? (
+                    {(course.preview_type === 'html' || course.preview_type === 'text' || !course.preview_type) ? (
                       <div className="p-5 sm:p-7 bg-black/40 border border-white/10 rounded-3xl animate-in fade-in slide-in-from-top-4 duration-300 space-y-5">
                         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-4 border-b border-white/5">
                           <div>
@@ -2142,7 +1927,6 @@ export default function CourseEditor({
                       </div>
                     )}
                   </div>
-                )}
               </div>
             </section>
           )}

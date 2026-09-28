@@ -388,7 +388,7 @@ export default function PWAInstallModal({ isOpen, onClose, onInstall }: PWAInsta
                                 return;
                               }
                             }
-                            const success = await promptInstall();
+                            const success = await promptPWAInstall();
                             if (success) {
                               onClose();
                             }
@@ -439,7 +439,7 @@ export default function PWAInstallModal({ isOpen, onClose, onInstall }: PWAInsta
                               return;
                             }
                           }
-                          const success = await promptInstall();
+                          const success = await promptPWAInstall();
                           if (success) {
                             onClose();
                             return;

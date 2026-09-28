@@ -72,7 +72,7 @@ export function parseCourseHtmlFunnel(rawCourse: Partial<Course> | null | undefi
     modal_type: isModalHtml ? 'html' : 'standard',
     modal_html: modalHtml,
     benefits: isModalHtml ? cleanBenefits.filter(b => !b.startsWith(MODAL_HTML_MARKER)) : cleanBenefits,
-    preview_type: isPreviewHtml ? 'html' : (rawCourse.preview_type || 'video'),
+    preview_type: isPreviewHtml ? 'html' : (rawCourse.preview_type || 'html'),
     preview_rich_text: cleanPreviewRichText
   };
 }
@@ -103,7 +103,7 @@ export function serializeCourseHtmlFunnel(course: Partial<Course>) {
   const isPreviewHtml = course.preview_type === 'html';
   const cleanPreviewHtml = (course.preview_rich_text || '').trim();
 
-  const finalPreviewType = isPreviewHtml ? 'text' : (course.preview_type || 'video');
+  const finalPreviewType = isPreviewHtml ? 'text' : (course.preview_type || 'html');
   const finalPreviewRichText = isPreviewHtml
     ? `${PREVIEW_HTML_MARKER}\n${cleanPreviewHtml}`
     : (course.preview_rich_text || '');

@@ -7127,61 +7127,6 @@ export default function AdminPanel({ user }: AdminPanelProps) {
                             </div>
                           </div>
                         </div>
-
-                        <div className="bg-zinc-900/50 rounded-2xl border border-white/10 p-8 space-y-8">
-                          <div className="flex items-center gap-3">
-                            <div className="p-2 bg-yellow-500/20 rounded-lg text-yellow-500">
-                              <Star size={20} />
-                            </div>
-                            <h4 className="font-bold text-white">Modal de Venda (Checkout)</h4>
-                          </div>
-
-                          <div className="grid grid-cols-1 lg:grid-cols-2 gap-12">
-                            <div className="space-y-6">
-                              {[
-                                { key: 'course.premium_content', label: 'Badge Premium' },
-                                { key: 'course.lifetime_access', label: 'Texto Acesso' },
-                                { key: 'course.unlock_button', label: 'Botão Comprar' },
-                                { key: 'course.secure_payment', label: 'Texto Rodapé Seguro' },
-                                { key: 'course.purchase_unavailable', label: 'Erro: Compra Indisponível' }
-                              ].map(field => (
-                                <div key={field.key} className="space-y-2">
-                                  <label className="text-xs font-black text-gray-500 uppercase tracking-widest">{field.label}</label>
-                                  <input 
-                                    type="text" 
-                                    value={draftCustomTexts[field.key] || settings.custom_texts?.[field.key] || ''}
-                                    placeholder={field.label}
-                                    onChange={(e) => setDraftCustomTexts({ ...draftCustomTexts, [field.key]: e.target.value })}
-                                    className="w-full bg-black border border-white/10 rounded-xl px-4 py-3 text-sm text-white focus:border-blue-500 outline-none"
-                                  />
-                                </div>
-                              ))}
-                            </div>
-
-                            <div className="space-y-4">
-                              <label className="text-xs font-black text-gray-500 uppercase tracking-widest">Preview do Modal</label>
-                              <div className="p-6 rounded-3xl border border-white/10 space-y-4 shadow-2xl" style={{ backgroundColor: localSettings?.background_color || settings.background_color || '#0f0f0f' }}>
-                                <div className="aspect-video bg-white/5 rounded-xl border border-white/5" />
-                                <div className="space-y-2">
-                                  <div className="flex items-center gap-2 text-[8px] font-black text-primary uppercase tracking-widest italic">
-                                    <Star size={10} className="fill-current" /> {draftCustomTexts['course.premium_content'] || 'CONTEÚDO PREMIUM'}
-                                  </div>
-                                  <div className="h-6 w-3/4 bg-white/10 rounded-lg" />
-                                  <div className="flex gap-2">
-                                     <div className="h-4 w-12 bg-white/10 rounded-full" />
-                                     <div className="h-4 w-20 bg-white/5 border border-white/5 rounded-full" />
-                                  </div>
-                                </div>
-                                <div className="h-12 bg-blue-600 rounded-xl flex items-center justify-center text-[10px] font-black text-white uppercase tracking-widest">
-                                  {draftCustomTexts['course.unlock_button'] || 'LIBERAR ACESSO AGORA'}
-                                </div>
-                                <p className="text-[8px] text-gray-600 font-bold uppercase text-center tracking-widest">
-                                  {draftCustomTexts['course.secure_payment'] || 'Pagamento 100% Seguro • Acesso Imediato'}
-                                </p>
-                              </div>
-                            </div>
-                          </div>
-                        </div>
                       </div>
                     )}
 

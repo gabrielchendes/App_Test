@@ -476,13 +476,15 @@ export default function AuthForm() {
           </div>
         </div>
       </div>
-      <React.Suspense fallback={null}>
-        <PWAInstallModal
-          isOpen={isPWAModalOpen}
-          onClose={() => setIsPWAModalOpen(false)}
-          onInstall={promptInstall}
-        />
-      </React.Suspense>
+      {isPWAModalOpen && (
+        <React.Suspense fallback={null}>
+          <PWAInstallModal
+            isOpen={isPWAModalOpen}
+            onClose={() => setIsPWAModalOpen(false)}
+            onInstall={promptInstall}
+          />
+        </React.Suspense>
+      )}
     </div>
   );
 }
