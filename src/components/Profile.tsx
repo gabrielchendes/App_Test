@@ -1,4 +1,4 @@
-import React, { useState, useRef } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import { User, Lock, Mail, Save, Loader2, Camera, Bell, LogOut, Download, Smartphone, Calendar, MapPin } from 'lucide-react';
 import { GlowingSpinner } from './GlowingSpinner';
 import { supabase } from '../lib/supabase';
@@ -130,6 +130,49 @@ export default function Profile({ user, canInstall, onInstall }: ProfileProps) {
     permission: typeof Notification !== 'undefined' ? Notification.permission : 'not-supported',
     tokenGenerated: false
   });
+
+  // Sync profile data from profiles table if columns exist
+  useEffect(() => {
+    let isMounted = true;
+    const loadProfileData = async () => {
+      try {
+        const { data, error } = await supabase
+          .from('profiles')
+          .select('full_name, avatar_url, phone, date_of_birth, city')
+          .eq('id', user.id)
+          .maybeSingle();
+
+        if (!error && data && isMounted) {
+          if (data.full_name) setFullName(data.full_name);
+          if (data.avatar_url) setAvatarUrl(data.avatar_url);
+          if (data.city) setCity(data.city);
+          if (data.date_of_birth) setDateOfBirth(formatDateOfBirth(data.date_of_birth));
+          if (data.phone) {
+            const p = data.phone.trim();
+            if (p.startsWith('+')) {
+              const match = p.match(/^\+(\d{1,4})\s*(.*)$/);
+              if (match) {
+                setCountryCode(match[1] || '1');
+                setPhoneBody(formatUSPhone(match[2] || ''));
+              }
+            } else {
+              setPhoneBody(formatUSPhone(p));
+            }
+          }
+        }
+      } catch (err) {
+        // Silently ignore if profiles query fails
+      }
+    };
+
+    if (user?.id) {
+      loadProfileData();
+    }
+
+    return () => {
+      isMounted = false;
+    };
+  }, [user?.id]);
 
   const handlePhoneChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const inputVal = e.target.value;
@@ -469,7 +512,6 @@ export default function Profile({ user, canInstall, onInstall }: ProfileProps) {
               <label className="text-xs font-black text-gray-500 uppercase tracking-widest">
                 Date of Birth
               </label>
-              <span className="text-[10px] text-gray-500 font-mono">MM/DD/YYYY</span>
             </div>
             <div className={cn(
               "flex items-center gap-3 px-4 py-3 bg-black/40 rounded-xl border transition-colors",
@@ -507,7 +549,7 @@ export default function Profile({ user, canInstall, onInstall }: ProfileProps) {
                 autoComplete="address-level2"
                 value={city}
                 onChange={(e) => setCity(e.target.value)}
-                placeholder="e.g. Austin, New York, Miami"
+                placeholder="e.g. Dallas, Orlando, Atlanta"
                 className="bg-transparent border-none outline-none flex-1 text-white placeholder:text-gray-600 text-base"
               />
             </div>

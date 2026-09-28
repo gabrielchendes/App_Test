@@ -1,7 +1,7 @@
 {
   "id": "/",
   "name": "Missing Trigger",
-  "short_name": "Trigger",
+  "short_name": "Missing Trigger",
   "description": "Exclusive members area with premium content.",
   "start_url": "/",
   "scope": "/",
