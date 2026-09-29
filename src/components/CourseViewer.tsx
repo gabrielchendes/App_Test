@@ -535,6 +535,39 @@ export default function CourseViewer({ courseId, userId, onClose, initialCourse,
     );
   };
 
+  const shouldShowPlayIcon = (ch: Chapter) => {
+    // If explicitly disabled on chapter
+    if (ch.show_play_icon === false || ch.custom_icon === 'none' || ch.custom_icon === 'hidden') return false;
+    // If explicitly enabled on chapter
+    if (ch.show_play_icon === true) return true;
+    // If chapter has a custom icon specifically chosen
+    if (ch.custom_icon && ch.custom_icon !== 'default' && ch.custom_icon !== 'none') return true;
+    // If global setting is enabled in AdminPanel
+    if (settings?.show_lesson_play_icon) return true;
+    // Default: disabled
+    return false;
+  };
+
+  const shouldShowDuration = (ch: Chapter) => {
+    // If explicitly disabled on chapter
+    if (ch.show_duration === false) return false;
+
+    // Check minutes value
+    const minutes = Number(ch.duration_minutes);
+
+    // If global setting is enabled in AdminPanel
+    if (settings?.show_lesson_duration) {
+      return !isNaN(minutes) && minutes > 0;
+    }
+
+    // If a duration greater than 0 was configured in the adminpanel: show it!
+    if (!isNaN(minutes) && minutes > 0) {
+      return true;
+    }
+
+    // Default (0, empty, null, undefined): disabled / hidden
+    return false;
+  };
 
   if (errorMessage && !course) {
     return (
@@ -772,6 +805,7 @@ export default function CourseViewer({ courseId, userId, onClose, initialCourse,
                         {moduleChapters.map((chapter, idx) => {
                           const isCompleted = progress.find(p => p.chapter_id === chapter.id)?.completed;
                           const isChapterHtmlApp = chapter.content_type === 'html' || chapter.content_type === 'html_app' || isHtmlAppChapter(chapter);
+                          const isSelected = activeChapter?.id === chapter.id;
                           
                           return (
                             <motion.button
@@ -785,13 +819,32 @@ export default function CourseViewer({ courseId, userId, onClose, initialCourse,
                             }}
                             className="group relative flex flex-col text-left transition-all w-full"
                           >
-                            <div className={`relative aspect-square rounded-2xl sm:rounded-[24px] overflow-hidden mb-3 sm:mb-5 border shadow-2xl bg-zinc-950 transition-all duration-500 w-full ${
-                              isCompleted 
-                                ? 'border-emerald-500/40 ring-1 ring-emerald-500/30 shadow-[0_10px_30px_rgba(16,185,129,0.15)]' 
-                                : 'border-white/15 ring-1 ring-inset ring-white/5 group-hover:border-primary/60 group-hover:ring-primary/30 group-hover:shadow-[0_16px_40px_rgba(244,63,94,0.25),0_0_20px_rgba(255,255,255,0.05)]'
-                            }`}>
-                              {/* Top Specular Light Beam */}
-                              <div className="absolute top-0 inset-x-3 h-[1px] bg-gradient-to-r from-transparent via-white/30 to-transparent z-30 pointer-events-none group-hover:via-primary/50 transition-colors" />
+                            <div className="relative w-full mb-3 sm:mb-5">
+                              {/* Ambient Outer Border Glow (Golden Community Theme) */}
+                              <div className={`absolute -inset-[2px] sm:-inset-[3px] rounded-2xl sm:rounded-[26px] pointer-events-none transition-all duration-500 blur-[8px] ${
+                                isSelected
+                                  ? isCompleted
+                                    ? 'opacity-100 bg-emerald-400/60 shadow-[0_0_30px_rgba(16,185,129,0.7)]'
+                                    : 'opacity-100 bg-gradient-to-r from-amber-400/80 via-yellow-300/90 to-amber-500/80 shadow-[0_0_35px_rgba(245,158,11,0.85),0_0_15px_rgba(251,191,36,0.5)]'
+                                  : isCompleted
+                                    ? 'opacity-30 group-hover:opacity-95 bg-emerald-500/25 group-hover:bg-emerald-400/60 group-hover:shadow-[0_0_24px_rgba(16,185,129,0.55)]'
+                                    : 'opacity-35 group-hover:opacity-100 bg-gradient-to-b from-amber-400/30 via-amber-500/20 to-amber-600/10 group-hover:from-amber-400/75 group-hover:via-yellow-300/80 group-hover:to-amber-500/75 group-hover:shadow-[0_0_32px_rgba(245,158,11,0.65)]'
+                              }`} />
+
+                              <div className={`relative aspect-square rounded-2xl sm:rounded-[24px] overflow-hidden border-[1.5px] bg-zinc-950 transition-all duration-500 w-full ${
+                                isSelected 
+                                  ? isCompleted
+                                    ? 'border-emerald-300 ring-2 ring-emerald-400/60 shadow-[0_0_28px_rgba(16,185,129,0.45)]'
+                                    : 'border-amber-300 ring-2 ring-amber-400/80 shadow-[0_0_35px_rgba(245,158,11,0.6),0_0_15px_rgba(254,240,138,0.5)]'
+                                  : isCompleted 
+                                    ? 'border-emerald-400/50 ring-1 ring-emerald-500/20 shadow-[0_0_16px_rgba(16,185,129,0.25)] group-hover:border-emerald-300 group-hover:ring-2 group-hover:ring-emerald-400/60 group-hover:shadow-[0_0_28px_rgba(16,185,129,0.45)]' 
+                                    : 'border-amber-400/40 ring-1 ring-inset ring-amber-400/20 shadow-[0_8px_24px_rgba(0,0,0,0.6),0_0_16px_rgba(245,158,11,0.15)] group-hover:border-amber-300 group-hover:ring-2 group-hover:ring-amber-400/70 group-hover:shadow-[0_0_32px_rgba(245,158,11,0.55),0_0_14px_rgba(254,240,138,0.4)]'
+                              }`}>
+                                {/* Top Specular Golden Light Beam (Matching Community Post Header Gleam) */}
+                                <div className={`absolute top-0 inset-x-3 h-[1.5px] bg-gradient-to-r from-transparent ${isSelected ? 'via-amber-200/90' : 'via-amber-300/60 group-hover:via-amber-200/90'} to-transparent z-30 pointer-events-none transition-colors duration-300`} />
+                                
+                                {/* Bottom Subtle Golden Light Glow */}
+                                <div className="absolute bottom-0 inset-x-6 h-[1px] bg-gradient-to-r from-transparent via-amber-400/25 to-transparent z-30 pointer-events-none" />
 
                               {chapter.cover_url && chapter.cover_url.trim() ? (
                                 <img 
@@ -811,22 +864,20 @@ export default function CourseViewer({ courseId, userId, onClose, initialCourse,
                               {/* Crisp Subtle Gradient to ensure text & badges pop without darkening the artwork */}
                               <div className="absolute inset-0 bg-gradient-to-t from-black/60 via-transparent to-black/20 pointer-events-none" />
 
-                              <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
-                                <div className={`w-11 h-11 sm:w-14 sm:h-14 rounded-2xl border flex items-center justify-center transition-all duration-500 shadow-xl backdrop-blur-md ${
-                                  isCompleted 
-                                    ? 'bg-emerald-500 border-2 border-emerald-300 text-white scale-100 shadow-[0_0_25px_rgba(16,185,129,0.7)] opacity-100' 
-                                    : isChapterHtmlApp
-                                    ? 'bg-amber-950/70 border-amber-500/40 text-amber-300 group-hover:bg-amber-600 group-hover:border-amber-400 group-hover:text-white group-hover:scale-110 group-hover:shadow-[0_0_20px_rgba(245,158,11,0.6)]'
-                                    : 'bg-black/50 border-white/30 text-white group-hover:bg-primary group-hover:border-primary group-hover:scale-110 group-hover:shadow-[0_0_20px_rgba(244,63,94,0.6)]'
-                                }`}>
-                                  {isCompleted ? (
-                                    <CheckCircle2 className="w-7 h-7 sm:w-8 sm:h-8 text-white drop-shadow-md opacity-100" strokeWidth={2.5} />
-                                  ) : (
-                                    getChapterIconComponent(chapter, "w-5 h-5 sm:w-6 sm:h-6 text-white drop-shadow-md", true)
-                                  )}
+                              {/* Center Play Symbol (Excluded when completed, disabled by default unless activated) */}
+                              {!isCompleted && shouldShowPlayIcon(chapter) && (
+                                <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
+                                  <div className={`w-11 h-11 sm:w-14 sm:h-14 rounded-2xl border flex items-center justify-center transition-all duration-500 shadow-md ${
+                                    isChapterHtmlApp
+                                      ? 'bg-amber-950/20 border-amber-500/25 text-amber-200 group-hover:bg-amber-600/35 group-hover:border-amber-400 group-hover:text-white group-hover:scale-105'
+                                      : 'bg-black/20 border-white/20 text-white/90 group-hover:bg-black/40 group-hover:border-primary/60 group-hover:text-white group-hover:scale-105'
+                                  }`}>
+                                    {getChapterIconComponent(chapter, "w-5 h-5 sm:w-6 sm:h-6 text-white drop-shadow-[0_2px_4px_rgba(0,0,0,0.8)]", true)}
+                                  </div>
                                 </div>
-                              </div>
+                              )}
 
+                              {/* Top Completed Badge */}
                               {isCompleted && (
                                 <div className="absolute top-2.5 left-2.5 sm:top-3.5 sm:left-3.5 bg-emerald-600 text-white text-[8px] sm:text-[10px] font-black px-2.5 py-1 rounded-full uppercase tracking-widest shadow-md italic flex items-center gap-1 border border-emerald-400 opacity-100">
                                   <CheckCircle2 size={11} className="text-white shrink-0" strokeWidth={2.5} />
@@ -834,10 +885,14 @@ export default function CourseViewer({ courseId, userId, onClose, initialCourse,
                                 </div>
                               )}
 
-                              <div className="absolute bottom-2.5 right-2.5 sm:bottom-3.5 sm:right-3.5 bg-black/80 backdrop-blur-md text-[8px] sm:text-[10px] font-black text-white px-2.5 py-1 rounded-lg border border-white/20 uppercase tracking-widest italic shadow-lg">
-                                {chapter.duration_minutes || 5} MIN
-                              </div>
+                              {/* Duration Badge (Disabled by default unless activated) */}
+                              {shouldShowDuration(chapter) && (
+                                <div className="absolute bottom-2.5 right-2.5 sm:bottom-3.5 sm:right-3.5 bg-black/80 backdrop-blur-md text-[8px] sm:text-[10px] font-black text-white px-2.5 py-1 rounded-lg border border-white/20 uppercase tracking-widest italic shadow-lg">
+                                  {chapter.duration_minutes} MIN
+                                </div>
+                              )}
                             </div>
+                          </div>
                             
                             <div className="space-y-0.5 px-2">
                               {chapter.custom_badge && chapter.custom_badge.trim() ? (
@@ -1073,7 +1128,7 @@ export default function CourseViewer({ courseId, userId, onClose, initialCourse,
                     className={`relative overflow-hidden transition-all duration-500 w-full ${
                       activeChapter?.content_type === 'pdf' 
                         ? 'aspect-[1/1.4] sm:aspect-[3/4] max-h-[85vh] rounded-[2.2rem] sm:rounded-[3rem] p-[2px] bg-gradient-to-b from-white/35 via-white/10 to-white/20 shadow-[0_25px_60px_-15px_rgba(0,0,0,0.95),0_0_35px_rgba(255,255,255,0.08)] ring-1 ring-white/20' 
-                        : 'bg-black aspect-video rounded-2xl sm:rounded-3xl border border-white/15 shadow-[0_20px_50px_rgba(0,0,0,0.8)] ring-1 ring-white/10'
+                        : 'bg-black aspect-video rounded-2xl sm:rounded-3xl border-[1.5px] border-white/20 shadow-[0_25px_60px_rgba(0,0,0,0.9)] ring-1 ring-white/10'
                     }`}
                   >
                     {activeChapter?.content_type === 'video' ? (

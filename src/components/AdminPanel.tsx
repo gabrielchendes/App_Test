@@ -339,9 +339,10 @@ export default function AdminPanel({ user }: AdminPanelProps) {
   const [savingMainProduct, setSavingMainProduct] = useState(false);
 
   // Visual Identity Icon Tabs & Preview States
-  const [visualIconTab, setVisualIconTab] = useState<'favicon' | 'app_icon'>('favicon');
+  const [visualIconTab, setVisualIconTab] = useState<'favicon' | 'android' | 'ios'>('favicon');
   const [faviconLoadError, setFaviconLoadError] = useState(false);
-  const [appIconLoadError, setAppIconLoadError] = useState(false);
+  const [androidIconLoadError, setAndroidIconLoadError] = useState(false);
+  const [iosIconLoadError, setIosIconLoadError] = useState(false);
 
   // Official Sales Dashboard states
   const [salesList, setSalesList] = useState<any[]>([]);
@@ -729,6 +730,8 @@ export default function AdminPanel({ user }: AdminPanelProps) {
       initialLocal.enable_testimonials = settings.enable_testimonials ?? (settings.custom_texts?.['home.enable_testimonials'] !== 'false');
       initialLocal.favicon_url = settings.favicon_url || '';
       initialLocal.pwa_icon_url = settings.pwa_icon_url || settings.favicon_url || '';
+      initialLocal.android_icon_url = settings.android_icon_url || settings.custom_texts?.['config.android_icon_url'] || settings.pwa_icon_url || '';
+      initialLocal.ios_icon_url = settings.ios_icon_url || settings.custom_texts?.['config.ios_icon_url'] || settings.pwa_icon_url || '';
 
       setLocalSettings(initialLocal);
     }
@@ -1391,6 +1394,16 @@ export default function AdminPanel({ user }: AdminPanelProps) {
         payload.custom_texts['config.show_course_titles_home'] = String(!!payload.show_course_titles_home);
       }
 
+      if ('show_lesson_play_icon' in payload) {
+        if (!payload.custom_texts) payload.custom_texts = { ...(settings?.custom_texts || {}) };
+        payload.custom_texts['config.show_lesson_play_icon'] = String(!!payload.show_lesson_play_icon);
+      }
+
+      if ('show_lesson_duration' in payload) {
+        if (!payload.custom_texts) payload.custom_texts = { ...(settings?.custom_texts || {}) };
+        payload.custom_texts['config.show_lesson_duration'] = String(!!payload.show_lesson_duration);
+      }
+
       if ('enable_testimonials' in payload) {
         if (!payload.custom_texts) payload.custom_texts = { ...(settings?.custom_texts || {}) };
         payload.custom_texts['home.enable_testimonials'] = String(payload.enable_testimonials !== false);
@@ -1399,6 +1412,16 @@ export default function AdminPanel({ user }: AdminPanelProps) {
       if ('pwa_icon_url' in payload) {
         if (!payload.custom_texts) payload.custom_texts = { ...(settings?.custom_texts || {}) };
         payload.custom_texts['config.pwa_icon_url'] = payload.pwa_icon_url || '';
+      }
+
+      if ('android_icon_url' in payload) {
+        if (!payload.custom_texts) payload.custom_texts = { ...(settings?.custom_texts || {}) };
+        payload.custom_texts['config.android_icon_url'] = payload.android_icon_url || '';
+      }
+
+      if ('ios_icon_url' in payload) {
+        if (!payload.custom_texts) payload.custom_texts = { ...(settings?.custom_texts || {}) };
+        payload.custom_texts['config.ios_icon_url'] = payload.ios_icon_url || '';
       }
 
       if ('favicon_url' in payload) {
@@ -1434,7 +1457,7 @@ export default function AdminPanel({ user }: AdminPanelProps) {
       }
 
       if (error) {
-        if (error.message?.includes('show_course_titles_home') || error.message?.includes('pwa_icon_url') || error.message?.includes('enable_testimonials')) {
+        if (error.message?.includes('show_course_titles_home') || error.message?.includes('pwa_icon_url') || error.message?.includes('android_icon_url') || error.message?.includes('ios_icon_url') || error.message?.includes('enable_testimonials')) {
           const fallbackPayload = { ...payload };
           if (error.message?.includes('show_course_titles_home')) {
             delete fallbackPayload.show_course_titles_home;
@@ -1450,6 +1473,16 @@ export default function AdminPanel({ user }: AdminPanelProps) {
             delete fallbackPayload.pwa_icon_url;
             if (!fallbackPayload.custom_texts) fallbackPayload.custom_texts = { ...(settings?.custom_texts || {}) };
             fallbackPayload.custom_texts['config.pwa_icon_url'] = newSettings.pwa_icon_url || '';
+          }
+          if (error.message?.includes('android_icon_url')) {
+            delete fallbackPayload.android_icon_url;
+            if (!fallbackPayload.custom_texts) fallbackPayload.custom_texts = { ...(settings?.custom_texts || {}) };
+            fallbackPayload.custom_texts['config.android_icon_url'] = newSettings.android_icon_url || '';
+          }
+          if (error.message?.includes('ios_icon_url')) {
+            delete fallbackPayload.ios_icon_url;
+            if (!fallbackPayload.custom_texts) fallbackPayload.custom_texts = { ...(settings?.custom_texts || {}) };
+            fallbackPayload.custom_texts['config.ios_icon_url'] = newSettings.ios_icon_url || '';
           }
 
           const { error: fallbackErr } = await supabase
@@ -5074,33 +5107,45 @@ export default function AdminPanel({ user }: AdminPanelProps) {
                         </div>
                         
                         <div className="space-y-4">
-                          {/* Abas para separar Favicon e Ícone do App */}
+                          {/* Abas para separar Favicon, Ícone Android e Ícone iPhone */}
                           <div className="space-y-3">
                             <label className="text-xs font-black text-gray-400 uppercase tracking-widest block">Ícones da Aplicação</label>
-                            <div className="flex bg-black/60 p-1 rounded-xl border border-white/10 gap-1">
+                            <div className="flex bg-black/60 p-1 rounded-xl border border-white/10 gap-1 flex-wrap sm:flex-nowrap">
                               <button
                                 type="button"
                                 onClick={() => setVisualIconTab('favicon')}
-                                className={`flex-1 flex items-center justify-center gap-2 py-2.5 px-3 rounded-lg text-xs font-bold transition-all ${
+                                className={`flex-1 flex items-center justify-center gap-1.5 py-2.5 px-3 rounded-lg text-xs font-bold transition-all min-w-[120px] ${
                                   visualIconTab === 'favicon'
                                     ? 'bg-blue-600 text-white shadow-lg shadow-blue-600/20'
                                     : 'text-gray-400 hover:text-white hover:bg-white/5'
                                 }`}
                               >
-                                <Globe size={15} />
-                                <span>Favicon (Navegador)</span>
+                                <Globe size={14} />
+                                <span>Favicon (Aba)</span>
                               </button>
                               <button
                                 type="button"
-                                onClick={() => setVisualIconTab('app_icon')}
-                                className={`flex-1 flex items-center justify-center gap-2 py-2.5 px-3 rounded-lg text-xs font-bold transition-all ${
-                                  visualIconTab === 'app_icon'
-                                    ? 'bg-blue-600 text-white shadow-lg shadow-blue-600/20'
+                                onClick={() => setVisualIconTab('android')}
+                                className={`flex-1 flex items-center justify-center gap-1.5 py-2.5 px-3 rounded-lg text-xs font-bold transition-all min-w-[120px] ${
+                                  visualIconTab === 'android'
+                                    ? 'bg-emerald-600 text-white shadow-lg shadow-emerald-600/20'
                                     : 'text-gray-400 hover:text-white hover:bg-white/5'
                                 }`}
                               >
-                                <Smartphone size={15} />
-                                <span>Ícone do App (PWA / Mobile)</span>
+                                <Smartphone size={14} />
+                                <span>Ícone Android (App)</span>
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => setVisualIconTab('ios')}
+                                className={`flex-1 flex items-center justify-center gap-1.5 py-2.5 px-3 rounded-lg text-xs font-bold transition-all min-w-[120px] ${
+                                  visualIconTab === 'ios'
+                                    ? 'bg-purple-600 text-white shadow-lg shadow-purple-600/20'
+                                    : 'text-gray-400 hover:text-white hover:bg-white/5'
+                                }`}
+                              >
+                                <Apple size={14} />
+                                <span>Ícone iPhone (iOS)</span>
                               </button>
                             </div>
 
@@ -5108,7 +5153,7 @@ export default function AdminPanel({ user }: AdminPanelProps) {
                             <div className="grid grid-cols-1 lg:grid-cols-12 gap-5 p-4 bg-black/40 rounded-xl border border-white/5 items-start">
                               {/* Lado Esquerdo: Campo de URL e Instruções */}
                               <div className="lg:col-span-7 space-y-3">
-                                {visualIconTab === 'favicon' ? (
+                                {visualIconTab === 'favicon' && (
                                   <>
                                     <div className="flex items-center justify-between">
                                       <label className="text-xs font-black text-gray-300 uppercase tracking-widest flex items-center gap-1.5">
@@ -5137,7 +5182,7 @@ export default function AdminPanel({ user }: AdminPanelProps) {
                                       placeholder="https://exemplo.com/favicon.png"
                                     />
                                     <p className="text-[11px] text-gray-400 leading-relaxed">
-                                      Este ícone é exibido na aba do navegador ao lado do título da página e nos marcadores/favoritos.
+                                      Este ícone é exibido estritamente na aba de todos os navegadores (Chrome, Safari, Edge, Firefox) ao lado do título da página e nos favoritos, sobrepondo o padrão do sistema.
                                     </p>
                                     <div className="flex flex-wrap items-center gap-2 pt-1">
                                       <span className="text-[10px] bg-white/5 text-gray-400 px-2 py-0.5 rounded border border-white/10">
@@ -5146,33 +5191,47 @@ export default function AdminPanel({ user }: AdminPanelProps) {
                                       <span className="text-[10px] bg-white/5 text-gray-400 px-2 py-0.5 rounded border border-white/10">
                                         Recomendado: 32x32, 64x64 ou 128x128px (.png, .ico, .svg)
                                       </span>
-                                      {localSettings?.pwa_icon_url && localSettings.pwa_icon_url !== localSettings.favicon_url && (
+                                      {localSettings?.android_icon_url && localSettings.android_icon_url !== localSettings.favicon_url && (
                                         <button
                                           type="button"
                                           onClick={() => {
-                                            setLocalSettings({ ...localSettings, favicon_url: localSettings.pwa_icon_url });
+                                            setLocalSettings({ ...localSettings, favicon_url: localSettings.android_icon_url });
                                             setFaviconLoadError(false);
                                           }}
-                                          className="text-[10px] text-amber-400 hover:text-amber-300 underline ml-auto"
+                                          className="text-[10px] text-emerald-400 hover:text-emerald-300 underline ml-auto"
                                         >
-                                          Copiar URL do Ícone do App
+                                          Copiar do Android
+                                        </button>
+                                      )}
+                                      {localSettings?.ios_icon_url && localSettings.ios_icon_url !== localSettings.favicon_url && (
+                                        <button
+                                          type="button"
+                                          onClick={() => {
+                                            setLocalSettings({ ...localSettings, favicon_url: localSettings.ios_icon_url });
+                                            setFaviconLoadError(false);
+                                          }}
+                                          className="text-[10px] text-purple-400 hover:text-purple-300 underline"
+                                        >
+                                          Copiar do iPhone
                                         </button>
                                       )}
                                     </div>
                                   </>
-                                ) : (
+                                )}
+
+                                {visualIconTab === 'android' && (
                                   <>
                                     <div className="flex items-center justify-between">
                                       <label className="text-xs font-black text-gray-300 uppercase tracking-widest flex items-center gap-1.5">
-                                        <Smartphone size={13} className="text-blue-400" />
-                                        Ícone do Aplicativo (PWA / Tela Inicial)
+                                        <Smartphone size={13} className="text-emerald-400" />
+                                        Ícone do App Android (Google Chrome / PWA)
                                       </label>
-                                      {localSettings?.pwa_icon_url && (
+                                      {localSettings?.android_icon_url && (
                                         <a
-                                          href={localSettings.pwa_icon_url}
+                                          href={localSettings.android_icon_url}
                                           target="_blank"
                                           rel="noopener noreferrer"
-                                          className="text-[11px] text-blue-400 hover:text-blue-300 flex items-center gap-1 transition-colors"
+                                          className="text-[11px] text-emerald-400 hover:text-emerald-300 flex items-center gap-1 transition-colors"
                                         >
                                           Abrir link <ExternalLink size={11} />
                                         </a>
@@ -5180,34 +5239,124 @@ export default function AdminPanel({ user }: AdminPanelProps) {
                                     </div>
                                     <input 
                                       type="url" 
-                                      value={localSettings?.pwa_icon_url || ''}
+                                      value={localSettings?.android_icon_url || ''}
                                       onChange={(e) => {
-                                        setLocalSettings({ ...localSettings, pwa_icon_url: e.target.value });
-                                        setAppIconLoadError(false);
+                                        setLocalSettings({ 
+                                          ...localSettings, 
+                                          android_icon_url: e.target.value,
+                                          pwa_icon_url: e.target.value || localSettings?.pwa_icon_url
+                                        });
+                                        setAndroidIconLoadError(false);
                                       }}
-                                      className="w-full bg-black border border-white/10 rounded-xl px-4 py-3 text-white text-sm focus:border-blue-500 outline-none transition-all placeholder:text-gray-600"
-                                      placeholder="https://exemplo.com/icone-app-512.png"
+                                      className="w-full bg-black border border-white/10 rounded-xl px-4 py-3 text-white text-sm focus:border-emerald-500 outline-none transition-all placeholder:text-gray-600"
+                                      placeholder="https://exemplo.com/icone-android-512.png"
                                     />
                                     <p className="text-[11px] text-gray-400 leading-relaxed">
-                                      Este ícone é exibido na tela inicial do smartphone quando o aluno instala o aplicativo no celular (iOS e Android), além da tela de abertura (Splash Screen).
+                                      Este ícone é exibido exclusivamente nos smartphones Android ao instalar o aplicativo via Google Chrome (Web App Manifest), tela de abertura (Splash Screen) e gaveta de apps.
                                     </p>
                                     <div className="flex flex-wrap items-center gap-2 pt-1">
                                       <span className="text-[10px] bg-white/5 text-gray-400 px-2 py-0.5 rounded border border-white/10">
-                                        Padrão PWA 512x512px
+                                        Padrão Android PWA 512x512px
                                       </span>
                                       <span className="text-[10px] bg-white/5 text-gray-400 px-2 py-0.5 rounded border border-white/10">
-                                        Formatos: .png, .webp (sem cantos arredondados)
+                                        Formatos: .png, .webp (ícone adaptável/maskable)
                                       </span>
-                                      {localSettings?.favicon_url && localSettings.favicon_url !== localSettings.pwa_icon_url && (
+                                      {localSettings?.favicon_url && localSettings.favicon_url !== localSettings.android_icon_url && (
                                         <button
                                           type="button"
                                           onClick={() => {
-                                            setLocalSettings({ ...localSettings, pwa_icon_url: localSettings.favicon_url });
-                                            setAppIconLoadError(false);
+                                            setLocalSettings({ 
+                                              ...localSettings, 
+                                              android_icon_url: localSettings.favicon_url,
+                                              pwa_icon_url: localSettings.favicon_url
+                                            });
+                                            setAndroidIconLoadError(false);
                                           }}
                                           className="text-[10px] text-amber-400 hover:text-amber-300 underline ml-auto"
                                         >
-                                          Copiar URL do Favicon
+                                          Copiar do Favicon
+                                        </button>
+                                      )}
+                                      {localSettings?.ios_icon_url && localSettings.ios_icon_url !== localSettings.android_icon_url && (
+                                        <button
+                                          type="button"
+                                          onClick={() => {
+                                            setLocalSettings({ 
+                                              ...localSettings, 
+                                              android_icon_url: localSettings.ios_icon_url,
+                                              pwa_icon_url: localSettings.ios_icon_url
+                                            });
+                                            setAndroidIconLoadError(false);
+                                          }}
+                                          className="text-[10px] text-purple-400 hover:text-purple-300 underline"
+                                        >
+                                          Copiar do iPhone
+                                        </button>
+                                      )}
+                                    </div>
+                                  </>
+                                )}
+
+                                {visualIconTab === 'ios' && (
+                                  <>
+                                    <div className="flex items-center justify-between">
+                                      <label className="text-xs font-black text-gray-300 uppercase tracking-widest flex items-center gap-1.5">
+                                        <Apple size={13} className="text-purple-400" />
+                                        Ícone do App iPhone & iPad (Apple Touch Icon)
+                                      </label>
+                                      {localSettings?.ios_icon_url && (
+                                        <a
+                                          href={localSettings.ios_icon_url}
+                                          target="_blank"
+                                          rel="noopener noreferrer"
+                                          className="text-[11px] text-purple-400 hover:text-purple-300 flex items-center gap-1 transition-colors"
+                                        >
+                                          Abrir link <ExternalLink size={11} />
+                                        </a>
+                                      )}
+                                    </div>
+                                    <input 
+                                      type="url" 
+                                      value={localSettings?.ios_icon_url || ''}
+                                      onChange={(e) => {
+                                        setLocalSettings({ ...localSettings, ios_icon_url: e.target.value });
+                                        setIosIconLoadError(false);
+                                      }}
+                                      className="w-full bg-black border border-white/10 rounded-xl px-4 py-3 text-white text-sm focus:border-purple-500 outline-none transition-all placeholder:text-gray-600"
+                                      placeholder="https://exemplo.com/icone-iphone-apple-touch.png"
+                                    />
+                                    <p className="text-[11px] text-gray-400 leading-relaxed">
+                                      Este ícone é exibido exclusivamente no iPhone e iPad ao adicionar à tela de início no Safari (Apple Touch Icon). O iOS aplica automaticamente as bordas arredondadas e efeito de brilho suave.
+                                    </p>
+                                    <div className="flex flex-wrap items-center gap-2 pt-1">
+                                      <span className="text-[10px] bg-white/5 text-gray-400 px-2 py-0.5 rounded border border-white/10">
+                                        Padrão iOS 180x180 ou 512x512px
+                                      </span>
+                                      <span className="text-[10px] bg-white/5 text-gray-400 px-2 py-0.5 rounded border border-white/10">
+                                        Quadrado sólido (sem cantos arredondados transparentes)
+                                      </span>
+                                      {localSettings?.favicon_url && localSettings.favicon_url !== localSettings.ios_icon_url && (
+                                        <button
+                                          type="button"
+                                          onClick={() => {
+                                            setLocalSettings({ ...localSettings, ios_icon_url: localSettings.favicon_url });
+                                            setIosIconLoadError(false);
+                                          }}
+                                          className="text-[10px] text-amber-400 hover:text-amber-300 underline ml-auto"
+                                        >
+                                          Copiar do Favicon
+                                        </button>
+                                      )}
+                                      {localSettings?.android_icon_url && localSettings.android_icon_url !== localSettings.ios_icon_url && (
+                                        <button
+                                          type="button"
+                                          onClick={() => {
+                                            setLocalSettings({ ...localSettings, ios_icon_url: localSettings.android_icon_url });
+                                            setIosIconLoadError(false);
+                                          }}
+                                          className="text-[10px] text-emerald-400 hover:text-emerald-300 underline"
+                                        >
+                                          Copiar do Android
                                         </button>
                                       )}
                                     </div>
@@ -5215,14 +5364,14 @@ export default function AdminPanel({ user }: AdminPanelProps) {
                                 )}
                               </div>
 
-                              {/* Lado Direito: Preview da imagem em tempo real */}
-                              <div className="lg:col-span-5 flex flex-col items-center justify-center p-4 bg-zinc-950/80 rounded-xl border border-white/10 min-h-[170px] text-center relative overflow-hidden">
+                              {/* Lado Direito: Preview da imagem em tempo real de acordo com a plataforma */}
+                              <div className="lg:col-span-5 flex flex-col items-center justify-center p-4 bg-zinc-950/80 rounded-xl border border-white/10 min-h-[180px] text-center relative overflow-hidden">
                                 <div className="absolute top-2.5 right-2.5 flex items-center gap-1.5 px-2 py-0.5 rounded-full bg-white/5 border border-white/10 text-[9px] font-bold text-gray-400 uppercase tracking-wider">
                                   <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
                                   Preview ao Vivo
                                 </div>
 
-                                {visualIconTab === 'favicon' ? (
+                                {visualIconTab === 'favicon' && (
                                   <div className="w-full flex flex-col items-center gap-3 pt-2">
                                     {/* Simulação da aba do navegador */}
                                     <div className="w-full max-w-[240px] bg-zinc-900 border border-white/15 rounded-t-lg overflow-hidden shadow-md">
@@ -5230,7 +5379,7 @@ export default function AdminPanel({ user }: AdminPanelProps) {
                                         <div className="w-2 h-2 rounded-full bg-red-500/80" />
                                         <div className="w-2 h-2 rounded-full bg-yellow-500/80" />
                                         <div className="w-2 h-2 rounded-full bg-green-500/80" />
-                                        <span className="text-[9px] text-gray-500 ml-1 font-mono">Navegador</span>
+                                        <span className="text-[9px] text-gray-500 ml-1 font-mono">Aba Navegador</span>
                                       </div>
                                       <div className="flex items-center gap-2 px-3 py-1.5 bg-zinc-800 text-left">
                                         {localSettings?.favicon_url && !faviconLoadError ? (
@@ -5253,7 +5402,7 @@ export default function AdminPanel({ user }: AdminPanelProps) {
 
                                     {/* Caixa ampliada do Favicon */}
                                     <div className="flex items-center gap-3">
-                                      <div className="w-14 h-14 rounded-lg bg-black border border-white/10 flex items-center justify-center p-2 shadow-inner">
+                                      <div className="w-12 h-12 rounded-lg bg-black border border-white/10 flex items-center justify-center p-2 shadow-inner">
                                         {localSettings?.favicon_url && !faviconLoadError ? (
                                           <img 
                                             src={localSettings.favicon_url} 
@@ -5263,7 +5412,7 @@ export default function AdminPanel({ user }: AdminPanelProps) {
                                             onError={() => setFaviconLoadError(true)}
                                           />
                                         ) : (
-                                          <Globe size={24} className="text-gray-600" />
+                                          <Globe size={22} className="text-gray-600" />
                                         )}
                                       </div>
                                       <div className="text-left text-[10px]">
@@ -5271,8 +5420,8 @@ export default function AdminPanel({ user }: AdminPanelProps) {
                                           <span className="text-red-400 font-semibold block">Erro ao carregar URL</span>
                                         ) : localSettings?.favicon_url ? (
                                           <>
-                                            <span className="text-emerald-400 font-semibold block">URL Carregada</span>
-                                            <span className="text-gray-500 block">Exibição 1:1 e na aba</span>
+                                            <span className="text-emerald-400 font-semibold block">URL do Favicon OK</span>
+                                            <span className="text-gray-500 block">Exibido na aba da página</span>
                                           </>
                                         ) : (
                                           <>
@@ -5283,36 +5432,74 @@ export default function AdminPanel({ user }: AdminPanelProps) {
                                       </div>
                                     </div>
                                   </div>
-                                ) : (
+                                )}
+
+                                {visualIconTab === 'android' && (
                                   <div className="w-full flex flex-col items-center gap-2 pt-2">
-                                    {/* Simulação do Ícone na Tela Inicial do Celular */}
+                                    {/* Simulação do Ícone no Android (Adaptive Squircle com sombra suave) */}
                                     <div className="flex flex-col items-center">
-                                      <div className="w-16 h-16 rounded-[22%] bg-zinc-900 border border-white/20 shadow-2xl shadow-blue-500/10 flex items-center justify-center overflow-hidden p-0 relative transition-transform hover:scale-105">
-                                        {localSettings?.pwa_icon_url && !appIconLoadError ? (
+                                      <div className="w-16 h-16 rounded-[28%] bg-zinc-900 border border-emerald-500/30 shadow-xl shadow-emerald-500/10 flex items-center justify-center overflow-hidden p-0 relative transition-transform hover:scale-105">
+                                        {localSettings?.android_icon_url && !androidIconLoadError ? (
                                           <img 
-                                            src={localSettings.pwa_icon_url} 
-                                            alt="Ícone do App preview" 
+                                            src={localSettings.android_icon_url} 
+                                            alt="Ícone Android preview" 
                                             className="w-full h-full object-cover"
                                             referrerPolicy="no-referrer"
-                                            onError={() => setAppIconLoadError(true)}
+                                            onError={() => setAndroidIconLoadError(true)}
                                           />
                                         ) : (
-                                          <Smartphone size={28} className="text-gray-600" />
+                                          <Smartphone size={28} className="text-emerald-500/70" />
                                         )}
                                         <div className="absolute inset-0 bg-gradient-to-tr from-transparent via-white/5 to-white/10 pointer-events-none" />
                                       </div>
-                                      <span className="text-[11px] text-gray-300 font-medium mt-1.5 max-w-[110px] truncate">
+                                      <span className="text-[11px] text-gray-200 font-medium mt-1.5 max-w-[120px] truncate">
                                         {localSettings?.app_name || settings?.app_name || 'Maternidade'}
                                       </span>
                                     </div>
 
                                     <div className="text-[10px] mt-1">
-                                      {appIconLoadError ? (
-                                        <span className="text-red-400 font-semibold">Erro ao carregar URL do ícone</span>
-                                      ) : localSettings?.pwa_icon_url ? (
-                                        <span className="text-emerald-400 font-semibold">Ícone pronto para instalação móvel</span>
+                                      {androidIconLoadError ? (
+                                        <span className="text-red-400 font-semibold">Erro ao carregar ícone do Android</span>
+                                      ) : localSettings?.android_icon_url ? (
+                                        <span className="text-emerald-400 font-semibold">Pronto para instalação no Android (PWA)</span>
                                       ) : (
                                         <span className="text-gray-500">Insira a URL do ícone de 512x512</span>
+                                      )}
+                                    </div>
+                                  </div>
+                                )}
+
+                                {visualIconTab === 'ios' && (
+                                  <div className="w-full flex flex-col items-center gap-2 pt-2">
+                                    {/* Simulação do Ícone no iPhone / Apple Touch Icon */}
+                                    <div className="flex flex-col items-center">
+                                      <div className="w-16 h-16 rounded-[22.5%] bg-zinc-900 border border-purple-500/30 shadow-2xl shadow-purple-500/15 flex items-center justify-center overflow-hidden p-0 relative transition-transform hover:scale-105">
+                                        {localSettings?.ios_icon_url && !iosIconLoadError ? (
+                                          <img 
+                                            src={localSettings.ios_icon_url} 
+                                            alt="Ícone iPhone preview" 
+                                            className="w-full h-full object-cover"
+                                            referrerPolicy="no-referrer"
+                                            onError={() => setIosIconLoadError(true)}
+                                          />
+                                        ) : (
+                                          <Apple size={28} className="text-purple-400/80" />
+                                        )}
+                                        {/* Gloss highlight estilo iOS clássico */}
+                                        <div className="absolute inset-0 bg-gradient-to-b from-white/20 via-transparent to-black/20 pointer-events-none" />
+                                      </div>
+                                      <span className="text-[11px] text-gray-200 font-medium mt-1.5 max-w-[120px] truncate tracking-tight">
+                                        {localSettings?.app_name || settings?.app_name || 'Maternidade'}
+                                      </span>
+                                    </div>
+
+                                    <div className="text-[10px] mt-1">
+                                      {iosIconLoadError ? (
+                                        <span className="text-red-400 font-semibold">Erro ao carregar ícone do iPhone</span>
+                                      ) : localSettings?.ios_icon_url ? (
+                                        <span className="text-purple-400 font-semibold">Pronto para a Tela de Início do iPhone</span>
+                                      ) : (
+                                        <span className="text-gray-500">Insira a URL do ícone do iPhone</span>
                                       )}
                                     </div>
                                   </div>
@@ -5381,7 +5568,9 @@ export default function AdminPanel({ user }: AdminPanelProps) {
                               setIsSavingSettings(true);
                               await updateSettings({ 
                                 favicon_url: localSettings?.favicon_url || '',
-                                pwa_icon_url: localSettings?.pwa_icon_url || localSettings?.favicon_url || '',
+                                pwa_icon_url: localSettings?.android_icon_url || localSettings?.ios_icon_url || localSettings?.pwa_icon_url || localSettings?.favicon_url || '',
+                                android_icon_url: localSettings?.android_icon_url || '',
+                                ios_icon_url: localSettings?.ios_icon_url || '',
                                 primary_color: localSettings?.primary_color,
                                 secondary_color: localSettings?.secondary_color,
                                 background_color: localSettings?.background_color,
@@ -7110,7 +7299,7 @@ export default function AdminPanel({ user }: AdminPanelProps) {
                                 </div>
                               </div>
 
-                              <div className="mt-8 pt-8 border-t border-white/10">
+                              <div className="mt-8 pt-8 border-t border-white/10 space-y-4">
                                 <div className="flex items-center justify-between p-4 bg-black/40 rounded-xl border border-white/5">
                                   <div className="space-y-1">
                                     <p className="text-xs font-black text-white uppercase italic">Auto-concluir Aula ao Abrir PDF</p>
@@ -7121,6 +7310,32 @@ export default function AdminPanel({ user }: AdminPanelProps) {
                                     className={`w-12 h-6 rounded-full transition-all relative ${settings.course_pdf_auto_complete_fullscreen ? 'bg-blue-600' : 'bg-zinc-700'}`}
                                   >
                                     <div className={`absolute top-1 w-4 h-4 rounded-full bg-white transition-all ${settings.course_pdf_auto_complete_fullscreen ? 'right-1' : 'left-1'}`} />
+                                  </button>
+                                </div>
+
+                                <div className="flex items-center justify-between p-4 bg-black/40 rounded-xl border border-white/5">
+                                  <div className="space-y-1">
+                                    <p className="text-xs font-black text-white uppercase italic">Símbolo do Play nas Aulas</p>
+                                    <p className="text-[10px] text-gray-500">Exibe o ícone central de play nas miniaturas das aulas. Desativado por padrão.</p>
+                                  </div>
+                                  <button 
+                                    onClick={() => updateSettings({ show_lesson_play_icon: !settings.show_lesson_play_icon })}
+                                    className={`w-12 h-6 rounded-full transition-all relative ${settings.show_lesson_play_icon ? 'bg-blue-600' : 'bg-zinc-700'}`}
+                                  >
+                                    <div className={`absolute top-1 w-4 h-4 rounded-full bg-white transition-all ${settings.show_lesson_play_icon ? 'right-1' : 'left-1'}`} />
+                                  </button>
+                                </div>
+
+                                <div className="flex items-center justify-between p-4 bg-black/40 rounded-xl border border-white/5">
+                                  <div className="space-y-1">
+                                    <p className="text-xs font-black text-white uppercase italic">Tempo de Duração (Min) nas Aulas</p>
+                                    <p className="text-[10px] text-gray-500">Exibe a etiqueta com a duração em minutos na miniatura da aula. Desativado por padrão.</p>
+                                  </div>
+                                  <button 
+                                    onClick={() => updateSettings({ show_lesson_duration: !settings.show_lesson_duration })}
+                                    className={`w-12 h-6 rounded-full transition-all relative ${settings.show_lesson_duration ? 'bg-blue-600' : 'bg-zinc-700'}`}
+                                  >
+                                    <div className={`absolute top-1 w-4 h-4 rounded-full bg-white transition-all ${settings.show_lesson_duration ? 'right-1' : 'left-1'}`} />
                                   </button>
                                 </div>
                               </div>

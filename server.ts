@@ -48,17 +48,17 @@ async function startServer() {
     delete process.env.VITE_SUPABASE_SERVICE_ROLE_KEY;
   }
 
-  // Active validation probe: test whether SUPABASE_SERVICE_ROLE_KEY is registered for this Supabase project
+  // Active validation probe: test whether SUPABASE_SERVICE_ROLE_KEY is registered for this Supabase project (non-blocking)
   if (process.env.SUPABASE_SERVICE_ROLE_KEY) {
-    try {
-      const targetUrl = process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL;
-      if (targetUrl) {
-        const testRes = await fetch(`${targetUrl}/rest/v1/profiles?select=id&limit=1`, {
-          headers: {
-            apikey: process.env.SUPABASE_SERVICE_ROLE_KEY,
-            Authorization: `Bearer ${process.env.SUPABASE_SERVICE_ROLE_KEY}`
-          }
-        });
+    const targetUrl = process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL;
+    if (targetUrl) {
+      fetch(`${targetUrl}/rest/v1/profiles?select=id&limit=1`, {
+        headers: {
+          apikey: process.env.SUPABASE_SERVICE_ROLE_KEY,
+          Authorization: `Bearer ${process.env.SUPABASE_SERVICE_ROLE_KEY}`
+        },
+        signal: AbortSignal.timeout(1500)
+      }).then(async (testRes) => {
         if (!testRes.ok) {
           const bodyTxt = await testRes.text();
           if (bodyTxt.includes('Unregistered API key') || testRes.status === 401) {
@@ -69,9 +69,9 @@ async function startServer() {
             delete process.env.VITE_SUPABASE_SERVICE_ROLE_KEY;
           }
         }
-      }
-    } catch (probeErr) {
-      console.warn('[Server Init] Warning verifying SUPABASE_SERVICE_ROLE_KEY:', probeErr);
+      }).catch((probeErr) => {
+        console.warn('[Server Init] Warning verifying SUPABASE_SERVICE_ROLE_KEY:', probeErr);
+      });
     }
   }
   
@@ -102,6 +102,91 @@ async function startServer() {
       return res.sendStatus(200);
     }
     next();
+  });
+
+  // Dynamic manifest.json endpoint to provide Android App Icon and App Name from database/settings
+  app.get(['/manifest.json', '/manifest.webmanifest'], async (_req, res) => {
+    try {
+      const targetUrl = process.env.VITE_SUPABASE_URL || process.env.SUPABASE_URL;
+      const anonKey = process.env.VITE_SUPABASE_ANON_KEY || process.env.SUPABASE_ANON_KEY;
+      let appName = 'Missing Trigger';
+      let themeColor = '#0b0c10';
+      let bgColor = '#0b0c10';
+      let androidIcon = '/icon-512.png';
+
+      if (targetUrl && anonKey) {
+        try {
+          const resp = await fetch(`${targetUrl}/rest/v1/app_settings?select=app_name,primary_color,background_color,pwa_icon_url,custom_texts&id=eq.1&limit=1`, {
+            headers: {
+              apikey: anonKey,
+              Authorization: `Bearer ${anonKey}`
+            },
+            signal: AbortSignal.timeout(2000)
+          });
+          if (resp.ok) {
+            const data = await resp.json();
+            const s = data?.[0];
+            if (s) {
+              if (s.app_name) appName = s.app_name;
+              if (s.primary_color) themeColor = s.primary_color;
+              if (s.background_color) bgColor = s.background_color;
+              const customTexts = s.custom_texts || {};
+              const resolvedAndroidIcon = customTexts['config.android_icon_url'] || s.pwa_icon_url || customTexts['config.pwa_icon_url'];
+              if (resolvedAndroidIcon && typeof resolvedAndroidIcon === 'string' && resolvedAndroidIcon.trim()) {
+                androidIcon = resolvedAndroidIcon.trim();
+              }
+            }
+          }
+        } catch (fetchErr) {
+          console.warn('[Manifest Endpoint] Warning fetching settings from Supabase:', fetchErr);
+        }
+      }
+
+      const manifest = {
+        id: '/',
+        name: appName,
+        short_name: appName.length > 12 ? appName.slice(0, 12) : appName,
+        description: `${appName} - Exclusive members area.`,
+        start_url: '/',
+        scope: '/',
+        display: 'standalone',
+        orientation: 'portrait',
+        background_color: bgColor,
+        theme_color: themeColor,
+        icons: [
+          {
+            src: androidIcon,
+            sizes: '192x192',
+            type: 'image/png',
+            purpose: 'any maskable'
+          },
+          {
+            src: androidIcon,
+            sizes: '512x512',
+            type: 'image/png',
+            purpose: 'any maskable'
+          },
+          {
+            src: androidIcon,
+            sizes: '192x192',
+            type: 'image/png',
+            purpose: 'any'
+          },
+          {
+            src: androidIcon,
+            sizes: '512x512',
+            type: 'image/png',
+            purpose: 'any'
+          }
+        ]
+      };
+      res.setHeader('Content-Type', 'application/manifest+json');
+      res.setHeader('Cache-Control', 'public, max-age=60');
+      return res.json(manifest);
+    } catch (e: any) {
+      console.warn('[Manifest Endpoint] Fallback to static manifest:', e);
+      return res.sendFile(path.join(__dirname, 'public', 'manifest.json'));
+    }
   });
 
   // Serve static files from public directory

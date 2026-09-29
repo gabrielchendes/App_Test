@@ -80,43 +80,15 @@ export interface TestimonialItem {
 }
 
 const INITIAL_SEED_TESTIMONIALS: TestimonialItem[] = [
-  {
-    id: 'seed-story-1',
-    user_name: 'Camila Mendonça',
-    user_email: 'camila.m@example.com',
-    user_avatar: 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&w=300&q=80',
-    course_title: 'Maternidade Plena',
-    rating: 5,
-    headline: 'Found complete peace and confidence in my daily routine',
-    content: 'This program was a turning point for me. Before joining, I was feeling completely overwhelmed and doubting myself as a mother every single day. The lessons gave me practical tools, emotional clarity, and a supportive perspective that transformed our home. Truly grateful to have found this space!',
-    status: 'approved',
-    is_read: true,
-    consent: true,
-    created_at: '2026-09-12T14:30:00Z'
-  },
-  {
-    id: 'seed-story-2',
-    user_name: 'Beatriz Vasconcelos',
-    user_email: 'beatriz.v@example.com',
-    user_avatar: 'https://images.unsplash.com/photo-1544005313-94ddf0286df2?auto=format&fit=crop&w=300&q=80',
-    course_title: 'Desenvolvimento Infantil & Afeto',
-    rating: 5,
-    headline: 'The clarity and practical guidance made all the difference',
-    content: 'Every lesson felt like it was made specifically for what I was going through. The scientific backing combined with warm, empathetic delivery is unlike anything else. Seeing my baby thrive while feeling calm and grounded myself is priceless. Thank you so much!',
-    status: 'approved',
-    is_read: true,
-    consent: true,
-    created_at: '2026-09-08T10:15:00Z'
-  },
-  {
+   {
     id: 'seed-story-3',
-    user_name: 'Juliana Rocha',
-    user_email: 'juliana.r@example.com',
+    user_name: 'Maria Richards',
+    user_email: 'maria.r@example.com',
     user_avatar: 'https://images.unsplash.com/photo-1517841905240-472988babdf9?auto=format&fit=crop&w=300&q=80',
-    course_title: 'Cuidado & Bem-Estar da Mulher',
+    course_title: 'The Attraction Code',
     rating: 5,
-    headline: 'I reconnected with myself while being the best mother I can be',
-    content: 'As women, we often put ourselves last. This experience reminded me that caring for myself is essential to caring for my family. The community, the expert guidance, and the step-by-step videos gave me back my energy and enthusiasm. Recommending this to all mothers I know!',
+    headline: 'I reconnected with myself',
+    content: 'As women, we often put ourselves last. This experience reminded me that caring for myself is essential. The community, the expert guidance, and the online classes gave me back my energy and enthusiasm. Recommending this to all women I know!',
     status: 'approved',
     is_read: true,
     consent: true,

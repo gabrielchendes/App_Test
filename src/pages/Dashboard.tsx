@@ -14,7 +14,7 @@ import { InspiringStoriesPage } from '../components/InspiringStoriesPage';
 import PullToRefresh from '../components/PullToRefresh';
 import WhatsAppIcon from '../components/WhatsAppIcon';
 import SmartHomeHeader from '../components/SmartHomeHeader';
-import { getDeviceType, isPWAInstalled, getDeferredPrompt, promptPWAInstall } from '../lib/pwa';
+import { getDeviceType, isPWAInstalled, getDeferredPrompt, promptPWAInstall, subscribeToPrompt } from '../lib/pwa';
 import { toast } from 'sonner';
 import { X, ShoppingBag, Loader2, Play, BookOpen, Star, Sparkles, Mail as MailIcon, MessageCircle, Book, Bell, Smartphone, ChevronRight } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
@@ -166,14 +166,21 @@ export default function Dashboard({ user }: DashboardProps) {
   const [showWelcomeModal, setShowWelcomeModal] = useState(false);
   const [showPWAInstall, setShowPWAInstall] = useState(false);
   const [deferredPrompt, setDeferredPrompt] = useState<any>(() => getDeferredPrompt());
-  const [canInstall, setCanInstall] = useState(() => !isPWAInstalled() && !!getDeferredPrompt());
+  const [canInstall, setCanInstall] = useState(() => !isPWAInstalled());
 
   // Check installation status smoothly without background polling
   useEffect(() => {
+    const updateInstallStatus = () => {
+      const installed = isPWAInstalled();
+      setCanInstall(!installed);
+    };
+
+    updateInstallStatus();
+
     const handleBeforeInstallPrompt = (e: Event) => {
       e.preventDefault();
       setDeferredPrompt(e);
-      setCanInstall(true);
+      updateInstallStatus();
     };
 
     const handleAppInstalled = () => {
@@ -184,8 +191,21 @@ export default function Dashboard({ user }: DashboardProps) {
     window.addEventListener('beforeinstallprompt', handleBeforeInstallPrompt);
     window.addEventListener('appinstalled', handleAppInstalled);
 
-    if (isPWAInstalled()) {
-      setCanInstall(false);
+    const unsubscribe = subscribeToPrompt((prompt) => {
+      setDeferredPrompt(prompt);
+      updateInstallStatus();
+    });
+
+    const mediaQuery = window.matchMedia('(display-mode: standalone)');
+    const handleDisplayModeChange = (e: MediaQueryListEvent) => {
+      if (e.matches) {
+        setCanInstall(false);
+      } else {
+        updateInstallStatus();
+      }
+    };
+    if (mediaQuery?.addEventListener) {
+      mediaQuery.addEventListener('change', handleDisplayModeChange);
     }
 
     // Preload tab chunks in background on idle so switching to profile or community is instant
@@ -196,8 +216,12 @@ export default function Dashboard({ user }: DashboardProps) {
 
     return () => {
       clearTimeout(preloadTimer);
+      unsubscribe();
       window.removeEventListener('beforeinstallprompt', handleBeforeInstallPrompt);
       window.removeEventListener('appinstalled', handleAppInstalled);
+      if (mediaQuery?.removeEventListener) {
+        mediaQuery.removeEventListener('change', handleDisplayModeChange);
+      }
     };
   }, []);
 

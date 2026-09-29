@@ -1967,7 +1967,7 @@ export default function CourseEditor({
                     
                     <button 
                       onClick={() => {
-                        setEditingChapter({ title: '', content_type: 'video', description: '', video_url: '', pdf_url: '', cover_url: '', duration_minutes: 0, module_id: modules[0]?.id });
+                        setEditingChapter({ title: '', content_type: 'video', description: '', video_url: '', pdf_url: '', cover_url: '', duration_minutes: 0, module_id: modules[0]?.id, custom_icon: 'none' });
                         setSelectedChapterId('new');
                       }}
                       className="bg-emerald-600 hover:bg-emerald-700 text-white px-8 py-3 rounded-2xl font-black text-xs flex items-center gap-2 transition-all shadow-xl shadow-emerald-900/40 hover:scale-105 active:scale-95"
@@ -2295,20 +2295,23 @@ export default function CourseEditor({
                             </div>
                           </div>
                           <div className="space-y-2">
-                             <label className="text-[10px] font-black text-gray-500 uppercase tracking-widest ml-1">Duração (Min)</label>
+                             <div className="flex items-center justify-between">
+                               <label className="text-[10px] font-black text-gray-500 uppercase tracking-widest ml-1">Duração (Min)</label>
+                               <span className="text-[9px] text-zinc-500 font-bold">Desativado por padrão (0 = Oculto)</span>
+                             </div>
                              <input 
                               type="number" 
                               value={editingChapter.duration_minutes || ''}
                               onChange={e => setEditingChapter({...editingChapter, duration_minutes: parseInt(e.target.value) || 0})}
                               className="w-full bg-black/40 border border-white/10 rounded-xl px-6 py-3.5 text-white focus:border-emerald-500 outline-none transition-all font-bold"
-                              placeholder="15"
+                              placeholder="0 (Desativado / Oculto)"
                             />
                           </div>
                         </div>
 
                         {/* Personalização do Símbolo do Play da Aula */}
                         <ChapterIconPicker
-                          value={editingChapter.custom_icon || ''}
+                          value={editingChapter.custom_icon || 'none'}
                           contentType={editingChapter.content_type}
                           onChange={(icon) => setEditingChapter({ ...editingChapter, custom_icon: icon })}
                           themeColor="emerald"
@@ -2974,12 +2977,16 @@ export default function CourseEditor({
 
                                             <div className="grid grid-cols-1 sm:grid-cols-3 gap-6">
                                               <div className="space-y-2">
-                                                 <label className="text-[10px] font-black text-gray-500 uppercase tracking-widest ml-1">Duração (Min)</label>
+                                                 <div className="flex items-center justify-between">
+                                                   <label className="text-[10px] font-black text-gray-500 uppercase tracking-widest ml-1">Duração (Min)</label>
+                                                   <span className="text-[9px] text-zinc-500 font-bold">0 = Oculto</span>
+                                                 </div>
                                                  <input 
                                                   type="number" 
                                                   value={draft.duration_minutes || ''}
                                                   onChange={e => setEditingExistingChapter(prev => prev ? ({ ...prev, duration_minutes: parseInt(e.target.value) || 0 }) : null)}
                                                   className="w-full bg-black/40 border border-white/10 rounded-xl px-6 py-3.5 text-white focus:border-blue-500 outline-none transition-all font-bold"
+                                                  placeholder="0 (Desativado / Oculto)"
                                                 />
                                               </div>
                                               <div className="space-y-2">
@@ -3020,7 +3027,7 @@ export default function CourseEditor({
 
                                             {/* Personalização do Símbolo do Play da Aula */}
                                             <ChapterIconPicker
-                                              value={draft.custom_icon || ''}
+                                              value={draft.custom_icon || 'none'}
                                               contentType={draft.content_type}
                                               onChange={(icon) => setEditingExistingChapter(prev => prev ? ({ ...prev, custom_icon: icon }) : ({ ...ch, custom_icon: icon }))}
                                               themeColor="blue"

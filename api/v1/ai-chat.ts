@@ -408,13 +408,13 @@ ${userContext?.userName ? `User's Name: ${userContext.userName}` : ''}`;
 
     if (isQuotaError) {
       return res.status(429).json({
-        error: 'Temporary AI rate limit reached. Please wait a moment and try again.'
+        error: 'Temporary conversation limit reached. Please wait a moment and try again.'
       });
     }
 
     if (errMsg.includes('503') || errMsg.includes('UNAVAILABLE') || errMsg.includes('high demand') || errMsg.includes('spikes in demand') || errMsg.includes('overloaded')) {
       return res.status(503).json({
-        error: 'AI servers are experiencing temporarily high demand. Please wait a few seconds and try again.'
+        error: 'Victoria is currently in another conversation. Please wait a moment and try again.'
       });
     }
 
@@ -432,7 +432,7 @@ ${userContext?.userName ? `User's Name: ${userContext.userName}` : ''}`;
     } catch (_) {}
 
     return res.status(500).json({
-      error: 'Connection error with Expert AI: ' + (cleanError || 'Service temporarily unavailable. Please try again.')
+      error: 'Connection error with Expert: ' + (cleanError || 'Service temporarily unavailable. Please try again later.')
     });
   }
 }

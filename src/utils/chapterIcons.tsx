@@ -108,6 +108,11 @@ export function renderChapterIcon(
 ): React.ReactElement {
   const normalizedIcon = (iconId || '').trim().toLowerCase();
 
+  // If explicitly disabled/hidden
+  if (normalizedIcon === 'none' || normalizedIcon === 'hidden') {
+    return <React.Fragment />;
+  }
+
   // If a specific custom icon was chosen
   if (normalizedIcon && normalizedIcon !== 'default') {
     const found = CHAPTER_ICONS.find(i => i.id === normalizedIcon);
@@ -201,16 +206,31 @@ export const ChapterIconPicker: React.FC<ChapterIconPickerProps> = ({
         <div className="flex items-center gap-2 self-start sm:self-auto bg-black/60 border border-white/10 px-3 py-1.5 rounded-xl shadow-sm">
           <span className="text-[9px] font-bold text-gray-400 uppercase tracking-wider">Ativo:</span>
           <div className="w-6 h-6 rounded-lg bg-zinc-800 border border-white/15 flex items-center justify-center text-white">
-            {renderChapterIcon(activeIconId, contentType, "w-3.5 h-3.5 text-white")}
+            {activeIconId === 'none' ? <span className="text-[10px] text-zinc-500 font-black">✕</span> : renderChapterIcon(activeIconId, contentType, "w-3.5 h-3.5 text-white")}
           </div>
           <span className="text-xs font-bold text-white">
-            {activeIconId === 'default' ? 'Padrão do Tipo' : (activeIconDef?.label.split('(')[0].trim() || activeIconId)}
+            {activeIconId === 'none' ? 'Desativado (Oculto)' : activeIconId === 'default' ? 'Padrão do Tipo' : (activeIconDef?.label.split('(')[0].trim() || activeIconId)}
           </span>
         </div>
       </div>
 
       {/* Popular Fast-Select Row */}
       <div className="flex flex-wrap items-center gap-1.5">
+        {/* Desativado / Ocultar Símbolo Option */}
+        <button
+          type="button"
+          onClick={() => onChange('none')}
+          className={`flex items-center gap-1.5 px-3 py-2 rounded-xl text-[10px] font-black uppercase tracking-wider transition-all border ${
+            activeIconId === 'none'
+              ? `${activeBg} ${activeBorder} shadow-lg ring-2 ${ringColor}`
+              : 'bg-black/40 border-white/10 text-gray-400 hover:text-white hover:border-white/20'
+          }`}
+        >
+          <span className="text-xs font-bold leading-none">✕</span>
+          <span>Desativado</span>
+          {activeIconId === 'none' && <Check size={12} className="ml-0.5" />}
+        </button>
+
         {/* Default / Automatic Option */}
         <button
           type="button"

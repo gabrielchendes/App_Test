@@ -61,21 +61,40 @@ export default function NotificationBell({ user }: NotificationBellProps) {
       try {
         const { data, error } = await supabase
           .from('notifications')
-          .select('*')
+          .select('id, user_id, broadcast_id, title, body, message, is_read, read, read_at, created_at')
           .eq('user_id', user.id)
           .order('created_at', { ascending: false })
           .limit(50);
         if (!error && Array.isArray(data)) {
           sbNotifs = data;
+        } else if (error) {
+          // Retry without ORDER BY to bypass compound index scans on busy tables
+          const { data: fallbackData } = await supabase
+            .from('notifications')
+            .select('id, user_id, broadcast_id, title, body, message, is_read, read, read_at, created_at')
+            .eq('user_id', user.id)
+            .limit(50);
+          if (Array.isArray(fallbackData)) {
+            sbNotifs = fallbackData;
+          }
         }
       } catch (sbErr) {
         console.warn('[NotificationBell] Supabase fetch notice:', sbErr);
       }
 
-      // 2. Fetch from Central API endpoint
+      // 2. Fetch from Central API endpoint with session auth
       let apiNotifs: any[] = [];
       try {
-        const res = await safeFetch(`/api/v1/notifications?action=user-notifications&userId=${encodeURIComponent(user.id)}`);
+        const session = (await supabase.auth.getSession()).data.session;
+        const headers: Record<string, string> = {};
+        if (session?.access_token) {
+          headers['Authorization'] = `Bearer ${session.access_token}`;
+        }
+
+        const res = await safeFetch(
+          `/api/v1/notifications?action=user-notifications&userId=${encodeURIComponent(user.id)}`,
+          { headers }
+        );
         if (res && res.success && Array.isArray(res.notifications)) {
           apiNotifs = res.notifications;
         }

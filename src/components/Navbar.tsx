@@ -6,6 +6,7 @@ import { toast } from 'sonner';
 import NotificationBell from './NotificationBell';
 import { useSettings } from '../contexts/SettingsContext';
 import { useI18n } from '../contexts/I18nContext';
+import PWAInstallBadge from './PWAInstallBadge';
 
 interface NavbarProps {
   user: User;
@@ -48,15 +49,13 @@ const Navbar = memo(({
         {/* Mobile View */}
         <div className="flex md:hidden items-center justify-between w-full relative">
           {/* Left: Install App */}
-          <div className="shrink-0 min-w-[40px] ml-2">
+          <div className="shrink-0 min-w-[40px] ml-2 flex items-center justify-center">
             {canInstall && onInstall && (
-              <button 
+              <PWAInstallBadge 
+                size="md"
                 onClick={onInstall}
-                className="p-2 bg-white/5 text-primary rounded-full hover:bg-white/10 transition-all active:scale-90 border border-white/5"
-                title={settings?.custom_texts?.['pwa.install_app'] || t('pwa.install_app') || "Instalar App"}
-              >
-                <Download size={18} />
-              </button>
+                label={settings?.custom_texts?.['pwa.install_app'] || t('pwa.install_app') || "Instalar App"}
+              />
             )}
           </div>
   
@@ -169,13 +168,15 @@ const Navbar = memo(({
         <div className="flex items-center gap-4 shrink-0">
           {/* Install button */}
           {canInstall && onInstall && (
-            <button 
-              onClick={onInstall}
-              className="p-2 bg-white/5 text-primary rounded-full hover:bg-white/10 transition-all active:scale-90 border border-white/5"
-              title={settings?.custom_texts?.['pwa.install_app'] || t('pwa.install_app') || "Instalar App"}
-            >
-              <Download size={14} />
-            </button>
+            <div className="flex items-center">
+              <PWAInstallBadge 
+                size="sm"
+                showLabel={true}
+                onClick={onInstall}
+                label={settings?.custom_texts?.['pwa.install_app'] || t('pwa.install_app') || "Instalar App"}
+                className="px-3 py-1.5 rounded-full bg-black/40 hover:bg-black/60 border border-amber-300/30 backdrop-blur-md"
+              />
+            </div>
           )}
 
           {/* User Chip clickable with Progress */}

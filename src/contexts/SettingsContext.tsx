@@ -11,6 +11,8 @@ export interface AppSettings {
   logo_url: string | null;
   favicon_url: string | null;
   pwa_icon_url: string | null;
+  android_icon_url?: string | null;
+  ios_icon_url?: string | null;
   support_whatsapp: string;
   support_email: string;
   support_whatsapp_message: string;
@@ -52,11 +54,15 @@ export interface AppSettings {
   gtm_id?: string;
   main_course_hotmart_id?: string;
   show_course_titles_home?: boolean;
+  show_lesson_play_icon?: boolean;
+  show_lesson_duration?: boolean;
   enable_testimonials?: boolean;
 }
 
 const defaultSettings: AppSettings = {
   show_course_titles_home: false,
+  show_lesson_play_icon: false,
+  show_lesson_duration: false,
   enable_testimonials: true,
   main_course_hotmart_id: '',
   app_name: 'Missing Trigger',
@@ -68,6 +74,8 @@ const defaultSettings: AppSettings = {
   logo_url: null,
   favicon_url: null,
   pwa_icon_url: null,
+  android_icon_url: null,
+  ios_icon_url: null,
   support_whatsapp: '5500000000000',
   support_email: 'atendimento@suporte.com',
   support_whatsapp_message: 'Hello, I would like to ask a question about the course.',
@@ -212,11 +220,23 @@ export function SettingsProvider({ children }: { children: React.ReactNode }) {
           if (data.custom_texts['config.show_course_titles_home'] !== undefined) {
             data.show_course_titles_home = data.custom_texts['config.show_course_titles_home'] === 'true';
           }
+          if (data.custom_texts['config.show_lesson_play_icon'] !== undefined) {
+            data.show_lesson_play_icon = data.custom_texts['config.show_lesson_play_icon'] === 'true';
+          }
+          if (data.custom_texts['config.show_lesson_duration'] !== undefined) {
+            data.show_lesson_duration = data.custom_texts['config.show_lesson_duration'] === 'true';
+          }
           if (data.custom_texts['config.support_whatsapp_login_floating'] !== undefined) {
             data.support_whatsapp_login_floating = data.custom_texts['config.support_whatsapp_login_floating'] === 'true';
           }
           if (data.custom_texts['config.pwa_icon_url'] && !data.pwa_icon_url) {
             data.pwa_icon_url = data.custom_texts['config.pwa_icon_url'];
+          }
+          if (data.custom_texts['config.android_icon_url'] && !data.android_icon_url) {
+            data.android_icon_url = data.custom_texts['config.android_icon_url'];
+          }
+          if (data.custom_texts['config.ios_icon_url'] && !data.ios_icon_url) {
+            data.ios_icon_url = data.custom_texts['config.ios_icon_url'];
           }
           if (data.custom_texts['config.favicon_url'] && !data.favicon_url) {
             data.favicon_url = data.custom_texts['config.favicon_url'];
@@ -255,37 +275,84 @@ export function SettingsProvider({ children }: { children: React.ReactNode }) {
     // Update title
     document.title = s.app_name;
 
-    // Update favicon
-    if (s.favicon_url) {
-      let link = document.querySelector("link[rel~='icon']") as HTMLLinkElement;
+    // 1. Update Browser Tab Favicon strictly and remove conflicting static icon tags (e.g. from /public)
+    if (s.favicon_url && s.favicon_url.trim()) {
+      const cleanFaviconUrl = s.favicon_url.trim();
+
+      // Remove existing static non-apple icon tags to prevent browsers (Chrome/Firefox/Safari)
+      // from favoring static 192x192/512x512 icons over the configured favicon
+      const oldIcons = document.querySelectorAll("link[rel*='icon']:not([rel*='apple-touch-icon'])");
+      oldIcons.forEach((el, index) => {
+        if (index > 0) {
+          el.remove();
+        }
+      });
+
+      let link = (document.getElementById('app-favicon') || document.querySelector("link[rel*='icon']:not([rel*='apple-touch-icon'])")) as HTMLLinkElement;
       if (!link) {
         link = document.createElement('link');
+        link.id = 'app-favicon';
         link.rel = 'icon';
-        document.getElementsByTagName('head')[0].appendChild(link);
+        document.head.appendChild(link);
       }
-      if (link.href !== s.favicon_url) {
-        link.href = s.favicon_url;
+      link.removeAttribute('sizes');
+      if (cleanFaviconUrl.split('?')[0].endsWith('.svg')) {
+        link.type = 'image/svg+xml';
+      } else if (cleanFaviconUrl.split('?')[0].endsWith('.png')) {
+        link.type = 'image/png';
+      } else if (cleanFaviconUrl.split('?')[0].endsWith('.ico')) {
+        link.type = 'image/x-icon';
+      } else {
+        link.removeAttribute('type');
+      }
+
+      if (link.href !== cleanFaviconUrl) {
+        link.href = cleanFaviconUrl;
+      }
+
+      // Also ensure shortcut icon is synchronized
+      let shortcut = document.querySelector("link[rel='shortcut icon']") as HTMLLinkElement;
+      if (shortcut) {
+        shortcut.href = cleanFaviconUrl;
       }
     }
 
-    // Update PWA icon (Apple Touch Icon & Android Manifest)
-    if (s.pwa_icon_url) {
-      let appleLink = document.querySelector("link[rel='apple-touch-icon']") as HTMLLinkElement;
-      if (!appleLink) {
-        appleLink = document.createElement('link');
+    // 2. Update Apple Touch Icon (iPhone / iPad iOS)
+    const effectiveIosIcon = (s.ios_icon_url && s.ios_icon_url.trim()) || (s.pwa_icon_url && s.pwa_icon_url.trim()) || (s.favicon_url && s.favicon_url.trim());
+    if (effectiveIosIcon) {
+      const appleIcons = document.querySelectorAll("link[rel='apple-touch-icon']");
+      if (appleIcons.length > 0) {
+        appleIcons.forEach((el) => {
+          (el as HTMLLinkElement).href = effectiveIosIcon;
+        });
+      } else {
+        const appleLink = document.createElement('link');
         appleLink.rel = 'apple-touch-icon';
-        document.getElementsByTagName('head')[0].appendChild(appleLink);
+        appleLink.href = effectiveIosIcon;
+        document.head.appendChild(appleLink);
       }
-      appleLink.href = s.pwa_icon_url;
 
+      // iOS Web App Title
+      let appleTitle = document.querySelector("meta[name='apple-mobile-web-app-title']") as HTMLMetaElement;
+      if (!appleTitle) {
+        appleTitle = document.createElement('meta');
+        appleTitle.name = 'apple-mobile-web-app-title';
+        document.head.appendChild(appleTitle);
+      }
+      appleTitle.content = s.app_name || 'Missing Trigger';
+    }
+
+    // 3. Update Android Web App Manifest
+    const effectiveAndroidIcon = (s.android_icon_url && s.android_icon_url.trim()) || (s.pwa_icon_url && s.pwa_icon_url.trim()) || (s.favicon_url && s.favicon_url.trim());
+    if (effectiveAndroidIcon) {
       try {
         const manifestLink = document.querySelector("link[rel='manifest']") as HTMLLinkElement;
-        const iconSrc = s.pwa_icon_url;
+        const iconSrc = effectiveAndroidIcon;
         const dynamicManifest = {
           id: '/',
           name: s.app_name || 'Missing Trigger',
-          short_name: s.app_name ? s.app_name.slice(0, 12) : 'Trigger',
-          description: s.app_name || 'Exclusive members area with premium content.',
+          short_name: s.app_name ? (s.app_name.length > 12 ? s.app_name.slice(0, 12) : s.app_name) : 'Trigger',
+          description: s.app_description || `${s.app_name || 'Missing Trigger'} - Exclusive members area with premium content.`,
           start_url: '/',
           scope: '/',
           display: 'standalone',

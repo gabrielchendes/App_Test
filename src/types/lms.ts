@@ -100,6 +100,8 @@ export interface Chapter {
   content_type: 'video' | 'audio' | 'pdf' | 'text' | 'link' | 'checklist' | 'interactive' | 'html_app' | 'html';
   custom_icon?: string;
   custom_badge?: string;
+  show_play_icon?: boolean;
+  show_duration?: boolean;
   video_url?: string;
   pdf_url?: string;
   cover_url?: string;
