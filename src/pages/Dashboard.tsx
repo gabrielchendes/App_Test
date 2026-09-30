@@ -14,7 +14,7 @@ import { InspiringStoriesPage } from '../components/InspiringStoriesPage';
 import PullToRefresh from '../components/PullToRefresh';
 import WhatsAppIcon from '../components/WhatsAppIcon';
 import SmartHomeHeader from '../components/SmartHomeHeader';
-import { getDeviceType, isPWAInstalled, getDeferredPrompt, promptPWAInstall, subscribeToPrompt } from '../lib/pwa';
+import { getDeviceType, isPWAInstalled, getDeferredPrompt, promptPWAInstall, installOnAndroidDirectly, subscribeToPrompt } from '../lib/pwa';
 import { toast } from 'sonner';
 import { X, ShoppingBag, Loader2, Play, BookOpen, Star, Sparkles, Mail as MailIcon, MessageCircle, Book, Bell, Smartphone, ChevronRight } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
@@ -884,7 +884,23 @@ export default function Dashboard({ user }: DashboardProps) {
         onOpenAi={() => setIsAiModalOpen(true)}
         isAiOpen={isAiModalOpen}
         canInstall={canInstall}
-        onInstall={() => setShowPWAInstall(true)}
+        onInstall={async () => {
+          if (getDeviceType() === 'android') {
+            const directSuccess = await installOnAndroidDirectly();
+            if (directSuccess) return;
+          }
+          const success = await promptPWAInstall();
+          if (!success) {
+            if (getDeviceType() === 'android') {
+              const isWebView = /wv|webview|fbav|instagram|micromessenger|threads/i.test(navigator.userAgent);
+              if (isWebView) {
+                window.location.href = `intent://${window.location.host}${window.location.pathname}${window.location.search}#Intent;scheme=https;package=com.android.chrome;end;`;
+                return;
+              }
+            }
+            setShowPWAInstall(true);
+          }
+        }}
         totalProgress={globalStats.totalProgress}
         onOpenProgress={() => setShowProgressModal(true)}
       />

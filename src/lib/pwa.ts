@@ -70,8 +70,47 @@ export const subscribeToPrompt = (fn: (prompt: BeforeInstallPromptEvent | null) 
   };
 };
 
-export const promptPWAInstall = async (): Promise<boolean> => {
-  const promptEvent = getDeferredPrompt();
+export const waitForDeferredPrompt = (timeoutMs = 3500): Promise<BeforeInstallPromptEvent | null> => {
+  const current = getDeferredPrompt();
+  if (current) return Promise.resolve(current);
+
+  return new Promise((resolve) => {
+    let resolved = false;
+    const timer = setTimeout(() => {
+      if (!resolved) {
+        resolved = true;
+        cleanup();
+        resolve(getDeferredPrompt());
+      }
+    }, timeoutMs);
+
+    const onPrompt = (e: any) => {
+      if (!resolved) {
+        resolved = true;
+        cleanup();
+        resolve(e.detail || getDeferredPrompt() || e);
+      }
+    };
+
+    const cleanup = () => {
+      clearTimeout(timer);
+      window.removeEventListener('beforeinstallprompt', onPrompt);
+      window.removeEventListener('pwa-prompt-available', onPrompt);
+    };
+
+    window.addEventListener('beforeinstallprompt', onPrompt, { once: true });
+    window.addEventListener('pwa-prompt-available', onPrompt, { once: true });
+  });
+};
+
+export const promptPWAInstall = async (timeoutMs = 3500): Promise<boolean> => {
+  let promptEvent = getDeferredPrompt();
+
+  if (!promptEvent && typeof window !== 'undefined') {
+    // Wait for beforeinstallprompt in case browser evaluation takes a moment (e.g. Samsung Internet or Chromium parsing manifest/SW)
+    promptEvent = await waitForDeferredPrompt(timeoutMs);
+  }
+
   if (!promptEvent) {
     console.warn('[PWA] promptPWAInstall called but no deferredPrompt is available.');
     return false;
@@ -79,14 +118,34 @@ export const promptPWAInstall = async (): Promise<boolean> => {
 
   try {
     await promptEvent.prompt();
+    // Once prompt() resolves, the native Android system dialog is already displayed on screen
     const choiceResult = await promptEvent.userChoice;
     if (choiceResult && choiceResult.outcome === 'accepted') {
       setDeferredPrompt(null);
-      return true;
     }
+    // Return true because the native prompt was successfully invoked to the user
+    return true;
   } catch (err) {
     console.error('[PWA] Error invoking deferredPrompt.prompt():', err);
   }
+  return false;
+};
+
+export const installOnAndroidDirectly = async (): Promise<boolean> => {
+  // First attempt native prompt (waiting up to 3500ms for SW and manifest validation)
+  const success = await promptPWAInstall(3500);
+  if (success) return true;
+
+  if (typeof window !== 'undefined') {
+    const ua = window.navigator.userAgent.toLowerCase();
+    const isWebView = /wv|webview|fbav|instagram|micromessenger|threads/i.test(ua);
+    // If inside In-App browser/WebView, direct intent to Chrome brings up install
+    if (isWebView) {
+      window.location.href = `intent://${window.location.host}${window.location.pathname}${window.location.search}#Intent;scheme=https;package=com.android.chrome;end;`;
+      return true;
+    }
+  }
+
   return false;
 };
 

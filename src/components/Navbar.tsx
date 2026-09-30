@@ -54,7 +54,7 @@ const Navbar = memo(({
               <PWAInstallBadge 
                 size="md"
                 onClick={onInstall}
-                label={settings?.custom_texts?.['pwa.install_app'] || t('pwa.install_app') || "Instalar App"}
+                label={settings?.custom_texts?.['pwa.install_app'] || t('pwa.install_app') || "Install App"}
               />
             )}
           </div>
@@ -173,7 +173,7 @@ const Navbar = memo(({
                 size="sm"
                 showLabel={true}
                 onClick={onInstall}
-                label={settings?.custom_texts?.['pwa.install_app'] || t('pwa.install_app') || "Instalar App"}
+                label={settings?.custom_texts?.['pwa.install_app'] || t('pwa.install_app') || "Install App"}
                 className="px-3 py-1.5 rounded-full bg-black/40 hover:bg-black/60 border border-amber-300/30 backdrop-blur-md"
               />
             </div>

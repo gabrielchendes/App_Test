@@ -110,6 +110,7 @@ async function startServer() {
       const targetUrl = process.env.VITE_SUPABASE_URL || process.env.SUPABASE_URL;
       const anonKey = process.env.VITE_SUPABASE_ANON_KEY || process.env.SUPABASE_ANON_KEY;
       let appName = 'Missing Trigger';
+      let shortName = '';
       let themeColor = '#0b0c10';
       let bgColor = '#0b0c10';
       let androidIcon = '/icon-512.png';
@@ -127,10 +128,21 @@ async function startServer() {
             const data = await resp.json();
             const s = data?.[0];
             if (s) {
-              if (s.app_name) appName = s.app_name;
+              const customTexts = s.custom_texts || {};
+              if (customTexts['config.pwa_app_name'] && typeof customTexts['config.pwa_app_name'] === 'string' && customTexts['config.pwa_app_name'].trim()) {
+                appName = customTexts['config.pwa_app_name'].trim();
+              } else if (s.app_name && typeof s.app_name === 'string' && s.app_name.trim()) {
+                appName = s.app_name.trim();
+              }
+
+              if (customTexts['config.app_short_name'] && typeof customTexts['config.app_short_name'] === 'string' && customTexts['config.app_short_name'].trim()) {
+                shortName = customTexts['config.app_short_name'].trim();
+              } else if (customTexts['config.pwa_short_name'] && typeof customTexts['config.pwa_short_name'] === 'string' && customTexts['config.pwa_short_name'].trim()) {
+                shortName = customTexts['config.pwa_short_name'].trim();
+              }
+
               if (s.primary_color) themeColor = s.primary_color;
               if (s.background_color) bgColor = s.background_color;
-              const customTexts = s.custom_texts || {};
               const resolvedAndroidIcon = customTexts['config.android_icon_url'] || s.pwa_icon_url || customTexts['config.pwa_icon_url'];
               if (resolvedAndroidIcon && typeof resolvedAndroidIcon === 'string' && resolvedAndroidIcon.trim()) {
                 androidIcon = resolvedAndroidIcon.trim();
@@ -142,10 +154,14 @@ async function startServer() {
         }
       }
 
+      if (!shortName) {
+        shortName = appName;
+      }
+
       const manifest = {
         id: '/',
         name: appName,
-        short_name: appName.length > 12 ? appName.slice(0, 12) : appName,
+        short_name: shortName,
         description: `${appName} - Exclusive members area.`,
         start_url: '/',
         scope: '/',
@@ -158,29 +174,30 @@ async function startServer() {
             src: androidIcon,
             sizes: '192x192',
             type: 'image/png',
-            purpose: 'any maskable'
+            purpose: 'any'
           },
           {
             src: androidIcon,
             sizes: '512x512',
             type: 'image/png',
-            purpose: 'any maskable'
+            purpose: 'any'
           },
           {
             src: androidIcon,
             sizes: '192x192',
             type: 'image/png',
-            purpose: 'any'
+            purpose: 'maskable'
           },
           {
             src: androidIcon,
             sizes: '512x512',
             type: 'image/png',
-            purpose: 'any'
+            purpose: 'maskable'
           }
         ]
       };
-      res.setHeader('Content-Type', 'application/manifest+json');
+      res.setHeader('Content-Type', 'application/manifest+json; charset=utf-8');
+      res.setHeader('Access-Control-Allow-Origin', '*');
       res.setHeader('Cache-Control', 'public, max-age=60');
       return res.json(manifest);
     } catch (e: any) {

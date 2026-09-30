@@ -153,6 +153,23 @@ const FALLBACK_TRANSLATIONS: { [key: string]: string } = {
   'gamification.level_5_req': 'You have reached the top!',
   'gamification.you_label': 'YOU',
   'gamification.view_progress_tooltip': 'View Progress & Badges',
+  'pwa.install_title': 'Install our app 📲',
+  'pwa.install_desc': 'Get fast access and exclusive notifications directly on your device.',
+  'pwa.ios_label': 'Apple iOS',
+  'pwa.android_label': 'Android',
+  'pwa.mobile_header': 'Install on your phone for a better experience',
+  'pwa.desktop_label': 'Desktop',
+  'pwa.ios_step1': 'Tap the Share icon (or three dots ⋯)',
+  'pwa.ios_step2': 'Select “Add to Home Screen”',
+  'pwa.ios_step3': 'Tap “Add” to confirm',
+  'pwa.android_step1': 'Click the Install button below',
+  'pwa.desktop_step1': 'Use the icon in the address bar',
+  'pwa.got_it': 'GOT IT',
+  'pwa.install_button': 'INSTALL APP NOW',
+  'pwa.install_now': 'Install App Now',
+  'pwa.already_installed': 'ALREADY INSTALLED',
+  'pwa.install_app': 'Install App',
+  'pwa.tap_to_add': 'Tap to install the app',
 };
 
 export function I18nProvider({ children }: { children: ReactNode }) {

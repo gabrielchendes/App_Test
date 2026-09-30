@@ -137,6 +137,13 @@
         window.deferredPWAInstallPrompt = e;
         window.dispatchEvent(new CustomEvent('pwa-prompt-available', { detail: e }));
       });
+
+      // Immediate service worker registration for Samsung Internet and Chromium PWA criteria
+      if ('serviceWorker' in navigator && !window.frameElement) {
+        try {
+          navigator.serviceWorker.register('/sw.js', { scope: '/' }).catch(function() {});
+        } catch (e) {}
+      }
     </script>
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
     <meta name="referrer" content="no-referrer-when-downgrade" />

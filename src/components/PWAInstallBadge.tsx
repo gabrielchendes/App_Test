@@ -62,7 +62,7 @@ export const PWAInstallBadge = ({
         "group relative flex items-center gap-2.5 transition-all duration-300 active:scale-95 cursor-pointer select-none",
         className
       )}
-      title={label || "Instalar Aplicativo"}
+      title={label || "Install App"}
     >
       {/* Icon Wrapper */}
       <div className="relative shrink-0 flex items-center justify-center">
@@ -151,7 +151,7 @@ export const PWAInstallBadge = ({
       {/* Optional Label (Desktop / Expanded) */}
       {showLabel && (
         <span className="text-xs font-black uppercase tracking-wider text-amber-200 group-hover:text-amber-100 transition-colors drop-shadow-sm truncate">
-          {label || "Instalar App"}
+          {label || "Install App"}
         </span>
       )}
     </button>

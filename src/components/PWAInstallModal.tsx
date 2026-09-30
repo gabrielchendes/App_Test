@@ -138,6 +138,17 @@ export default function PWAInstallModal({ isOpen, onClose, onInstall }: PWAInsta
       window.removeEventListener('appinstalled', updateInstallState);
     };
   }, []);
+
+  // When modal is open on Android, automatically attempt native install if prompt is ready
+  useEffect(() => {
+    if (isOpen && device === 'android') {
+      promptPWAInstall().then((success) => {
+        if (success) {
+          onClose();
+        }
+      });
+    }
+  }, [isOpen, device]);
   
   const [currentSlideIos, setCurrentSlideIos] = useState(0);
   const [currentSlideAndroid, setCurrentSlideAndroid] = useState(0);
@@ -222,12 +233,25 @@ export default function PWAInstallModal({ isOpen, onClose, onInstall }: PWAInsta
         if (step && step !== `pwa.ios_step${i}`) iosSteps.push(step);
       }
       if (iosSteps.length > 0) return iosSteps;
+      return [
+        'Tap the Share icon (or three dots ⋯)',
+        'Select “Add to Home Screen”',
+        'Tap “Add” to confirm'
+      ];
     }
 
-    if (platform === 'android') return [t('pwa.android_step1')];
-    if (platform === 'desktop') return [t('pwa.desktop_step1')];
+    if (platform === 'android') {
+      const step = t('pwa.android_step1');
+      if (step && step !== 'pwa.android_step1') return [step];
+      return ['Click the Install button below'];
+    }
+    if (platform === 'desktop') {
+      const step = t('pwa.desktop_step1');
+      if (step && step !== 'pwa.desktop_step1') return [step];
+      return ['Use the install icon in the address bar'];
+    }
     
-    return [t('pwa.ios_step1'), t('pwa.ios_step2')];
+    return ['Tap the Share icon', 'Select “Add to Home Screen”'];
   };
 
   const iosSteps = getPlatformSteps('ios');
@@ -317,14 +341,14 @@ export default function PWAInstallModal({ isOpen, onClose, onInstall }: PWAInsta
               <div className={`text-center mb-4 md:mb-8 ${showDualMobile ? 'max-w-3xl mx-auto' : ''}`}>
                 <h3 className="text-xl md:text-3xl font-black text-white uppercase tracking-tighter italic mb-2 md:mb-4 leading-tight md:leading-none">
                   {showDualMobile 
-                    ? (settings.custom_texts?.['pwa.install_title'] || t('pwa.install_title') || 'Instale nosso aplicativo 📲')
-                    : (settings.custom_texts?.[`pwa.${currentPlatform}_label`] || t(`pwa.${currentPlatform}_label`) || settings.custom_texts?.['pwa.install_title'] || t('pwa.install_title'))
+                    ? (settings.custom_texts?.['pwa.install_title'] || t('pwa.install_title') || 'Install our app 📲')
+                    : (settings.custom_texts?.[`pwa.${currentPlatform}_label`] || t(`pwa.${currentPlatform}_label`) || settings.custom_texts?.['pwa.install_title'] || t('pwa.install_title') || 'Install our app 📲')
                   }
                 </h3>
                 
                 {showDualMobile && (
                   <p className="text-[10px] font-black text-primary uppercase tracking-[0.2em] italic mb-[-0.75rem] relative z-10">
-                    {settings.custom_texts?.['pwa.mobile_header'] || t('pwa.mobile_header') || 'Instale no seu celular para uma melhor experiência'}
+                    {settings.custom_texts?.['pwa.mobile_header'] || t('pwa.mobile_header') || 'Install on your phone for a better experience'}
                   </p>
                 )}
               </div>
@@ -373,64 +397,12 @@ export default function PWAInstallModal({ isOpen, onClose, onInstall }: PWAInsta
                     />
 
                     {/* Botão de Instalação Direta no Android (Prompt Nativo) */}
-                    {canPromptInstall && (
-                      <motion.button
-                        initial={{ opacity: 0, scale: 0.95 }}
-                        animate={{ opacity: 1, scale: 1 }}
-                        whileHover={{ scale: 1.02 }}
-                        whileTap={{ scale: 0.98 }}
-                        onClick={async () => {
-                          try {
-                            if (onInstall) {
-                              const success = await onInstall();
-                              if (success) {
-                                onClose();
-                                return;
-                              }
-                            }
-                            const success = await promptPWAInstall();
-                            if (success) {
-                              onClose();
-                            }
-                          } catch (err) {
-                            console.error('Error invoking direct Android install:', err);
-                          }
-                        }}
-                        className="w-full mt-2 group relative overflow-hidden flex items-center justify-center gap-2.5 py-3.5 md:py-4 px-6 bg-gradient-to-r from-emerald-500 to-emerald-400 text-black font-black uppercase tracking-wider rounded-2xl md:rounded-3xl shadow-xl shadow-emerald-500/25 transition-all text-xs md:text-sm cursor-pointer border border-emerald-300/40"
-                      >
-                        <div className="absolute inset-0 bg-gradient-to-r from-transparent via-white/40 to-transparent -translate-x-full group-hover:translate-x-full transition-transform duration-1000" />
-                        <Download className="w-4 h-4 md:w-5 md:h-5 text-black shrink-0 animate-bounce" />
-                        <span>Instalar Aplicativo</span>
-                      </motion.button>
-                    )}
-                  </div>
-                )}
-
-                {(currentPlatform === 'desktop' && !showDualMobile) && (
-                  <PWAColumn 
-                    platform="desktop"
-                    steps={desktopSteps}
-                    images={desktopImages}
-                    refObj={carouselRefDesktop}
-                    slide={currentSlideDesktop}
-                    setSlide={setCurrentSlideDesktop}
-                    label={settings.custom_texts?.['pwa.desktop_label'] || t('pwa.desktop_label') || 'Computador'}
-                    hideLabel={true}
-                    onManualInteraction={handleManualInteraction}
-                    isAutoScrollingRef={isAutoScrollingDesktop}
-                  />
-                )}
-              </div>
-
-              <div className={`mt-4 md:mt-8 space-y-4 md:space-y-8 ${showDualMobile ? 'max-w-2xl mx-auto' : 'max-w-lg mx-auto'}`}>
-                <p className="text-[10px] md:text-xs text-gray-400 font-medium text-center leading-relaxed px-4 md:px-8">
-                  {settings.custom_texts?.['pwa.install_desc'] || t('pwa.install_desc') || 'Tenha acesso rápido e notificações exclusivas direto no seu dispositivo.'}
-                </p>
-
-                <div className="grid grid-cols-2 gap-3 md:gap-4 px-2 md:px-4 pb-4">
-                  <button
-                    onClick={async () => {
-                      if (canPromptInstall) {
+                    <motion.button
+                      initial={{ opacity: 0, scale: 0.95 }}
+                      animate={{ opacity: 1, scale: 1 }}
+                      whileHover={{ scale: 1.02 }}
+                      whileTap={{ scale: 0.98 }}
+                      onClick={async () => {
                         try {
                           if (onInstall) {
                             const success = await onInstall();
@@ -444,31 +416,82 @@ export default function PWAInstallModal({ isOpen, onClose, onInstall }: PWAInsta
                             onClose();
                             return;
                           }
-                        } catch (e) {
-                          console.warn('Install button error:', e);
+                          const ua = window.navigator.userAgent.toLowerCase();
+                          const isWebView = /wv|webview|fbav|instagram|micromessenger|threads/i.test(ua);
+                          if (isWebView) {
+                            window.location.href = `intent://${window.location.host}${window.location.pathname}${window.location.search}#Intent;scheme=https;package=com.android.chrome;end;`;
+                            return;
+                          }
+                        } catch (err) {
+                          console.error('Error invoking direct Android install:', err);
                         }
+                      }}
+                      className="w-full mt-3 group relative overflow-hidden flex items-center justify-center gap-2.5 py-4 px-6 bg-gradient-to-r from-emerald-500 to-emerald-400 text-black font-black uppercase tracking-wider rounded-2xl md:rounded-3xl shadow-xl shadow-emerald-500/25 transition-all text-xs md:text-sm cursor-pointer border border-emerald-300/40"
+                    >
+                      <div className="absolute inset-0 bg-gradient-to-r from-transparent via-white/40 to-transparent -translate-x-full group-hover:translate-x-full transition-transform duration-1000" />
+                      <Download className="w-5 h-5 text-black shrink-0 animate-bounce" />
+                      <span>{settings.custom_texts?.['pwa.install_now'] || t('pwa.install_now') || 'Install App Now'}</span>
+                    </motion.button>
+                  </div>
+                )}
+
+                {(currentPlatform === 'desktop' && !showDualMobile) && (
+                  <PWAColumn 
+                    platform="desktop"
+                    steps={desktopSteps}
+                    images={desktopImages}
+                    refObj={carouselRefDesktop}
+                    slide={currentSlideDesktop}
+                    setSlide={setCurrentSlideDesktop}
+                    label={settings.custom_texts?.['pwa.desktop_label'] || t('pwa.desktop_label') || 'Desktop'}
+                    hideLabel={true}
+                    onManualInteraction={handleManualInteraction}
+                    isAutoScrollingRef={isAutoScrollingDesktop}
+                  />
+                )}
+              </div>
+
+              <div className={`mt-4 md:mt-8 space-y-4 md:space-y-8 ${showDualMobile ? 'max-w-2xl mx-auto' : 'max-w-lg mx-auto'}`}>
+                <p className="text-[10px] md:text-xs text-gray-400 font-medium text-center leading-relaxed px-4 md:px-8">
+                  {settings.custom_texts?.['pwa.install_desc'] || t('pwa.install_desc') || 'Get fast access and exclusive notifications directly on your device.'}
+                </p>
+
+                <div className="grid grid-cols-2 gap-3 md:gap-4 px-2 md:px-4 pb-4">
+                  <button
+                    onClick={async () => {
+                      try {
+                        if (onInstall) {
+                          const res = await onInstall();
+                          if (res) {
+                            onClose();
+                            return;
+                          }
+                        }
+                        const success = await promptPWAInstall();
+                        if (success) {
+                          onClose();
+                          return;
+                        }
+                        if (device === 'android') {
+                          const ua = window.navigator.userAgent.toLowerCase();
+                          const isWebView = /wv|webview|fbav|instagram|micromessenger|threads/i.test(ua);
+                          if (isWebView) {
+                            window.location.href = `intent://${window.location.host}${window.location.pathname}${window.location.search}#Intent;scheme=https;package=com.android.chrome;end;`;
+                            return;
+                          }
+                        }
+                      } catch (e) {
+                        console.warn('Install button error:', e);
                       }
 
-                      const isGotItMode = (device === 'ios' || showDualMobile || adminDisplayMode === 'mobile') && !canPromptInstall;
-                      if (isGotItMode) {
-                        onClose();
-                      } else if (onInstall) {
-                        try {
-                          await (onInstall as any)();
-                          onClose();
-                        } catch (e) {
-                          onClose();
-                        }
-                      } else {
-                        onClose();
-                      }
+                      onClose();
                     }}
                     className="group relative overflow-hidden flex items-center justify-center gap-2 py-3 md:py-5 px-4 md:px-6 bg-primary text-black font-black uppercase tracking-tighter rounded-2xl md:rounded-3xl hover:brightness-110 active:scale-95 transition-all text-xs md:text-sm shadow-2xl shadow-primary/30 cursor-pointer"
                   >
                     <div className="absolute inset-0 bg-gradient-to-tr from-white/0 via-white/40 to-white/0 -translate-x-full group-hover:translate-x-full transition-transform duration-1000" />
-                    {canPromptInstall 
-                      ? (settings.custom_texts?.['pwa.install_button'] || t('pwa.install_button') || 'INSTALAR APLICATIVO')
-                      : ((device === 'ios' || showDualMobile || adminDisplayMode === 'mobile') ? (t('pwa.got_it') || 'ENTENDI') : (settings.custom_texts?.['pwa.install_button'] || t('pwa.install_button') || 'INSTALAR'))
+                    {device === 'ios' && !canPromptInstall
+                      ? (settings.custom_texts?.['pwa.got_it'] || t('pwa.got_it') || 'GOT IT')
+                      : (settings.custom_texts?.['pwa.install_button'] || t('pwa.install_button') || 'INSTALL APP NOW')
                     }
                   </button>
                   <button

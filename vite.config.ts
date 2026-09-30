@@ -81,7 +81,7 @@ export default defineConfig(({mode}) => {
         manifest: {
           id: '/',
           name: 'Missing Trigger',
-          short_name: 'Trigger',
+          short_name: 'Missing Trigger',
           description: 'Exclusive members area with premium content.',
           theme_color: '#0b0c10',
           background_color: '#0b0c10',

@@ -5113,6 +5113,55 @@ export default function AdminPanel({ user }: AdminPanelProps) {
                         </div>
                         
                         <div className="space-y-4">
+                          {/* Nome da Aplicação e Nome Curto (PWA / Mobile) */}
+                          <div className="grid grid-cols-1 md:grid-cols-2 gap-4 p-4 bg-black/40 rounded-xl border border-white/5">
+                            <div className="space-y-2">
+                              <div className="flex items-center justify-between">
+                                <label className="text-xs font-black text-gray-300 uppercase tracking-widest flex items-center gap-1.5">
+                                  <Smartphone size={13} className="text-blue-400" />
+                                  Nome da Aplicação / PWA
+                                </label>
+                                <span className="text-[10px] text-gray-500 font-mono">Principal</span>
+                              </div>
+                              <input 
+                                type="text" 
+                                value={localSettings?.app_name || ''}
+                                onChange={(e) => {
+                                  const val = e.target.value;
+                                  setLocalSettings({ ...localSettings, app_name: val });
+                                  setDraftCustomTexts({ ...draftCustomTexts, 'config.pwa_app_name': val });
+                                }}
+                                className="w-full bg-black border border-white/10 rounded-xl px-4 py-3 text-white text-sm focus:border-blue-500 outline-none transition-all placeholder:text-gray-600"
+                                placeholder="Nome oficial do App (ex: Missing Trigger)"
+                              />
+                              <p className="text-[11px] text-gray-400 leading-relaxed">
+                                Nome exibido no topo do navegador, no diálogo de instalação e nos cabeçalhos da plataforma.
+                              </p>
+                            </div>
+
+                            <div className="space-y-2">
+                              <div className="flex items-center justify-between">
+                                <label className="text-xs font-black text-gray-300 uppercase tracking-widest flex items-center gap-1.5">
+                                  <Smartphone size={13} className="text-emerald-400" />
+                                  Nome na Tela de Início (Mobile)
+                                </label>
+                                <span className="text-[10px] text-emerald-400/80 font-mono">Android & iOS</span>
+                              </div>
+                              <input 
+                                type="text" 
+                                value={draftCustomTexts['config.app_short_name'] !== undefined ? draftCustomTexts['config.app_short_name'] : (settings?.custom_texts?.['config.app_short_name'] || localSettings?.app_name || '')}
+                                onChange={(e) => {
+                                  setDraftCustomTexts({ ...draftCustomTexts, 'config.app_short_name': e.target.value });
+                                }}
+                                className="w-full bg-black border border-white/10 rounded-xl px-4 py-3 text-white text-sm focus:border-emerald-500 outline-none transition-all placeholder:text-gray-600"
+                                placeholder="Nome curto do ícone (ex: Missing Trigger)"
+                              />
+                              <p className="text-[11px] text-gray-400 leading-relaxed">
+                                Nome exibido abaixo do ícone na tela inicial do celular Android e iPhone. Evita cortes indesejados ou sufixos como &quot;1 x 1&quot;.
+                              </p>
+                            </div>
+                          </div>
+
                           {/* Abas para separar Favicon, Ícone Android e Ícone iPhone */}
                           <div className="space-y-3">
                             <label className="text-xs font-black text-gray-400 uppercase tracking-widest block">Ícones da Aplicação</label>
@@ -5572,7 +5621,11 @@ export default function AdminPanel({ user }: AdminPanelProps) {
                           <button 
                             onClick={async () => {
                               setIsSavingSettings(true);
+                              const shortNameVal = draftCustomTexts['config.app_short_name'] !== undefined
+                                ? draftCustomTexts['config.app_short_name']
+                                : (localSettings?.app_name || '');
                               await updateSettings({ 
+                                app_name: localSettings?.app_name || '',
                                 favicon_url: localSettings?.favicon_url || '',
                                 pwa_icon_url: localSettings?.android_icon_url || localSettings?.ios_icon_url || localSettings?.pwa_icon_url || localSettings?.favicon_url || '',
                                 android_icon_url: localSettings?.android_icon_url || '',
@@ -5582,7 +5635,13 @@ export default function AdminPanel({ user }: AdminPanelProps) {
                                 background_color: localSettings?.background_color,
                                 support_whatsapp: localSettings?.support_whatsapp,
                                 support_email: localSettings?.support_email,
-                                gtm_id: localSettings?.gtm_id
+                                gtm_id: localSettings?.gtm_id,
+                                custom_texts: {
+                                  ...settings.custom_texts,
+                                  ...draftCustomTexts,
+                                  'config.app_short_name': shortNameVal,
+                                  'config.pwa_app_name': localSettings?.app_name || ''
+                                }
                               });
                               setIsSavingSettings(false);
                             }}
@@ -5680,6 +5739,14 @@ export default function AdminPanel({ user }: AdminPanelProps) {
                                 ...draftCustomTexts
                               }
                             };
+
+                            if (localSettings?.app_name !== undefined) {
+                              updates.app_name = localSettings.app_name;
+                              updates.custom_texts['config.pwa_app_name'] = localSettings.app_name;
+                              if (draftCustomTexts['config.app_short_name'] !== undefined) {
+                                updates.custom_texts['config.app_short_name'] = draftCustomTexts['config.app_short_name'];
+                              }
+                            }
 
                             // Se estiver na aba login, inclui configurações específicas
                             if (activePageTab === 'login') {
@@ -7758,6 +7825,55 @@ export default function AdminPanel({ user }: AdminPanelProps) {
                             <div className="lg:col-span-2 space-y-4">
                                 <div className="space-y-1">
                                   <h4 className="text-xl font-black text-white uppercase italic tracking-tighter">PWA (Instalação)</h4>
+                                </div>
+
+                                {/* Configuração de Nome do Aplicativo no PWA */}
+                                <div className="grid grid-cols-1 md:grid-cols-2 gap-4 p-4 bg-black/40 rounded-2xl border border-white/5 pt-4">
+                                  <div className="space-y-2">
+                                    <div className="flex items-center justify-between">
+                                      <label className="text-xs font-black text-gray-300 uppercase tracking-widest flex items-center gap-1.5">
+                                        <Smartphone size={13} className="text-blue-400" />
+                                        Nome do Aplicativo (PWA)
+                                      </label>
+                                      <span className="text-[10px] text-gray-500 font-mono">Geral</span>
+                                    </div>
+                                    <input 
+                                      type="text" 
+                                      value={localSettings?.app_name || ''}
+                                      onChange={(e) => {
+                                        const val = e.target.value;
+                                        setLocalSettings({ ...localSettings, app_name: val });
+                                        setDraftCustomTexts({ ...draftCustomTexts, 'config.pwa_app_name': val });
+                                      }}
+                                      className="w-full bg-zinc-900 border border-white/10 rounded-xl px-4 py-3 text-sm text-white focus:border-blue-500 outline-none"
+                                      placeholder="Nome do Aplicativo (ex: Missing Trigger)"
+                                    />
+                                    <p className="text-[11px] text-gray-400 leading-relaxed">
+                                      Nome principal exibido na instalação e nos navegadores.
+                                    </p>
+                                  </div>
+
+                                  <div className="space-y-2">
+                                    <div className="flex items-center justify-between">
+                                      <label className="text-xs font-black text-gray-300 uppercase tracking-widest flex items-center gap-1.5">
+                                        <Smartphone size={13} className="text-emerald-400" />
+                                        Nome na Tela de Início (Mobile)
+                                      </label>
+                                      <span className="text-[10px] text-emerald-400 font-mono">Android & iOS</span>
+                                    </div>
+                                    <input 
+                                      type="text" 
+                                      value={draftCustomTexts['config.app_short_name'] !== undefined ? draftCustomTexts['config.app_short_name'] : (settings?.custom_texts?.['config.app_short_name'] || localSettings?.app_name || '')}
+                                      onChange={(e) => {
+                                        setDraftCustomTexts({ ...draftCustomTexts, 'config.app_short_name': e.target.value });
+                                      }}
+                                      className="w-full bg-zinc-900 border border-white/10 rounded-xl px-4 py-3 text-sm text-white focus:border-emerald-500 outline-none"
+                                      placeholder="Nome do ícone (ex: Missing Trigger)"
+                                    />
+                                    <p className="text-[11px] text-gray-400 leading-relaxed">
+                                      Nome exibido abaixo do ícone no Android e iPhone. Evita cortes indesejados (&quot;1 x 1&quot;).
+                                    </p>
+                                  </div>
                                 </div>
                                 <div className="space-y-4 pt-4 border-t border-white/5">
                                   <div className="flex items-center justify-between">

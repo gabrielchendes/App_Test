@@ -9,6 +9,7 @@ import { useI18n } from '../contexts/I18nContext';
 import { safeParse, safeFetch } from '../lib/utils';
 import { motion, AnimatePresence } from 'motion/react';
 import { usePWAInstall } from '../hooks/usePWAInstall';
+import { getDeviceType, installOnAndroidDirectly } from '../lib/pwa';
 import { lazyWithRetry } from '../lib/lazyWithRetry';
 
 const PWAInstallModal = lazyWithRetry(() => import('./PWAInstallModal'));
@@ -194,18 +195,41 @@ export default function AuthForm() {
     );
   }
 
+  const [isInstallingPWA, setIsInstallingPWA] = useState(false);
+
   const handleInstallClick = async () => {
-    const success = await promptInstall();
-    if (!success) {
-      // If it failed because deferredPrompt was null, show the modal instructions instead
-      setIsPWAModalOpen(true);
+    if (isInstallingPWA) return;
+    setIsInstallingPWA(true);
+    try {
+      const isAndroid = getDeviceType() === 'android';
+      if (isAndroid) {
+        // On all Android devices, attempt direct install prompt first
+        const directSuccess = await installOnAndroidDirectly();
+        if (directSuccess) return;
+      }
+
+      const success = await promptInstall();
+      if (!success) {
+        if (isAndroid) {
+          // If native prompt could not be triggered, launch Chrome intent to install directly
+          const isWebView = /wv|webview|fbav|instagram|micromessenger|threads/i.test(navigator.userAgent);
+          if (isWebView) {
+            window.location.href = `intent://${window.location.host}${window.location.pathname}${window.location.search}#Intent;scheme=https;package=com.android.chrome;end;`;
+            return;
+          }
+        }
+        // If iOS or unsupported browser, show instructions modal
+        setIsPWAModalOpen(true);
+      }
+    } finally {
+      setIsInstallingPWA(false);
     }
   };
 
   const showInstallButton = settings.login_install_button_pulsing !== 'hidden' && (settings.custom_texts?.['pwa.enable_button'] !== 'false');
   const isPulsing = settings.login_install_button_pulsing === 'pulsing' || settings.login_install_button_pulsing === true;
-  const rawInstallText = settings.custom_texts?.['pwa.install_app'] || t('pwa.install_app') || 'Instalar App';
-  const cleanInstallText = rawInstallText.replace(/^[\p{Emoji}\p{Extended_Pictographic}\s]+/u, '').trim() || 'Instalar App';
+  const rawInstallText = settings.custom_texts?.['pwa.install_app'] || t('pwa.install_app') || 'Install App';
+  const cleanInstallText = rawInstallText.replace(/^[\p{Emoji}\p{Extended_Pictographic}\s]+/u, '').trim() || 'Install App';
 
   return (
     <div className="flex flex-col items-center gap-6 w-full max-w-md">
@@ -305,10 +329,10 @@ export default function AuthForm() {
               {/* Centered Typography / Action Copy */}
               <div className="flex flex-col text-left min-w-0">
                 <h3 className="text-xs sm:text-[13px] font-black text-white tracking-wider uppercase group-hover:text-amber-300 transition-colors truncate drop-shadow-sm">
-                  {cleanInstallText || 'Instalar Aplicativo'}
+                  {isInstallingPWA ? 'Opening Installer...' : (cleanInstallText || 'Install App')}
                 </h3>
                 <p className="text-[10px] sm:text-[11px] text-zinc-300 font-medium group-hover:text-white transition-colors truncate leading-tight mt-0.5">
-                  {settings.custom_texts?.['pwa.tap_to_add'] || t('pwa.tap_to_add') || 'Toque para adicionar à tela de início'}
+                  {settings.custom_texts?.['pwa.tap_to_add'] || t('pwa.tap_to_add') || 'Tap to install the app'}
                 </p>
               </div>
             </div>

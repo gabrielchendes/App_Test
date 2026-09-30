@@ -241,6 +241,9 @@ export function SettingsProvider({ children }: { children: React.ReactNode }) {
           if (data.custom_texts['config.favicon_url'] !== undefined) {
             data.favicon_url = data.custom_texts['config.favicon_url'] || null;
           }
+          if (data.custom_texts['config.pwa_app_name']) {
+            data.app_name = data.custom_texts['config.pwa_app_name'];
+          }
         }
         setSettings(data);
         applyTheme(data);
@@ -332,67 +335,32 @@ export function SettingsProvider({ children }: { children: React.ReactNode }) {
         document.head.appendChild(appleLink);
       }
 
-      // iOS Web App Title
+      // iOS Web App Title & Application Name
+      const shortTitle = s.custom_texts?.['config.app_short_name'] || s.app_name || 'Missing Trigger';
       let appleTitle = document.querySelector("meta[name='apple-mobile-web-app-title']") as HTMLMetaElement;
       if (!appleTitle) {
         appleTitle = document.createElement('meta');
         appleTitle.name = 'apple-mobile-web-app-title';
         document.head.appendChild(appleTitle);
       }
-      appleTitle.content = s.app_name || 'Missing Trigger';
+      appleTitle.content = shortTitle;
+
+      let appNameMeta = document.querySelector("meta[name='application-name']") as HTMLMetaElement;
+      if (!appNameMeta) {
+        appNameMeta = document.createElement('meta');
+        appNameMeta.name = 'application-name';
+        document.head.appendChild(appNameMeta);
+      }
+      appNameMeta.content = shortTitle;
     }
 
-    // 3. Update Android Web App Manifest
-    const effectiveAndroidIcon = (s.android_icon_url && s.android_icon_url.trim()) || (s.pwa_icon_url && s.pwa_icon_url.trim()) || (s.favicon_url && s.favicon_url.trim());
-    if (effectiveAndroidIcon) {
-      try {
-        const manifestLink = document.querySelector("link[rel='manifest']") as HTMLLinkElement;
-        const iconSrc = effectiveAndroidIcon;
-        const dynamicManifest = {
-          id: '/',
-          name: s.app_name || 'Missing Trigger',
-          short_name: s.app_name ? (s.app_name.length > 12 ? s.app_name.slice(0, 12) : s.app_name) : 'Trigger',
-          description: s.app_description || `${s.app_name || 'Missing Trigger'} - Exclusive members area with premium content.`,
-          start_url: '/',
-          scope: '/',
-          display: 'standalone',
-          orientation: 'portrait',
-          background_color: s.background_color || '#0b0c10',
-          theme_color: s.primary_color || '#0b0c10',
-          icons: [
-            {
-              src: iconSrc,
-              sizes: '192x192',
-              type: 'image/png',
-              purpose: 'any maskable'
-            },
-            {
-              src: iconSrc,
-              sizes: '512x512',
-              type: 'image/png',
-              purpose: 'any maskable'
-            },
-            {
-              src: iconSrc,
-              sizes: '192x192',
-              type: 'image/png',
-              purpose: 'any'
-            },
-            {
-              src: iconSrc,
-              sizes: '512x512',
-              type: 'image/png',
-              purpose: 'any'
-            }
-          ]
-        };
-        const blob = new Blob([JSON.stringify(dynamicManifest)], { type: 'application/json' });
-        const manifestUrl = URL.createObjectURL(blob);
-        if (manifestLink) {
-          manifestLink.href = manifestUrl;
-        }
-      } catch (e) {
-        console.warn('Could not update dynamic manifest:', e);
+    // 3. Android Web App Manifest
+    // Ensure the manifest link always uses the valid same-origin HTTP endpoint /manifest.json
+    // Never use a blob: URL because Samsung Internet and Android Chromium reject blob: manifests for WebAPK installation
+    const manifestLink = document.querySelector("link[rel='manifest']") as HTMLLinkElement;
+    if (manifestLink) {
+      if (!manifestLink.href.includes('/manifest.json')) {
+        manifestLink.href = '/manifest.json';
       }
     }
   };
