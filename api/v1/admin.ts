@@ -1444,6 +1444,18 @@ async function handleUpdateSettings(req: VercelRequest, res: VercelResponse) {
     if (!payload.custom_texts) payload.custom_texts = {};
     payload.custom_texts['config.pwa_icon_url'] = payload.pwa_icon_url || '';
   }
+  if ('android_icon_url' in payload) {
+    if (!payload.custom_texts) payload.custom_texts = {};
+    payload.custom_texts['config.android_icon_url'] = payload.android_icon_url || '';
+    delete payload.android_icon_url;
+  }
+  if ('ios_icon_url' in payload) {
+    if (!payload.custom_texts) payload.custom_texts = {};
+    payload.custom_texts['config.ios_icon_url'] = payload.ios_icon_url || '';
+    delete payload.ios_icon_url;
+  }
+  delete payload.android_icon_url;
+  delete payload.ios_icon_url;
   if ('favicon_url' in payload) {
     if (!payload.custom_texts) payload.custom_texts = {};
     payload.custom_texts['config.favicon_url'] = payload.favicon_url || '';

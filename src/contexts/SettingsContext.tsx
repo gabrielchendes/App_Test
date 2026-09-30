@@ -229,17 +229,17 @@ export function SettingsProvider({ children }: { children: React.ReactNode }) {
           if (data.custom_texts['config.support_whatsapp_login_floating'] !== undefined) {
             data.support_whatsapp_login_floating = data.custom_texts['config.support_whatsapp_login_floating'] === 'true';
           }
-          if (data.custom_texts['config.pwa_icon_url'] && !data.pwa_icon_url) {
-            data.pwa_icon_url = data.custom_texts['config.pwa_icon_url'];
+          if (data.custom_texts['config.pwa_icon_url'] !== undefined) {
+            data.pwa_icon_url = data.custom_texts['config.pwa_icon_url'] || null;
           }
-          if (data.custom_texts['config.android_icon_url'] && !data.android_icon_url) {
-            data.android_icon_url = data.custom_texts['config.android_icon_url'];
+          if (data.custom_texts['config.android_icon_url'] !== undefined) {
+            data.android_icon_url = data.custom_texts['config.android_icon_url'] || null;
           }
-          if (data.custom_texts['config.ios_icon_url'] && !data.ios_icon_url) {
-            data.ios_icon_url = data.custom_texts['config.ios_icon_url'];
+          if (data.custom_texts['config.ios_icon_url'] !== undefined) {
+            data.ios_icon_url = data.custom_texts['config.ios_icon_url'] || null;
           }
-          if (data.custom_texts['config.favicon_url'] && !data.favicon_url) {
-            data.favicon_url = data.custom_texts['config.favicon_url'];
+          if (data.custom_texts['config.favicon_url'] !== undefined) {
+            data.favicon_url = data.custom_texts['config.favicon_url'] || null;
           }
         }
         setSettings(data);

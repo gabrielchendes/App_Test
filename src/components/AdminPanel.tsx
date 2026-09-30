@@ -1417,12 +1417,16 @@ export default function AdminPanel({ user }: AdminPanelProps) {
       if ('android_icon_url' in payload) {
         if (!payload.custom_texts) payload.custom_texts = { ...(settings?.custom_texts || {}) };
         payload.custom_texts['config.android_icon_url'] = payload.android_icon_url || '';
+        delete payload.android_icon_url;
       }
 
       if ('ios_icon_url' in payload) {
         if (!payload.custom_texts) payload.custom_texts = { ...(settings?.custom_texts || {}) };
         payload.custom_texts['config.ios_icon_url'] = payload.ios_icon_url || '';
+        delete payload.ios_icon_url;
       }
+      delete payload.android_icon_url;
+      delete payload.ios_icon_url;
 
       if ('favicon_url' in payload) {
         if (!payload.custom_texts) payload.custom_texts = { ...(settings?.custom_texts || {}) };
@@ -1457,32 +1461,30 @@ export default function AdminPanel({ user }: AdminPanelProps) {
       }
 
       if (error) {
-        if (error.message?.includes('show_course_titles_home') || error.message?.includes('pwa_icon_url') || error.message?.includes('android_icon_url') || error.message?.includes('ios_icon_url') || error.message?.includes('enable_testimonials')) {
+        const errorMsg = String(error.message || '');
+        if (errorMsg.includes('schema cache') || errorMsg.includes('does not exist') || errorMsg.includes('show_course_titles_home') || errorMsg.includes('pwa_icon_url') || errorMsg.includes('android_icon_url') || errorMsg.includes('ios_icon_url') || errorMsg.includes('enable_testimonials')) {
           const fallbackPayload = { ...payload };
-          if (error.message?.includes('show_course_titles_home')) {
+          // Strip any unknown columns mentioned in error message
+          delete fallbackPayload.android_icon_url;
+          delete fallbackPayload.ios_icon_url;
+          const match = errorMsg.match(/Could not find the '([^']+)' column/i) || errorMsg.match(/column "([^"]+)" of relation/i);
+          if (match && match[1]) {
+            delete (fallbackPayload as any)[match[1]];
+          }
+          if (errorMsg.includes('show_course_titles_home')) {
             delete fallbackPayload.show_course_titles_home;
             if (!fallbackPayload.custom_texts) fallbackPayload.custom_texts = { ...(settings?.custom_texts || {}) };
             fallbackPayload.custom_texts['config.show_course_titles_home'] = String(!!newSettings.show_course_titles_home);
           }
-          if (error.message?.includes('enable_testimonials')) {
+          if (errorMsg.includes('enable_testimonials')) {
             delete fallbackPayload.enable_testimonials;
             if (!fallbackPayload.custom_texts) fallbackPayload.custom_texts = { ...(settings?.custom_texts || {}) };
             fallbackPayload.custom_texts['home.enable_testimonials'] = String(newSettings.enable_testimonials !== false);
           }
-          if (error.message?.includes('pwa_icon_url')) {
+          if (errorMsg.includes('pwa_icon_url')) {
             delete fallbackPayload.pwa_icon_url;
             if (!fallbackPayload.custom_texts) fallbackPayload.custom_texts = { ...(settings?.custom_texts || {}) };
             fallbackPayload.custom_texts['config.pwa_icon_url'] = newSettings.pwa_icon_url || '';
-          }
-          if (error.message?.includes('android_icon_url')) {
-            delete fallbackPayload.android_icon_url;
-            if (!fallbackPayload.custom_texts) fallbackPayload.custom_texts = { ...(settings?.custom_texts || {}) };
-            fallbackPayload.custom_texts['config.android_icon_url'] = newSettings.android_icon_url || '';
-          }
-          if (error.message?.includes('ios_icon_url')) {
-            delete fallbackPayload.ios_icon_url;
-            if (!fallbackPayload.custom_texts) fallbackPayload.custom_texts = { ...(settings?.custom_texts || {}) };
-            fallbackPayload.custom_texts['config.ios_icon_url'] = newSettings.ios_icon_url || '';
           }
 
           const { error: fallbackErr } = await supabase
@@ -1490,7 +1492,11 @@ export default function AdminPanel({ user }: AdminPanelProps) {
             .update(fallbackPayload)
             .eq('id', 1);
 
-          if (fallbackErr) throw fallbackErr;
+          if (!fallbackErr) {
+            error = null;
+          } else {
+            throw fallbackErr;
+          }
         } else if (error.message?.includes('banner_config')) {
           throw new Error('A coluna "banner_config" não foi encontrada no banco de dados. Por favor, execute o script SQL de atualização em SUPABASE_SETUP.md no seu painel Supabase.');
         } else if (error.code === '22P02' && error.message?.includes('login_install_button_pulsing')) {
