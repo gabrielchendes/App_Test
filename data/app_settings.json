@@ -1,0 +1,12 @@
+{
+  "favicon_url": "https://fhnmpltilhongdofnzbj.supabase.co/storage/v1/object/public/Ebooks/BANNER/LogoMTiPhone.png",
+  "pwa_icon_url": "https://fhnmpltilhongdofnzbj.supabase.co/storage/v1/object/public/Ebooks/BANNER/LogoAndroid.png",
+  "android_icon_url": "https://fhnmpltilhongdofnzbj.supabase.co/storage/v1/object/public/Ebooks/BANNER/LogoAndroid.png",
+  "ios_icon_url": "https://fhnmpltilhongdofnzbj.supabase.co/storage/v1/object/public/Ebooks/BANNER/LogoMTiPhone.png",
+  "custom_texts": {
+    "config.favicon_url": "https://fhnmpltilhongdofnzbj.supabase.co/storage/v1/object/public/Ebooks/BANNER/LogoMTiPhone.png",
+    "config.android_icon_url": "https://fhnmpltilhongdofnzbj.supabase.co/storage/v1/object/public/Ebooks/BANNER/LogoAndroid.png",
+    "config.ios_icon_url": "https://fhnmpltilhongdofnzbj.supabase.co/storage/v1/object/public/Ebooks/BANNER/LogoMTiPhone.png",
+    "config.pwa_icon_url": "https://fhnmpltilhongdofnzbj.supabase.co/storage/v1/object/public/Ebooks/BANNER/LogoAndroid.png"
+  }
+}

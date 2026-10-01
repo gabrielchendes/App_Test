@@ -1464,6 +1464,27 @@ async function handleUpdateSettings(req: VercelRequest, res: VercelResponse) {
     delete payload.custom_texts['testimonials_order'];
   }
 
+  // Persist to local app_settings.json file so server instantly has latest overrides
+  try {
+    const settingsFilePath = path.join(process.cwd(), 'data', 'app_settings.json');
+    let currentLocal: any = {};
+    if (fs.existsSync(settingsFilePath)) {
+      currentLocal = JSON.parse(fs.readFileSync(settingsFilePath, 'utf-8'));
+    }
+    const mergedLocal = {
+      ...currentLocal,
+      ...newSettings,
+      custom_texts: {
+        ...(currentLocal.custom_texts || {}),
+        ...(payload.custom_texts || {})
+      }
+    };
+    fs.mkdirSync(path.dirname(settingsFilePath), { recursive: true });
+    fs.writeFileSync(settingsFilePath, JSON.stringify(mergedLocal, null, 2), 'utf-8');
+  } catch (fsErr) {
+    console.warn('[Admin API] Notice saving to local settings file:', fsErr);
+  }
+
   // Update app_settings table using scoped client (authenticated caller) with fallback to supabaseAdmin
   const scopedClient = getScopedClient(req);
   let updateError: any = null;

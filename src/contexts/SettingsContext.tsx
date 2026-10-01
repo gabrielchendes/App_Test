@@ -141,6 +141,7 @@ interface SettingsContextType {
   settings: AppSettings;
   loading: boolean;
   refreshSettings: () => Promise<void>;
+  applyTheme: (s: AppSettings) => void;
 }
 
 const SettingsContext = createContext<SettingsContextType | undefined>(undefined);
@@ -179,28 +180,43 @@ export function SettingsProvider({ children }: { children: React.ReactNode }) {
   });
 
   const fetchSettings = async () => {
-    if (!supabase) {
-      setLoading(false);
-      return;
-    }
-
     // Safety timeout to prevent hanging on poor mobile connections
     const timeoutId = setTimeout(() => {
       setLoading(false);
     }, 2000);
 
     try {
-      const { data, error } = await supabase
-        .from('app_settings')
-        .select('*')
-        .eq('id', 1)
-        .maybeSingle();
+      let data: any = null;
 
-      if (error) {
-        console.warn('Supabase notice fetching settings, falling back to cached/defaults:', error?.message || error);
-        if (error.message && (error.message.includes('Refresh Token Not Found') || error.message.includes('invalid_grant'))) {
-          console.warn('Stale auth detected in SettingsProvider, clearing...');
-          localStorage.removeItem('maternidade_premium_auth');
+      // 1. Try fetching server-merged settings with local persistent overrides
+      try {
+        const resp = await fetch('/api/v1/settings', { signal: AbortSignal.timeout(2000) });
+        if (resp.ok) {
+          const json = await resp.json();
+          if (json && (json.app_name || json.favicon_url || json.custom_texts)) {
+            data = json;
+          }
+        }
+      } catch (_) {}
+
+      // 2. Fall back to Supabase client if server route didn't reply
+      if (!data && supabase) {
+        const { data: sbData, error } = await supabase
+          .from('app_settings')
+          .select('*')
+          .eq('id', 1)
+          .maybeSingle();
+
+        if (error) {
+          console.warn('Supabase notice fetching settings, falling back to cached/defaults:', error?.message || error);
+          if (error.message && (error.message.includes('Refresh Token Not Found') || error.message.includes('invalid_grant'))) {
+            console.warn('Stale auth detected in SettingsProvider, clearing...');
+            localStorage.removeItem('maternidade_premium_auth');
+          }
+        }
+
+        if (sbData) {
+          data = sbData;
         }
       }
 
@@ -241,6 +257,12 @@ export function SettingsProvider({ children }: { children: React.ReactNode }) {
           if (data.custom_texts['config.favicon_url'] !== undefined) {
             data.favicon_url = data.custom_texts['config.favicon_url'] || null;
           }
+          if (data.favicon_url && data.favicon_url.includes('LogoMT.png')) {
+            data.favicon_url = data.favicon_url.replace('LogoMT.png', 'LogoMTiPhone.png');
+          }
+          if (!data.ios_icon_url && data.logo_url && data.logo_url.includes('iPhone')) {
+            data.ios_icon_url = data.logo_url;
+          }
           if (data.custom_texts['config.pwa_app_name']) {
             data.app_name = data.custom_texts['config.pwa_app_name'];
           }
@@ -278,62 +300,68 @@ export function SettingsProvider({ children }: { children: React.ReactNode }) {
     // Update title
     document.title = s.app_name;
 
-    // 1. Update Browser Tab Favicon strictly and remove conflicting static icon tags (e.g. from /public)
-    if (s.favicon_url && s.favicon_url.trim()) {
-      const cleanFaviconUrl = s.favicon_url.trim();
+    // 1. Update Browser Tab Favicon strictly and force browser DOM repaint with timestamp
+    let rawFav = s.favicon_url || s.custom_texts?.['config.favicon_url'];
+    if (rawFav && rawFav.includes('LogoMT.png')) {
+      rawFav = rawFav.replace('LogoMT.png', 'LogoMTiPhone.png');
+    }
+    const cleanFaviconUrl = (rawFav && rawFav.trim()) 
+      ? rawFav.trim() 
+      : ((s.custom_texts?.['config.ios_icon_url']) || s.ios_icon_url || (s.logo_url && s.logo_url.includes('iPhone') ? s.logo_url : null) || '/favicon.png');
 
-      // Remove existing static non-apple icon tags to prevent browsers (Chrome/Firefox/Safari)
-      // from favoring static 192x192/512x512 icons over the configured favicon
+    if (cleanFaviconUrl) {
+      // Remove all existing non-apple icon tags to force browsers to re-register the favicon
       const oldIcons = document.querySelectorAll("link[rel*='icon']:not([rel*='apple-touch-icon'])");
-      oldIcons.forEach((el, index) => {
-        if (index > 0) {
-          el.remove();
-        }
-      });
+      oldIcons.forEach((el) => el.remove());
 
-      let link = (document.getElementById('app-favicon') || document.querySelector("link[rel*='icon']:not([rel*='apple-touch-icon'])")) as HTMLLinkElement;
-      if (!link) {
-        link = document.createElement('link');
-        link.id = 'app-favicon';
-        link.rel = 'icon';
-        document.head.appendChild(link);
-      }
-      link.removeAttribute('sizes');
+      const t = Date.now();
+      const busterUrl = cleanFaviconUrl.startsWith('http')
+        ? (cleanFaviconUrl.includes('?') ? `${cleanFaviconUrl}&_v=${t}` : `${cleanFaviconUrl}?_v=${t}`)
+        : `/favicon.png?_v=${t}`;
+
+      const link = document.createElement('link');
+      link.id = 'app-favicon';
+      link.rel = 'icon';
       if (cleanFaviconUrl.split('?')[0].endsWith('.svg')) {
         link.type = 'image/svg+xml';
-      } else if (cleanFaviconUrl.split('?')[0].endsWith('.png')) {
-        link.type = 'image/png';
       } else if (cleanFaviconUrl.split('?')[0].endsWith('.ico')) {
         link.type = 'image/x-icon';
       } else {
-        link.removeAttribute('type');
+        link.type = 'image/png';
       }
+      link.href = busterUrl;
+      document.head.appendChild(link);
 
-      if (link.href !== cleanFaviconUrl) {
-        link.href = cleanFaviconUrl;
-      }
-
-      // Also ensure shortcut icon is synchronized
-      let shortcut = document.querySelector("link[rel='shortcut icon']") as HTMLLinkElement;
-      if (shortcut) {
-        shortcut.href = cleanFaviconUrl;
-      }
+      let shortcut = document.createElement('link');
+      shortcut.rel = 'shortcut icon';
+      shortcut.href = busterUrl;
+      document.head.appendChild(shortcut);
     }
 
     // 2. Update Apple Touch Icon (iPhone / iPad iOS)
-    const effectiveIosIcon = (s.ios_icon_url && s.ios_icon_url.trim()) || (s.pwa_icon_url && s.pwa_icon_url.trim()) || (s.favicon_url && s.favicon_url.trim());
+    const effectiveIosIcon = (s.ios_icon_url && s.ios_icon_url.trim()) || 
+      (s.custom_texts?.['config.ios_icon_url'] && s.custom_texts['config.ios_icon_url'].trim()) || 
+      (s.logo_url && s.logo_url.includes('iPhone') ? s.logo_url.trim() : null) || 
+      '/apple-touch-icon.png';
     if (effectiveIosIcon) {
       const appleIcons = document.querySelectorAll("link[rel='apple-touch-icon']");
-      if (appleIcons.length > 0) {
-        appleIcons.forEach((el) => {
-          (el as HTMLLinkElement).href = effectiveIosIcon;
-        });
-      } else {
-        const appleLink = document.createElement('link');
-        appleLink.rel = 'apple-touch-icon';
-        appleLink.href = effectiveIosIcon;
-        document.head.appendChild(appleLink);
-      }
+      appleIcons.forEach((el) => el.remove());
+
+      const appleTimestamp = Date.now();
+      const appleBusterUrl = effectiveIosIcon.startsWith('http')
+        ? (effectiveIosIcon.includes('?') ? `${effectiveIosIcon}&_v=${appleTimestamp}` : `${effectiveIosIcon}?_v=${appleTimestamp}`)
+        : `/apple-touch-icon.png?_v=${appleTimestamp}`;
+
+      const appleLink180 = document.createElement('link');
+      appleLink180.rel = 'apple-touch-icon';
+      appleLink180.sizes = '180x180';
+      appleLink180.href = appleBusterUrl;
+      document.head.appendChild(appleLink180);
+
+      const appleLink = document.createElement('link');
+      appleLink.rel = 'apple-touch-icon';
+      appleLink.href = appleBusterUrl;
+      document.head.appendChild(appleLink);
 
       // iOS Web App Title & Application Name
       const shortTitle = s.custom_texts?.['config.app_short_name'] || s.app_name || 'Missing Trigger';
@@ -355,13 +383,16 @@ export function SettingsProvider({ children }: { children: React.ReactNode }) {
     }
 
     // 3. Android Web App Manifest
-    // Ensure the manifest link always uses the valid same-origin HTTP endpoint /manifest.json
-    // Never use a blob: URL because Samsung Internet and Android Chromium reject blob: manifests for WebAPK installation
-    const manifestLink = document.querySelector("link[rel='manifest']") as HTMLLinkElement;
+    // Ensure manifest link updates dynamically with cache-busting timestamp to trigger instant re-evaluation in Chromium
+    const manifestTimestamp = Date.now();
+    let manifestLink = document.querySelector("link[rel='manifest']") as HTMLLinkElement;
     if (manifestLink) {
-      if (!manifestLink.href.includes('/manifest.json')) {
-        manifestLink.href = '/manifest.json';
-      }
+      manifestLink.href = `/manifest.json?_v=${manifestTimestamp}`;
+    } else {
+      manifestLink = document.createElement('link');
+      manifestLink.rel = 'manifest';
+      manifestLink.href = `/manifest.json?_v=${manifestTimestamp}`;
+      document.head.appendChild(manifestLink);
     }
   };
 
@@ -371,7 +402,7 @@ export function SettingsProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   return (
-    <SettingsContext.Provider value={{ settings, loading, refreshSettings: fetchSettings }}>
+    <SettingsContext.Provider value={{ settings, loading, refreshSettings: fetchSettings, applyTheme }}>
       {children}
     </SettingsContext.Provider>
   );

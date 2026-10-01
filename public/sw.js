@@ -1,5 +1,5 @@
 // Standard PWA Service Worker
-const CACHE_NAME = 'pwa-app-cache-v1';
+const CACHE_NAME = 'pwa-app-cache-v2';
 const PRECACHE_ASSETS = [
   '/',
   '/index.html',
@@ -7,6 +7,7 @@ const PRECACHE_ASSETS = [
   '/icon-192.png',
   '/icon-512.png',
   '/apple-touch-icon.png',
+  '/favicon.png',
   '/favicon.svg'
 ];
 
@@ -63,6 +64,28 @@ self.addEventListener('fetch', (event) => {
           return response;
         })
         .catch(() => caches.match(request).then((res) => res || caches.match('/index.html')))
+    );
+    return;
+  }
+
+  // Network-first strategy for manifest and dynamic icons so changes in AdminPanel are instantaneous
+  if (
+    request.url.includes('/manifest.json') ||
+    request.url.includes('/manifest.webmanifest') ||
+    request.url.includes('/icon-') ||
+    request.url.includes('/apple-touch-icon') ||
+    request.url.includes('/favicon.')
+  ) {
+    event.respondWith(
+      fetch(request)
+        .then((response) => {
+          if (response && response.status === 200) {
+            const responseClone = response.clone();
+            caches.open(CACHE_NAME).then((cache) => cache.put(request, responseClone));
+          }
+          return response;
+        })
+        .catch(() => caches.match(request))
     );
     return;
   }

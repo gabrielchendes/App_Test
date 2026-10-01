@@ -242,7 +242,7 @@ const SidebarItem = ({ icon, label, active, onClick, badge }: { icon: React.Reac
 );
 
 export default function AdminPanel({ user }: AdminPanelProps) {
-  const { settings, refreshSettings } = useSettings();
+  const { settings, refreshSettings, applyTheme } = useSettings();
   const { t } = useI18n();
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
   const [activeTab, setActiveTab] = useState<'users' | 'courses' | 'community' | 'notifications' | 'texts' | 'settings' | 'security' | 'pages' | 'vendas' | 'packages' | 'languages' | 'questions' | 'ai_expert' | 'central_produtos' | 'testimonials'>('central_produtos');
@@ -728,10 +728,26 @@ export default function AdminPanel({ user }: AdminPanelProps) {
       initialLocal.support_email_course_enabled = settings.support_email_course_enabled ?? true;
       initialLocal.show_course_titles_home = settings.show_course_titles_home ?? (settings.custom_texts?.['config.show_course_titles_home'] === 'true');
       initialLocal.enable_testimonials = settings.enable_testimonials ?? (settings.custom_texts?.['home.enable_testimonials'] !== 'false');
-      initialLocal.favicon_url = settings.favicon_url || '';
-      initialLocal.pwa_icon_url = settings.pwa_icon_url || settings.favicon_url || '';
-      initialLocal.android_icon_url = settings.android_icon_url || settings.custom_texts?.['config.android_icon_url'] || settings.pwa_icon_url || '';
-      initialLocal.ios_icon_url = settings.ios_icon_url || settings.custom_texts?.['config.ios_icon_url'] || settings.pwa_icon_url || '';
+      let resolvedFavicon = settings.favicon_url || settings.custom_texts?.['config.favicon_url'] || '';
+      if (resolvedFavicon.includes('LogoMT.png')) {
+        resolvedFavicon = resolvedFavicon.replace('LogoMT.png', 'LogoMTiPhone.png');
+      }
+      let resolvedIos = settings.ios_icon_url || settings.custom_texts?.['config.ios_icon_url'] || '';
+      if ((!resolvedIos || resolvedIos.includes('LogoAndroid.png')) && settings.logo_url && settings.logo_url.includes('iPhone')) {
+        resolvedIos = settings.logo_url;
+      }
+      if (!resolvedIos || resolvedIos.includes('LogoAndroid.png')) {
+        resolvedIos = 'https://fhnmpltilhongdofnzbj.supabase.co/storage/v1/object/public/Ebooks/BANNER/LogoMTiPhone.png';
+      }
+      if (!resolvedFavicon || resolvedFavicon.includes('LogoMT.png')) {
+        resolvedFavicon = resolvedIos || 'https://fhnmpltilhongdofnzbj.supabase.co/storage/v1/object/public/Ebooks/BANNER/LogoMTiPhone.png';
+      }
+      let resolvedAndroid = settings.android_icon_url || settings.custom_texts?.['config.android_icon_url'] || settings.pwa_icon_url || 'https://fhnmpltilhongdofnzbj.supabase.co/storage/v1/object/public/Ebooks/BANNER/LogoAndroid.png';
+
+      initialLocal.favicon_url = resolvedFavicon;
+      initialLocal.pwa_icon_url = resolvedAndroid;
+      initialLocal.android_icon_url = resolvedAndroid;
+      initialLocal.ios_icon_url = resolvedIos;
 
       setLocalSettings(initialLocal);
     }
@@ -1414,23 +1430,21 @@ export default function AdminPanel({ user }: AdminPanelProps) {
         payload.custom_texts['config.pwa_icon_url'] = payload.pwa_icon_url || '';
       }
 
-      if ('android_icon_url' in payload) {
+      if ('android_icon_url' in newSettings) {
         if (!payload.custom_texts) payload.custom_texts = { ...(settings?.custom_texts || {}) };
-        payload.custom_texts['config.android_icon_url'] = payload.android_icon_url || '';
-        delete payload.android_icon_url;
+        payload.custom_texts['config.android_icon_url'] = newSettings.android_icon_url || '';
       }
 
-      if ('ios_icon_url' in payload) {
+      if ('ios_icon_url' in newSettings) {
         if (!payload.custom_texts) payload.custom_texts = { ...(settings?.custom_texts || {}) };
-        payload.custom_texts['config.ios_icon_url'] = payload.ios_icon_url || '';
-        delete payload.ios_icon_url;
+        payload.custom_texts['config.ios_icon_url'] = newSettings.ios_icon_url || '';
       }
       delete payload.android_icon_url;
       delete payload.ios_icon_url;
 
-      if ('favicon_url' in payload) {
+      if ('favicon_url' in newSettings) {
         if (!payload.custom_texts) payload.custom_texts = { ...(settings?.custom_texts || {}) };
-        payload.custom_texts['config.favicon_url'] = payload.favicon_url || '';
+        payload.custom_texts['config.favicon_url'] = newSettings.favicon_url || '';
       }
 
       // Garante que a ordem ou dados de depoimentos nunca sejam gravados em app_settings
@@ -1438,75 +1452,51 @@ export default function AdminPanel({ user }: AdminPanelProps) {
         delete payload.custom_texts['testimonials_order'];
       }
 
-      // Use update instead of upsert to only require UPDATE RLS permissions
-      let { error } = await supabase
-        .from('app_settings')
-        .update(payload)
-        .eq('id', 1);
-
-      if (error && (error.code === '42501' || error.message?.includes('policy'))) {
-        // If client-side update hit RLS constraint, proxy through admin API
-        const { data: { session } } = await supabase.auth.getSession();
-        const apiRes = await safeFetch('/api/v1/admin?action=update-settings', {
+      // 1. Persist directly to backend API (updates persistent data/app_settings.json and syncs to Supabase)
+      const { data: { session } } = await supabase.auth.getSession();
+      try {
+        await safeFetch('/api/v1/update-settings', {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
-            'Authorization': `Bearer ${session?.access_token}`
+            'Authorization': `Bearer ${session?.access_token || ''}`
           },
           body: JSON.stringify({ settings: payload })
         });
-        if (apiRes?.success) {
-          error = null;
-        }
+      } catch (apiErr) {
+        console.warn('Notice calling /api/v1/update-settings:', apiErr);
       }
 
-      if (error) {
-        const errorMsg = String(error.message || '');
-        if (errorMsg.includes('schema cache') || errorMsg.includes('does not exist') || errorMsg.includes('show_course_titles_home') || errorMsg.includes('pwa_icon_url') || errorMsg.includes('android_icon_url') || errorMsg.includes('ios_icon_url') || errorMsg.includes('enable_testimonials')) {
-          const fallbackPayload = { ...payload };
-          // Strip any unknown columns mentioned in error message
-          delete fallbackPayload.android_icon_url;
-          delete fallbackPayload.ios_icon_url;
-          const match = errorMsg.match(/Could not find the '([^']+)' column/i) || errorMsg.match(/column "([^"]+)" of relation/i);
-          if (match && match[1]) {
-            delete (fallbackPayload as any)[match[1]];
-          }
-          if (errorMsg.includes('show_course_titles_home')) {
-            delete fallbackPayload.show_course_titles_home;
-            if (!fallbackPayload.custom_texts) fallbackPayload.custom_texts = { ...(settings?.custom_texts || {}) };
-            fallbackPayload.custom_texts['config.show_course_titles_home'] = String(!!newSettings.show_course_titles_home);
-          }
-          if (errorMsg.includes('enable_testimonials')) {
-            delete fallbackPayload.enable_testimonials;
-            if (!fallbackPayload.custom_texts) fallbackPayload.custom_texts = { ...(settings?.custom_texts || {}) };
-            fallbackPayload.custom_texts['home.enable_testimonials'] = String(newSettings.enable_testimonials !== false);
-          }
-          if (errorMsg.includes('pwa_icon_url')) {
-            delete fallbackPayload.pwa_icon_url;
-            if (!fallbackPayload.custom_texts) fallbackPayload.custom_texts = { ...(settings?.custom_texts || {}) };
-            fallbackPayload.custom_texts['config.pwa_icon_url'] = newSettings.pwa_icon_url || '';
-          }
-
-          const { error: fallbackErr } = await supabase
-            .from('app_settings')
-            .update(fallbackPayload)
-            .eq('id', 1);
-
-          if (!fallbackErr) {
-            error = null;
-          } else {
-            throw fallbackErr;
-          }
-        } else if (error.message?.includes('banner_config')) {
-          throw new Error('A coluna "banner_config" não foi encontrada no banco de dados. Por favor, execute o script SQL de atualização em SUPABASE_SETUP.md no seu painel Supabase.');
-        } else if (error.code === '22P02' && error.message?.includes('login_install_button_pulsing')) {
-          throw new Error('Erro de tipo na coluna "login_install_button_pulsing". O banco espera um Booleano mas recebeu um Texto. Por favor, execute o script SQL de atualização em SUPABASE_SETUP.md para converter a coluna para TEXT.');
-        } else {
-          throw error;
-        }
+      // 2. Also attempt direct client-side Supabase update for realtime subscribers
+      try {
+        const sbPayload = { ...payload };
+        delete sbPayload.android_icon_url;
+        delete sbPayload.ios_icon_url;
+        await supabase
+          .from('app_settings')
+          .update(sbPayload)
+          .eq('id', 1);
+      } catch (sbErr) {
+        console.warn('Notice on direct Supabase update:', sbErr);
       }
-      toast.success('Configurações atualizadas!');
-      refreshSettings();
+
+      // 3. Immediately apply theme and dynamic icons to browser DOM in 0ms
+      const mergedLiveSettings = {
+        ...settings,
+        ...newSettings,
+        custom_texts: {
+          ...(settings?.custom_texts || {}),
+          ...(payload.custom_texts || {})
+        }
+      };
+      if (typeof applyTheme === 'function') {
+        applyTheme(mergedLiveSettings as any);
+      }
+
+      toast.success('Configurações e símbolos atualizados com sucesso!');
+      // Notify server to immediately purge cache and stream newest icons
+      fetch('/api/v1/clear-cache', { method: 'POST' }).catch(() => {});
+      await refreshSettings();
     } catch (err: any) {
       console.error('Error updating settings:', err);
       toast.error('Erro ao atualizar configurações: ' + (err.message || 'Erro desconhecido'));
@@ -5230,7 +5220,9 @@ export default function AdminPanel({ user }: AdminPanelProps) {
                                       type="url" 
                                       value={localSettings?.favicon_url || ''}
                                       onChange={(e) => {
-                                        setLocalSettings({ ...localSettings, favicon_url: e.target.value });
+                                        const val = e.target.value;
+                                        setLocalSettings({ ...localSettings, favicon_url: val });
+                                        setDraftCustomTexts({ ...draftCustomTexts, 'config.favicon_url': val });
                                         setFaviconLoadError(false);
                                       }}
                                       className="w-full bg-black border border-white/10 rounded-xl px-4 py-3 text-white text-sm focus:border-blue-500 outline-none transition-all placeholder:text-gray-600"
@@ -5250,7 +5242,9 @@ export default function AdminPanel({ user }: AdminPanelProps) {
                                         <button
                                           type="button"
                                           onClick={() => {
-                                            setLocalSettings({ ...localSettings, favicon_url: localSettings.android_icon_url });
+                                            const val = localSettings.android_icon_url;
+                                            setLocalSettings({ ...localSettings, favicon_url: val });
+                                            setDraftCustomTexts({ ...draftCustomTexts, 'config.favicon_url': val });
                                             setFaviconLoadError(false);
                                           }}
                                           className="text-[10px] text-emerald-400 hover:text-emerald-300 underline ml-auto"
@@ -5262,7 +5256,9 @@ export default function AdminPanel({ user }: AdminPanelProps) {
                                         <button
                                           type="button"
                                           onClick={() => {
-                                            setLocalSettings({ ...localSettings, favicon_url: localSettings.ios_icon_url });
+                                            const val = localSettings.ios_icon_url;
+                                            setLocalSettings({ ...localSettings, favicon_url: val });
+                                            setDraftCustomTexts({ ...draftCustomTexts, 'config.favicon_url': val });
                                             setFaviconLoadError(false);
                                           }}
                                           className="text-[10px] text-purple-400 hover:text-purple-300 underline"
@@ -5296,10 +5292,16 @@ export default function AdminPanel({ user }: AdminPanelProps) {
                                       type="url" 
                                       value={localSettings?.android_icon_url || ''}
                                       onChange={(e) => {
+                                        const val = e.target.value;
                                         setLocalSettings({ 
                                           ...localSettings, 
-                                          android_icon_url: e.target.value,
-                                          pwa_icon_url: e.target.value || localSettings?.pwa_icon_url
+                                          android_icon_url: val,
+                                          pwa_icon_url: val || localSettings?.pwa_icon_url
+                                        });
+                                        setDraftCustomTexts({
+                                          ...draftCustomTexts,
+                                          'config.android_icon_url': val,
+                                          'config.pwa_icon_url': val
                                         });
                                         setAndroidIconLoadError(false);
                                       }}
@@ -5320,10 +5322,16 @@ export default function AdminPanel({ user }: AdminPanelProps) {
                                         <button
                                           type="button"
                                           onClick={() => {
+                                            const val = localSettings.favicon_url;
                                             setLocalSettings({ 
                                               ...localSettings, 
-                                              android_icon_url: localSettings.favicon_url,
-                                              pwa_icon_url: localSettings.favicon_url
+                                              android_icon_url: val,
+                                              pwa_icon_url: val
+                                            });
+                                            setDraftCustomTexts({
+                                              ...draftCustomTexts,
+                                              'config.android_icon_url': val,
+                                              'config.pwa_icon_url': val
                                             });
                                             setAndroidIconLoadError(false);
                                           }}
@@ -5336,10 +5344,16 @@ export default function AdminPanel({ user }: AdminPanelProps) {
                                         <button
                                           type="button"
                                           onClick={() => {
+                                            const val = localSettings.ios_icon_url;
                                             setLocalSettings({ 
                                               ...localSettings, 
-                                              android_icon_url: localSettings.ios_icon_url,
-                                              pwa_icon_url: localSettings.ios_icon_url
+                                              android_icon_url: val,
+                                              pwa_icon_url: val
+                                            });
+                                            setDraftCustomTexts({
+                                              ...draftCustomTexts,
+                                              'config.android_icon_url': val,
+                                              'config.pwa_icon_url': val
                                             });
                                             setAndroidIconLoadError(false);
                                           }}
@@ -5374,7 +5388,9 @@ export default function AdminPanel({ user }: AdminPanelProps) {
                                       type="url" 
                                       value={localSettings?.ios_icon_url || ''}
                                       onChange={(e) => {
-                                        setLocalSettings({ ...localSettings, ios_icon_url: e.target.value });
+                                        const val = e.target.value;
+                                        setLocalSettings({ ...localSettings, ios_icon_url: val });
+                                        setDraftCustomTexts({ ...draftCustomTexts, 'config.ios_icon_url': val });
                                         setIosIconLoadError(false);
                                       }}
                                       className="w-full bg-black border border-white/10 rounded-xl px-4 py-3 text-white text-sm focus:border-purple-500 outline-none transition-all placeholder:text-gray-600"
@@ -5394,7 +5410,9 @@ export default function AdminPanel({ user }: AdminPanelProps) {
                                         <button
                                           type="button"
                                           onClick={() => {
-                                            setLocalSettings({ ...localSettings, ios_icon_url: localSettings.favicon_url });
+                                            const val = localSettings.favicon_url;
+                                            setLocalSettings({ ...localSettings, ios_icon_url: val });
+                                            setDraftCustomTexts({ ...draftCustomTexts, 'config.ios_icon_url': val });
                                             setIosIconLoadError(false);
                                           }}
                                           className="text-[10px] text-amber-400 hover:text-amber-300 underline ml-auto"
@@ -5406,7 +5424,9 @@ export default function AdminPanel({ user }: AdminPanelProps) {
                                         <button
                                           type="button"
                                           onClick={() => {
-                                            setLocalSettings({ ...localSettings, ios_icon_url: localSettings.android_icon_url });
+                                            const val = localSettings.android_icon_url;
+                                            setLocalSettings({ ...localSettings, ios_icon_url: val });
+                                            setDraftCustomTexts({ ...draftCustomTexts, 'config.ios_icon_url': val });
                                             setIosIconLoadError(false);
                                           }}
                                           className="text-[10px] text-emerald-400 hover:text-emerald-300 underline"
@@ -5624,12 +5644,21 @@ export default function AdminPanel({ user }: AdminPanelProps) {
                               const shortNameVal = draftCustomTexts['config.app_short_name'] !== undefined
                                 ? draftCustomTexts['config.app_short_name']
                                 : (localSettings?.app_name || '');
+                              let favVal = localSettings?.favicon_url || '';
+                              if (favVal.includes('LogoMT.png')) {
+                                favVal = favVal.replace('LogoMT.png', 'LogoMTiPhone.png');
+                              }
+                              let iosVal = localSettings?.ios_icon_url || '';
+                              if (!iosVal && localSettings?.logo_url && localSettings.logo_url.includes('iPhone')) {
+                                iosVal = localSettings.logo_url;
+                              }
+                              const androidVal = localSettings?.android_icon_url || localSettings?.pwa_icon_url || '';
                               await updateSettings({ 
                                 app_name: localSettings?.app_name || '',
-                                favicon_url: localSettings?.favicon_url || '',
-                                pwa_icon_url: localSettings?.android_icon_url || localSettings?.ios_icon_url || localSettings?.pwa_icon_url || localSettings?.favicon_url || '',
-                                android_icon_url: localSettings?.android_icon_url || '',
-                                ios_icon_url: localSettings?.ios_icon_url || '',
+                                favicon_url: favVal,
+                                pwa_icon_url: androidVal,
+                                android_icon_url: androidVal,
+                                ios_icon_url: iosVal,
                                 primary_color: localSettings?.primary_color,
                                 secondary_color: localSettings?.secondary_color,
                                 background_color: localSettings?.background_color,
@@ -5639,6 +5668,10 @@ export default function AdminPanel({ user }: AdminPanelProps) {
                                 custom_texts: {
                                   ...settings.custom_texts,
                                   ...draftCustomTexts,
+                                  'config.favicon_url': favVal,
+                                  'config.android_icon_url': androidVal,
+                                  'config.ios_icon_url': iosVal,
+                                  'config.pwa_icon_url': androidVal,
                                   'config.app_short_name': shortNameVal,
                                   'config.pwa_app_name': localSettings?.app_name || ''
                                 }
@@ -5746,6 +5779,22 @@ export default function AdminPanel({ user }: AdminPanelProps) {
                               if (draftCustomTexts['config.app_short_name'] !== undefined) {
                                 updates.custom_texts['config.app_short_name'] = draftCustomTexts['config.app_short_name'];
                               }
+                            }
+                            if (localSettings?.favicon_url) {
+                              let f = localSettings.favicon_url;
+                              if (f.includes('LogoMT.png')) f = f.replace('LogoMT.png', 'LogoMTiPhone.png');
+                              updates.favicon_url = f;
+                              updates.custom_texts['config.favicon_url'] = f;
+                            }
+                            if (localSettings?.android_icon_url) {
+                              updates.android_icon_url = localSettings.android_icon_url;
+                              updates.pwa_icon_url = localSettings.android_icon_url;
+                              updates.custom_texts['config.android_icon_url'] = localSettings.android_icon_url;
+                              updates.custom_texts['config.pwa_icon_url'] = localSettings.android_icon_url;
+                            }
+                            if (localSettings?.ios_icon_url) {
+                              updates.ios_icon_url = localSettings.ios_icon_url;
+                              updates.custom_texts['config.ios_icon_url'] = localSettings.ios_icon_url;
                             }
 
                             // Se estiver na aba login, inclui configurações específicas
@@ -7874,6 +7923,90 @@ export default function AdminPanel({ user }: AdminPanelProps) {
                                       Nome exibido abaixo do ícone no Android e iPhone. Evita cortes indesejados (&quot;1 x 1&quot;).
                                     </p>
                                   </div>
+                                </div>
+
+                                {/* Configuração de Ícones no PWA (Sincronizado com Identidade Visual) */}
+                                <div className="space-y-3 p-4 bg-black/40 rounded-2xl border border-white/5">
+                                  <div className="flex items-center justify-between border-b border-white/5 pb-2">
+                                    <h5 className="text-xs font-black text-gray-300 uppercase tracking-widest flex items-center gap-1.5">
+                                      <Globe size={13} className="text-blue-400" />
+                                      Ícones da Aplicação (Favicon, Android e iOS)
+                                    </h5>
+                                    <span className="text-[10px] text-emerald-400 font-mono">100% Dinâmico</span>
+                                  </div>
+
+                                  <div className="grid grid-cols-1 md:grid-cols-3 gap-4 pt-1">
+                                    {/* Favicon */}
+                                    <div className="space-y-1.5">
+                                      <label className="text-[11px] font-bold text-gray-400 flex items-center gap-1">
+                                        <Globe size={12} className="text-blue-400" />
+                                        Favicon (Aba)
+                                      </label>
+                                      <input 
+                                        type="url" 
+                                        value={localSettings?.favicon_url || ''}
+                                        onChange={(e) => {
+                                          const val = e.target.value;
+                                          setLocalSettings({ ...localSettings, favicon_url: val });
+                                          setDraftCustomTexts({ ...draftCustomTexts, 'config.favicon_url': val });
+                                          setFaviconLoadError(false);
+                                        }}
+                                        className="w-full bg-zinc-900 border border-white/10 rounded-xl px-3 py-2 text-xs text-white focus:border-blue-500 outline-none"
+                                        placeholder="https://.../favicon.png"
+                                      />
+                                    </div>
+
+                                    {/* Android */}
+                                    <div className="space-y-1.5">
+                                      <label className="text-[11px] font-bold text-gray-400 flex items-center gap-1">
+                                        <Smartphone size={12} className="text-emerald-400" />
+                                        Ícone Android (512x512)
+                                      </label>
+                                      <input 
+                                        type="url" 
+                                        value={localSettings?.android_icon_url || ''}
+                                        onChange={(e) => {
+                                          const val = e.target.value;
+                                          setLocalSettings({ 
+                                            ...localSettings, 
+                                            android_icon_url: val,
+                                            pwa_icon_url: val || localSettings?.pwa_icon_url
+                                          });
+                                          setDraftCustomTexts({ 
+                                            ...draftCustomTexts, 
+                                            'config.android_icon_url': val,
+                                            'config.pwa_icon_url': val
+                                          });
+                                          setAndroidIconLoadError(false);
+                                        }}
+                                        className="w-full bg-zinc-900 border border-white/10 rounded-xl px-3 py-2 text-xs text-white focus:border-emerald-500 outline-none"
+                                        placeholder="https://.../icon-android.png"
+                                      />
+                                    </div>
+
+                                    {/* iPhone */}
+                                    <div className="space-y-1.5">
+                                      <label className="text-[11px] font-bold text-gray-400 flex items-center gap-1">
+                                        <Apple size={12} className="text-purple-400" />
+                                        Ícone iPhone (Apple Touch)
+                                      </label>
+                                      <input 
+                                        type="url" 
+                                        value={localSettings?.ios_icon_url || ''}
+                                        onChange={(e) => {
+                                          const val = e.target.value;
+                                          setLocalSettings({ ...localSettings, ios_icon_url: val });
+                                          setDraftCustomTexts({ ...draftCustomTexts, 'config.ios_icon_url': val });
+                                          setIosIconLoadError(false);
+                                        }}
+                                        className="w-full bg-zinc-900 border border-white/10 rounded-xl px-3 py-2 text-xs text-white focus:border-purple-500 outline-none"
+                                        placeholder="https://.../icon-iphone.png"
+                                      />
+                                    </div>
+                                  </div>
+                                  <p className="text-[10px] text-gray-500 leading-relaxed pt-1">
+                                    Os ícones cadastrados acima são aplicados em tempo real na aba do navegador, no Web Manifest de instalação do Android e no atalho do iPhone.
+                                  </p>
                                 </div>
                                 <div className="space-y-4 pt-4 border-t border-white/5">
                                   <div className="flex items-center justify-between">
