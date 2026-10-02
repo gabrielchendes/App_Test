@@ -23,8 +23,8 @@ export const getDeviceType = (): DeviceType => {
 export const isPWAInstalled = (): boolean => {
   if (typeof window === 'undefined') return false;
   // @ts-ignore - navigator.standalone is iOS-specific
-  const isStandalone = window.navigator.standalone === true;
-  const isDisplayStandalone = window.matchMedia('(display-mode: standalone)').matches;
+  const isStandalone = (window.navigator as any)?.standalone === true;
+  const isDisplayStandalone = typeof window.matchMedia === 'function' ? window.matchMedia('(display-mode: standalone)').matches : false;
   return isStandalone || isDisplayStandalone;
 };
 
