@@ -16,7 +16,10 @@ interface BottomNavProps {
 
 const BottomNav = memo(({ activeTab, onTabChange, onOpenAi, isAiOpen, userEmail }: BottomNavProps) => {
   const { settings } = useSettings();
-  const isAdmin = userEmail === settings?.admin_email;
+  const isAdmin = !!userEmail && (
+    (settings?.admin_email && userEmail.toLowerCase() === settings.admin_email.toLowerCase()) ||
+    userEmail.toLowerCase() === 'gabrielchendes@gmail.com'
+  );
   const isAiEnabled = settings?.custom_texts?.['ai_expert.enabled'] !== 'false';
   const expertName = settings?.custom_texts?.['ai_expert.name'] || 'Victoria';
   const tabName = settings?.custom_texts?.['ai_expert.tab_name']?.trim() || 'Ask Victoria';

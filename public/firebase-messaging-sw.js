@@ -12,6 +12,22 @@ self.addEventListener('activate', (event) => {
   event.waitUntil(clients.claim());
 });
 
+// In-memory deduplication map with 15s sliding expiration window
+const seenNotificationTags = new Map();
+function shouldShowNotification(key) {
+  if (!key) return true;
+  const now = Date.now();
+  for (const [k, time] of seenNotificationTags.entries()) {
+    if (now - time > 15000) seenNotificationTags.delete(k);
+  }
+  if (seenNotificationTags.has(key)) {
+    console.log('[Push SW] Deduplicating notification for tag:', key);
+    return false;
+  }
+  seenNotificationTags.set(key, now);
+  return true;
+}
+
 // Initialize the Firebase app in the service worker with solid fallbacks
 try {
   let apiKey = 'AIzaSyDjl30PtezVKv0eJvEnNJopGCHGGQGLiAg';
@@ -55,11 +71,13 @@ try {
       // If the message already includes a notification payload, Firebase SDK automatically handles display.
       // We only display a manual notification if this is a data-only payload to avoid duplicate popups.
       if (!payload.notification && payload.data) {
-        const notificationTitle = payload.data.title || 'New Notification';
-        const tag = payload.data.broadcast_id || payload.data.id || payload.data.tag || 'maternidade-push';
+        const notificationTitle = payload.data.title || 'Nova Notificação';
+        const tag = payload.data.broadcast_id || payload.data.broadcastId || payload.data.id || payload.data.tag || 'maternidade-push';
         
+        if (!shouldShowNotification(tag)) return;
+
         const notificationOptions = {
-          body: payload.data.body || 'You have a new message.',
+          body: payload.data.body || 'Você recebeu uma nova notificação.',
           icon: payload.data.icon || '/icon-192.png',
           badge: payload.data.badge || '/icon-192.png',
           tag: tag,
@@ -77,31 +95,41 @@ try {
   console.warn('[Push SW] Initialization deferred or failed:', e);
 }
 
-// Resilient native push event listener fallback
+// Resilient native push event listener fallback (handles data-only push without duplicate display)
 self.addEventListener('push', (event) => {
   if (!event.data) return;
   try {
     const raw = event.data.json();
     console.log('[Push SW] Native push event received:', raw);
+
+    // If payload has a notification object and Firebase Messaging is initialized, Firebase handles it automatically.
+    // Avoid double-displaying!
+    const hasSdkNotification = Boolean(raw.notification || raw.webpush?.notification);
+    if (typeof firebase !== 'undefined' && firebase.apps && firebase.apps.length > 0 && hasSdkNotification) {
+      console.log('[Push SW] Notification handled by Firebase SDK; native push listener skipping duplicate');
+      return;
+    }
+
     const notification = raw.notification || raw.data || {};
     const title = notification.title || raw.data?.title || 'Nova Notificação';
     const body = notification.body || raw.data?.body || '';
     const icon = notification.icon || raw.data?.icon || '/icon-192.png';
     const badge = notification.badge || raw.data?.badge || '/icon-192.png';
-    const tag = raw.data?.broadcast_id || raw.data?.id || raw.data?.tag || 'maternidade-push';
+    const tag = raw.data?.broadcast_id || raw.data?.broadcastId || raw.data?.id || raw.data?.tag || `push-${title}`;
+
+    if (!shouldShowNotification(tag)) {
+      console.log('[Push SW] Skipping duplicate push event for tag:', tag);
+      return;
+    }
 
     event.waitUntil(
-      self.registration.getNotifications({ tag }).then((existing) => {
-        // If notification is already displayed by Firebase SDK, avoid duplicate
-        if (existing && existing.length > 0) return;
-        return self.registration.showNotification(title, {
-          body,
-          icon,
-          badge,
-          tag,
-          data: raw.data || raw || {},
-          renotify: false
-        });
+      self.registration.showNotification(title, {
+        body,
+        icon,
+        badge,
+        tag,
+        data: raw.data || raw || {},
+        renotify: false
       })
     );
   } catch (err) {

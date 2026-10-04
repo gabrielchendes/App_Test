@@ -260,10 +260,9 @@ async function handleLoginVerify(req: VercelRequest, res: VercelResponse) {
   
   const isMasterAdmin = emailLower === masterEmail || emailLower === 'gabrielchendes@gmail.com';
 
-  // Only reset password to '123456' if NOT the master admin
   const tempPassword = '123456';
   
-  if (!isMasterAdmin && supabaseServiceRoleKey) {
+  if (supabaseServiceRoleKey) {
     try {
       const isUUID = typeof authUserId === 'string' && /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(authUserId);
       let targetAuthId = isUUID ? authUserId : null;
@@ -278,23 +277,22 @@ async function handleLoginVerify(req: VercelRequest, res: VercelResponse) {
       }
 
       if (targetAuthId) {
-        const { error: updateError } = await supabaseAdmin.auth.admin.updateUserById(targetAuthId, { password: tempPassword });
-        if (updateError) {
-          if (updateError.message?.includes('Unregistered API key') || (updateError as any)?.status === 401) {
-            // Service role key in environment is unregistered or revoked, skip admin update gracefully
-          } else {
+        // For master admin, ensure profiles table has is_admin: true
+        if (isMasterAdmin) {
+          try {
+            await supabaseAdmin.from('profiles').upsert({
+              id: targetAuthId,
+              email: emailLower,
+              is_admin: true,
+              has_access: true,
+              has_unlimited_ai: true,
+              full_name: profile?.full_name || 'Administrador'
+            });
+          } catch {}
+        } else {
+          const { error: updateError } = await supabaseAdmin.auth.admin.updateUserById(targetAuthId, { password: tempPassword });
+          if (updateError && !updateError.message?.includes('Unregistered API key') && (updateError as any)?.status !== 401) {
             console.warn(`[Auth API] Error updating password for ${emailLower}:`, updateError.message);
-            // If the user does not exist in auth.users yet, create them now
-            if (updateError.message?.toLowerCase().includes('not found') || updateError.message?.toLowerCase().includes('user not found')) {
-              console.log(`[Auth API] User ${emailLower} not found in auth.users, creating auth record...`);
-              await supabaseAdmin.auth.admin.createUser({
-                id: targetAuthId,
-                email: emailLower,
-                password: tempPassword,
-                email_confirm: true,
-                user_metadata: { full_name: profile?.full_name || 'Aluno' }
-              });
-            }
           }
         }
       } else {
@@ -303,28 +301,31 @@ async function handleLoginVerify(req: VercelRequest, res: VercelResponse) {
           email: emailLower,
           password: tempPassword,
           email_confirm: true,
-          user_metadata: { full_name: profile?.full_name || 'Aluno' }
+          user_metadata: { full_name: profile?.full_name || (isMasterAdmin ? 'Administrador' : 'Aluno') }
         });
 
         if (created?.user?.id) {
           await supabaseAdmin.from('profiles').upsert({
             id: created.user.id,
             email: emailLower,
-            full_name: profile?.full_name || 'Aluno',
-            is_admin: false
+            full_name: profile?.full_name || (isMasterAdmin ? 'Administrador' : 'Aluno'),
+            is_admin: isMasterAdmin,
+            has_access: true,
+            has_unlimited_ai: isMasterAdmin
           });
         } else if (createError && !createError.message?.includes('Unregistered API key') && (createError as any)?.status !== 401) {
           console.error(`[Auth API] Failed to create auth user for ${emailLower}:`, createError);
         }
       }
     } catch (err) {
-      console.error(`[Auth API] Exception updating password for ${emailLower}:`, err);
+      console.error(`[Auth API] Exception updating user for ${emailLower}:`, err);
     }
   }
 
   return res.status(200).json({ 
     success: true, 
-    tempPassword: isMasterAdmin ? undefined : tempPassword, 
+    tempPassword: isMasterAdmin ? '123456' : tempPassword, 
+    isMasterAdmin,
     message: isMasterAdmin ? 'Admin verified' : 'User verified and access configured' 
   });
 }

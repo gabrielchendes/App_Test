@@ -601,8 +601,9 @@ async function sendPushNotification(
         }
       }
 
-      // Broadcast to topic 'all' if requested or if this is a general send / no specific tokens mapped yet
-      const shouldSendTopic = isBroadcast || customData?.isBroadcast || userIds.length > 1 || registrationTokens.length === 0;
+      // Broadcast to topic 'all' ONLY if no specific registered tokens were found for these users,
+      // or if explicitly forced, to prevent users from receiving duplicate push notifications (once via token and once via topic)
+      const shouldSendTopic = (registrationTokens.length === 0 && (isBroadcast || customData?.isBroadcast)) || Boolean(customData?.forceTopic);
       if (shouldSendTopic) {
         try {
           const topicMessage: any = {
@@ -678,7 +679,7 @@ async function sendPushNotification(
           }
         }
 
-        if (isBroadcast || customData?.isBroadcast || userIds.length > 1 || registrationTokens.length === 0) {
+        if ((registrationTokens.length === 0 && (isBroadcast || customData?.isBroadcast)) || Boolean(customData?.forceTopic)) {
           try {
             await fetch('https://fcm.googleapis.com/fcm/send', {
               method: 'POST',

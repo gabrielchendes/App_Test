@@ -136,7 +136,7 @@ async function startServer() {
             apikey: anonKey,
             Authorization: `Bearer ${anonKey}`
           },
-          signal: AbortSignal.timeout(2500)
+          signal: AbortSignal.timeout(4000)
         });
         if (resp.ok) {
           const data = await resp.json();
@@ -144,8 +144,12 @@ async function startServer() {
             dbSettings = data[0];
           }
         }
-      } catch (err) {
-        console.warn('[Server] Notice fetching settings:', err);
+      } catch (err: any) {
+        // Silently fall back to local settings on timeout/abort without generating loud console warnings
+        const isTimeout = err?.name === 'TimeoutError' || err?.name === 'AbortError' || (err?.message && (err.message.includes('timeout') || err.message.includes('aborted')));
+        if (!isTimeout) {
+          console.log('[Server] Note fetching remote settings, using local/cached baseline');
+        }
       }
     }
 

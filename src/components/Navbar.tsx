@@ -33,7 +33,10 @@ const Navbar = memo(({
 }: NavbarProps) => {
   const { settings } = useSettings();
   const { t } = useI18n();
-  const isAdmin = user.email === settings?.admin_email;
+  const isAdmin = !!user.email && (
+    (settings?.admin_email && user.email.toLowerCase() === settings.admin_email.toLowerCase()) ||
+    user.email.toLowerCase() === 'gabrielchendes@gmail.com'
+  );
   
   const handleLogout = async () => {
     const { error } = await supabase.auth.signOut();
@@ -173,8 +176,7 @@ const Navbar = memo(({
                 size="sm"
                 showLabel={true}
                 onClick={onInstall}
-                label={settings?.custom_texts?.['pwa.install_app'] || t('pwa.install_app') || "Install App"}
-                className="px-3 py-1.5 rounded-full bg-black/40 hover:bg-black/60 border border-amber-300/30 backdrop-blur-md"
+                label={settings?.custom_texts?.['pwa.install_app'] || t('pwa.install_app') || "Instalar App"}
               />
             </div>
           )}

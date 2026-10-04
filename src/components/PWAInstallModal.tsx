@@ -113,11 +113,25 @@ const PWAColumn = ({ platform, steps, images, refObj, slide, setSlide, label, hi
 export default function PWAInstallModal({ isOpen, onClose, onInstall }: PWAInstallModalProps) {
   const { t } = useI18n();
   const { settings } = useSettings();
+  
+  // All state hooks grouped at the top
+  const [canPromptInstall, setCanPromptInstall] = useState(() => !isPWAInstalled() && !!getDeferredPrompt());
+  const [currentSlideIos, setCurrentSlideIos] = useState(0);
+  const [currentSlideAndroid, setCurrentSlideAndroid] = useState(0);
+  const [currentSlideDesktop, setCurrentSlideDesktop] = useState(0);
+  const [resetCounter, setResetCounter] = useState(0);
+
+  // All ref hooks grouped at the top
+  const carouselRefIos = useRef<HTMLDivElement>(null);
+  const carouselRefAndroid = useRef<HTMLDivElement>(null);
+  const carouselRefDesktop = useRef<HTMLDivElement>(null);
+  const isAutoScrollingIos = useRef(false);
+  const isAutoScrollingAndroid = useRef(false);
+  const isAutoScrollingDesktop = useRef(false);
+
   const device = getDeviceType();
   const adminDisplayMode = settings.custom_texts?.['pwa.display_mode'] === 'desktop' ? 'desktop' : 'mobile';
-  const showDualMobile = device === 'desktop' && adminDisplayMode === 'mobile';
-
-  const [canPromptInstall, setCanPromptInstall] = useState(() => !isPWAInstalled() && !!getDeferredPrompt());
+  const showDualMobile = device === 'desktop';
 
   useEffect(() => {
     const updateInstallState = () => {
@@ -149,19 +163,6 @@ export default function PWAInstallModal({ isOpen, onClose, onInstall }: PWAInsta
       });
     }
   }, [isOpen, device]);
-  
-  const [currentSlideIos, setCurrentSlideIos] = useState(0);
-  const [currentSlideAndroid, setCurrentSlideAndroid] = useState(0);
-  const [currentSlideDesktop, setCurrentSlideDesktop] = useState(0);
-  const [resetCounter, setResetCounter] = useState(0);
-
-  const carouselRefIos = useRef<HTMLDivElement>(null);
-  const carouselRefAndroid = useRef<HTMLDivElement>(null);
-  const carouselRefDesktop = useRef<HTMLDivElement>(null);
-
-  const isAutoScrollingIos = useRef(false);
-  const isAutoScrollingAndroid = useRef(false);
-  const isAutoScrollingDesktop = useRef(false);
 
   const handleManualInteraction = () => {
     setResetCounter(prev => prev + 1);
@@ -241,9 +242,17 @@ export default function PWAInstallModal({ isOpen, onClose, onInstall }: PWAInsta
     }
 
     if (platform === 'android') {
+      if (showDualMobile) {
+        return [
+          'Abra no navegador Google Chrome no seu celular Android',
+          'Toque no ícone de três pontos (⋮) no canto superior direito',
+          'Selecione a opção “Instalar aplicativo” ou “Adicionar à tela inicial”',
+          'Confirme para ter o app na sua tela de início'
+        ];
+      }
       const step = t('pwa.android_step1');
       if (step && step !== 'pwa.android_step1') return [step];
-      return ['Click the Install button below'];
+      return ['Clique no botão Instalar abaixo'];
     }
     if (platform === 'desktop') {
       const step = t('pwa.desktop_step1');
@@ -397,41 +406,43 @@ export default function PWAInstallModal({ isOpen, onClose, onInstall }: PWAInsta
                     />
 
                     {/* Botão de Instalação Direta no Android (Prompt Nativo) */}
-                    <motion.button
-                      initial={{ opacity: 0, scale: 0.95 }}
-                      animate={{ opacity: 1, scale: 1 }}
-                      whileHover={{ scale: 1.02 }}
-                      whileTap={{ scale: 0.98 }}
-                      onClick={async () => {
-                        try {
-                          if (onInstall) {
-                            const success = await onInstall();
+                    {!showDualMobile && (
+                      <motion.button
+                        initial={{ opacity: 0, scale: 0.95 }}
+                        animate={{ opacity: 1, scale: 1 }}
+                        whileHover={{ scale: 1.02 }}
+                        whileTap={{ scale: 0.98 }}
+                        onClick={async () => {
+                          try {
+                            if (onInstall) {
+                              const success = await onInstall();
+                              if (success) {
+                                onClose();
+                                return;
+                              }
+                            }
+                            const success = await promptPWAInstall();
                             if (success) {
                               onClose();
                               return;
                             }
+                            const ua = window.navigator.userAgent.toLowerCase();
+                            const isWebView = /wv|webview|fbav|instagram|micromessenger|threads/i.test(ua);
+                            if (isWebView) {
+                              window.location.href = `intent://${window.location.host}${window.location.pathname}${window.location.search}#Intent;scheme=https;package=com.android.chrome;end;`;
+                              return;
+                            }
+                          } catch (err) {
+                            console.error('Error invoking direct Android install:', err);
                           }
-                          const success = await promptPWAInstall();
-                          if (success) {
-                            onClose();
-                            return;
-                          }
-                          const ua = window.navigator.userAgent.toLowerCase();
-                          const isWebView = /wv|webview|fbav|instagram|micromessenger|threads/i.test(ua);
-                          if (isWebView) {
-                            window.location.href = `intent://${window.location.host}${window.location.pathname}${window.location.search}#Intent;scheme=https;package=com.android.chrome;end;`;
-                            return;
-                          }
-                        } catch (err) {
-                          console.error('Error invoking direct Android install:', err);
-                        }
-                      }}
-                      className="w-full mt-3 group relative overflow-hidden flex items-center justify-center gap-2.5 py-4 px-6 bg-gradient-to-r from-emerald-500 to-emerald-400 text-black font-black uppercase tracking-wider rounded-2xl md:rounded-3xl shadow-xl shadow-emerald-500/25 transition-all text-xs md:text-sm cursor-pointer border border-emerald-300/40"
-                    >
-                      <div className="absolute inset-0 bg-gradient-to-r from-transparent via-white/40 to-transparent -translate-x-full group-hover:translate-x-full transition-transform duration-1000" />
-                      <Download className="w-5 h-5 text-black shrink-0 animate-bounce" />
-                      <span>{settings.custom_texts?.['pwa.install_now'] || t('pwa.install_now') || 'Install App Now'}</span>
-                    </motion.button>
+                        }}
+                        className="w-full mt-3 group relative overflow-hidden flex items-center justify-center gap-2.5 py-4 px-6 bg-gradient-to-r from-emerald-500 to-emerald-400 text-black font-black uppercase tracking-wider rounded-2xl md:rounded-3xl shadow-xl shadow-emerald-500/25 transition-all text-xs md:text-sm cursor-pointer border border-emerald-300/40"
+                      >
+                        <div className="absolute inset-0 bg-gradient-to-r from-transparent via-white/40 to-transparent -translate-x-full group-hover:translate-x-full transition-transform duration-1000" />
+                        <Download className="w-5 h-5 text-black shrink-0 animate-bounce" />
+                        <span>{settings.custom_texts?.['pwa.install_now'] || t('pwa.install_now') || 'Install App Now'}</span>
+                      </motion.button>
+                    )}
                   </div>
                 )}
 
@@ -456,52 +467,64 @@ export default function PWAInstallModal({ isOpen, onClose, onInstall }: PWAInsta
                   {settings.custom_texts?.['pwa.install_desc'] || t('pwa.install_desc') || 'Get fast access and exclusive notifications directly on your device.'}
                 </p>
 
-                <div className="grid grid-cols-2 gap-3 md:gap-4 px-2 md:px-4 pb-4">
-                  <button
-                    onClick={async () => {
-                      try {
-                        if (onInstall) {
-                          const res = await onInstall();
-                          if (res) {
+                {showDualMobile ? (
+                  <div className="flex justify-center px-2 md:px-4 pb-4">
+                    <button
+                      onClick={onClose}
+                      className="w-full max-w-xs group relative overflow-hidden flex items-center justify-center gap-2 py-3.5 px-6 bg-primary text-black font-black uppercase tracking-wider rounded-2xl md:rounded-3xl hover:brightness-110 active:scale-95 transition-all text-xs md:text-sm shadow-xl shadow-primary/25 cursor-pointer"
+                    >
+                      <Check className="w-4 h-4 md:w-5 md:h-5 shrink-0" />
+                      <span>{settings.custom_texts?.['pwa.got_it'] || t('pwa.got_it') || 'ENTENDI'}</span>
+                    </button>
+                  </div>
+                ) : (
+                  <div className="grid grid-cols-2 gap-3 md:gap-4 px-2 md:px-4 pb-4">
+                    <button
+                      onClick={async () => {
+                        try {
+                          if (onInstall) {
+                            const res = await onInstall();
+                            if (res) {
+                              onClose();
+                              return;
+                            }
+                          }
+                          const success = await promptPWAInstall();
+                          if (success) {
                             onClose();
                             return;
                           }
-                        }
-                        const success = await promptPWAInstall();
-                        if (success) {
-                          onClose();
-                          return;
-                        }
-                        if (device === 'android') {
-                          const ua = window.navigator.userAgent.toLowerCase();
-                          const isWebView = /wv|webview|fbav|instagram|micromessenger|threads/i.test(ua);
-                          if (isWebView) {
-                            window.location.href = `intent://${window.location.host}${window.location.pathname}${window.location.search}#Intent;scheme=https;package=com.android.chrome;end;`;
-                            return;
+                          if (device === 'android') {
+                            const ua = window.navigator.userAgent.toLowerCase();
+                            const isWebView = /wv|webview|fbav|instagram|micromessenger|threads/i.test(ua);
+                            if (isWebView) {
+                              window.location.href = `intent://${window.location.host}${window.location.pathname}${window.location.search}#Intent;scheme=https;package=com.android.chrome;end;`;
+                              return;
+                            }
                           }
+                        } catch (e) {
+                          console.warn('Install button error:', e);
                         }
-                      } catch (e) {
-                        console.warn('Install button error:', e);
-                      }
 
-                      onClose();
-                    }}
-                    className="group relative overflow-hidden flex items-center justify-center gap-2 py-3 md:py-5 px-4 md:px-6 bg-primary text-black font-black uppercase tracking-tighter rounded-2xl md:rounded-3xl hover:brightness-110 active:scale-95 transition-all text-xs md:text-sm shadow-2xl shadow-primary/30 cursor-pointer"
-                  >
-                    <div className="absolute inset-0 bg-gradient-to-tr from-white/0 via-white/40 to-white/0 -translate-x-full group-hover:translate-x-full transition-transform duration-1000" />
-                    {device === 'ios' && !canPromptInstall
-                      ? (settings.custom_texts?.['pwa.got_it'] || t('pwa.got_it') || 'GOT IT')
-                      : (settings.custom_texts?.['pwa.install_button'] || t('pwa.install_button') || 'INSTALL APP NOW')
-                    }
-                  </button>
-                  <button
-                    onClick={handleDismiss}
-                    className="flex items-center justify-center gap-2 py-3 md:py-5 px-4 md:px-6 bg-white/5 border border-white/5 text-gray-500 font-black uppercase tracking-tighter rounded-2xl md:rounded-3xl hover:bg-white/10 active:scale-95 transition-all text-xs md:text-sm"
-                  >
-                    <Check className="w-4 h-4 md:w-5 md:h-5 shrink-0" />
-                    {settings.custom_texts?.['pwa.already_installed'] || t('pwa.already_installed') || 'OK'}
-                  </button>
-                </div>
+                        onClose();
+                      }}
+                      className="group relative overflow-hidden flex items-center justify-center gap-2 py-3 md:py-5 px-4 md:px-6 bg-primary text-black font-black uppercase tracking-tighter rounded-2xl md:rounded-3xl hover:brightness-110 active:scale-95 transition-all text-xs md:text-sm shadow-2xl shadow-primary/30 cursor-pointer"
+                    >
+                      <div className="absolute inset-0 bg-gradient-to-tr from-white/0 via-white/40 to-white/0 -translate-x-full group-hover:translate-x-full transition-transform duration-1000" />
+                      {device === 'ios' && !canPromptInstall
+                        ? (settings.custom_texts?.['pwa.got_it'] || t('pwa.got_it') || 'GOT IT')
+                        : (settings.custom_texts?.['pwa.install_button'] || t('pwa.install_button') || 'INSTALL APP NOW')
+                      }
+                    </button>
+                    <button
+                      onClick={handleDismiss}
+                      className="flex items-center justify-center gap-2 py-3 md:py-5 px-4 md:px-6 bg-white/5 border border-white/5 text-gray-500 font-black uppercase tracking-tighter rounded-2xl md:rounded-3xl hover:bg-white/10 active:scale-95 transition-all text-xs md:text-sm"
+                    >
+                      <Check className="w-4 h-4 md:w-5 md:h-5 shrink-0" />
+                      {settings.custom_texts?.['pwa.already_installed'] || t('pwa.already_installed') || 'OK'}
+                    </button>
+                  </div>
+                )}
               </div>
             </div>
           </motion.div>

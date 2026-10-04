@@ -85,6 +85,9 @@ export default function Profile({ user, canInstall, onInstall }: ProfileProps) {
   const { settings } = useSettings();
   const { t } = useI18n();
   const [fullName, setFullName] = useState(user.user_metadata?.full_name || '');
+  const [profileAppIconError, setProfileAppIconError] = useState(false);
+  const rawProfileAppIcon = settings.pwa_icon_url || settings.android_icon_url || settings.ios_icon_url || settings.favicon_url;
+  const profileAppIcon = (!profileAppIconError && rawProfileAppIcon && rawProfileAppIcon.trim()) ? rawProfileAppIcon.trim() : null;
   
   // Parse initial phone and country code (default to '1' for US standard +1)
   const initialPhone = user.user_metadata?.phone || '';
@@ -578,8 +581,17 @@ export default function Profile({ user, canInstall, onInstall }: ProfileProps) {
 
         {!pushStatus.supported ? (
           <div className="bg-blue-600/10 border border-blue-600/20 rounded-2xl p-6 flex flex-col items-center text-center gap-4">
-            <div className="p-3 bg-blue-600/20 rounded-full text-blue-500">
-              <Smartphone size={24} />
+            <div className="w-12 h-12 rounded-xl bg-blue-600/20 flex items-center justify-center text-blue-500 overflow-hidden border border-blue-500/20 shrink-0">
+              {profileAppIcon ? (
+                <img
+                  src={profileAppIcon}
+                  alt="App Icon"
+                  onError={() => setProfileAppIconError(true)}
+                  className="w-full h-full object-cover rounded-xl"
+                />
+              ) : (
+                <Smartphone size={24} />
+              )}
             </div>
             <div className="space-y-1">
               <h5 className="font-bold text-white text-sm">

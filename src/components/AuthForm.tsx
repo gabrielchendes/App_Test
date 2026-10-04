@@ -10,9 +10,7 @@ import { safeParse, safeFetch } from '../lib/utils';
 import { motion, AnimatePresence } from 'motion/react';
 import { usePWAInstall } from '../hooks/usePWAInstall';
 import { getDeviceType, installOnAndroidDirectly } from '../lib/pwa';
-import { lazyWithRetry } from '../lib/lazyWithRetry';
-
-const PWAInstallModal = lazyWithRetry(() => import('./PWAInstallModal'));
+import PWAInstallModal from './PWAInstallModal';
 
 type LoginMethod = 'passwordless' | 'password';
 
@@ -141,9 +139,21 @@ export default function AuthForm() {
   const rawInstallText = settings.custom_texts?.['pwa.install_app'] || t('pwa.install_app') || 'Install App';
   const cleanInstallText = rawInstallText.replace(/^[\p{Emoji}\p{Extended_Pictographic}\s]+/u, '').trim() || 'Install App';
 
+  const [appIconError, setAppIconError] = useState(false);
+  const device = getDeviceType();
+  const rawDynamicIcon = device === 'ios'
+    ? (settings.ios_icon_url || settings.custom_texts?.['config.ios_icon_url'] || settings.pwa_icon_url || settings.favicon_url)
+    : (settings.android_icon_url || settings.custom_texts?.['config.android_icon_url'] || settings.pwa_icon_url || settings.favicon_url || settings.ios_icon_url);
+  const dynamicAppIcon = (!appIconError && rawDynamicIcon && rawDynamicIcon.trim()) ? rawDynamicIcon.trim() : null;
+
   const handleInstallClick = async () => {
     try {
-      const isAndroid = getDeviceType() === 'android';
+      const currentDevice = getDeviceType();
+      if (currentDevice === 'desktop') {
+        setIsPWAModalOpen(true);
+        return;
+      }
+      const isAndroid = currentDevice === 'android';
       if (isAndroid) {
         // On all Android devices, attempt direct install prompt first
         const directSuccess = await installOnAndroidDirectly();
@@ -293,13 +303,22 @@ export default function AuthForm() {
                     }}
                   >
                     {/* Top Specular Arc Reflex */}
-                    <div className="absolute top-0 inset-x-0 h-2 bg-gradient-to-b from-white/35 via-white/10 to-transparent pointer-events-none" />
+                    <div className="absolute top-0 inset-x-0 h-2 bg-gradient-to-b from-white/35 via-white/10 to-transparent pointer-events-none z-20" />
                     
-                    {/* Smartphone Device Symbol */}
-                    <Smartphone 
-                      size={17} 
-                      className="relative z-10 text-white stroke-[2.3] drop-shadow-[0_1px_4px_rgba(0,0,0,0.8)] group-hover:scale-105 transition-transform" 
-                    />
+                    {/* Dynamic App Icon or Smartphone Device Symbol */}
+                    {dynamicAppIcon ? (
+                      <img 
+                        src={dynamicAppIcon} 
+                        alt="App Icon" 
+                        onError={() => setAppIconError(true)}
+                        className="w-full h-full object-cover rounded-[7.5px] relative z-10 transition-transform duration-300 group-hover:scale-105"
+                      />
+                    ) : (
+                      <Smartphone 
+                        size={17} 
+                        className="relative z-10 text-white stroke-[2.3] drop-shadow-[0_1px_4px_rgba(0,0,0,0.8)] group-hover:scale-105 transition-transform" 
+                      />
+                    )}
                     
                     {/* Animated descending micro-arrow */}
                     <motion.div 
@@ -498,13 +517,11 @@ export default function AuthForm() {
         </div>
       </div>
       {isPWAModalOpen && (
-        <React.Suspense fallback={null}>
-          <PWAInstallModal
-            isOpen={isPWAModalOpen}
-            onClose={() => setIsPWAModalOpen(false)}
-            onInstall={promptInstall}
-          />
-        </React.Suspense>
+        <PWAInstallModal
+          isOpen={isPWAModalOpen}
+          onClose={() => setIsPWAModalOpen(false)}
+          onInstall={promptInstall}
+        />
       )}
     </div>
   );

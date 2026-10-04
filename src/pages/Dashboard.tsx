@@ -27,6 +27,7 @@ import { cn } from '../lib/utils';
 import { lazyWithRetry } from '../lib/lazyWithRetry';
 import { GlowingSpinner } from '../components/GlowingSpinner';
 import { parseCourseHtmlFunnel } from '../utils/courseFunnel';
+import PWAInstallModal from '../components/PWAInstallModal';
 
 // Lazy load heavy components and modals
 const Profile = lazyWithRetry(() => import('../components/Profile'));
@@ -34,7 +35,6 @@ const Community = lazyWithRetry(() => import('../components/Community'));
 const AdminPanel = lazyWithRetry(() => import('../components/AdminPanel'));
 const CourseViewer = lazyWithRetry(() => import('../components/CourseViewer'));
 const CoursePreviewViewer = lazyWithRetry(() => import('../components/CoursePreviewViewer'));
-const PWAInstallModal = lazyWithRetry(() => import('../components/PWAInstallModal'));
 const AiAssistantModal = lazyWithRetry(() => import('../components/AiAssistantModal'));
 const AccessDeniedModal = lazyWithRetry(() => import('../components/AccessDeniedModal'));
 
@@ -885,13 +885,18 @@ export default function Dashboard({ user }: DashboardProps) {
         isAiOpen={isAiModalOpen}
         canInstall={canInstall}
         onInstall={async () => {
-          if (getDeviceType() === 'android') {
+          const device = getDeviceType();
+          if (device === 'desktop') {
+            setShowPWAInstall(true);
+            return;
+          }
+          if (device === 'android') {
             const directSuccess = await installOnAndroidDirectly();
             if (directSuccess) return;
           }
           const success = await promptPWAInstall();
           if (!success) {
-            if (getDeviceType() === 'android') {
+            if (device === 'android') {
               const isWebView = /wv|webview|fbav|instagram|micromessenger|threads/i.test(navigator.userAgent);
               if (isWebView) {
                 window.location.href = `intent://${window.location.host}${window.location.pathname}${window.location.search}#Intent;scheme=https;package=com.android.chrome;end;`;
@@ -1104,29 +1109,27 @@ export default function Dashboard({ user }: DashboardProps) {
       </Suspense>
       
       {showPWAInstall && (
-        <Suspense fallback={null}>
-          <PWAInstallModal 
-            isOpen={showPWAInstall} 
-            onClose={() => setShowPWAInstall(false)}
-            onInstall={async () => {
-              const prompt = deferredPrompt || getDeferredPrompt();
-              if (prompt) {
-                try {
-                  await prompt.prompt();
-                  const { outcome } = await prompt.userChoice;
-                  if (outcome === 'accepted') {
-                    setDeferredPrompt(null);
-                    setCanInstall(false);
-                    return true;
-                  }
-                } catch (e) {
-                  console.error('Error invoking install prompt:', e);
+        <PWAInstallModal 
+          isOpen={showPWAInstall} 
+          onClose={() => setShowPWAInstall(false)}
+          onInstall={async () => {
+            const prompt = deferredPrompt || getDeferredPrompt();
+            if (prompt) {
+              try {
+                await prompt.prompt();
+                const { outcome } = await prompt.userChoice;
+                if (outcome === 'accepted') {
+                  setDeferredPrompt(null);
+                  setCanInstall(false);
+                  return true;
                 }
+              } catch (e) {
+                console.error('Error invoking install prompt:', e);
               }
-              return await promptPWAInstall();
-            }}
-          />
-        </Suspense>
+            }
+            return await promptPWAInstall();
+          }}
+        />
       )}
 
       {/* Access Denied / Inactive Subscription Overlay */}

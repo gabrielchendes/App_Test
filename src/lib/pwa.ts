@@ -103,16 +103,15 @@ export const waitForDeferredPrompt = (timeoutMs = 3500): Promise<BeforeInstallPr
   });
 };
 
-export const promptPWAInstall = async (timeoutMs = 3500): Promise<boolean> => {
+export const promptPWAInstall = async (timeoutMs = 400): Promise<boolean> => {
   let promptEvent = getDeferredPrompt();
 
   if (!promptEvent && typeof window !== 'undefined') {
-    // Wait for beforeinstallprompt in case browser evaluation takes a moment (e.g. Samsung Internet or Chromium parsing manifest/SW)
+    // Wait briefly in case browser evaluation takes a quick moment
     promptEvent = await waitForDeferredPrompt(timeoutMs);
   }
 
   if (!promptEvent) {
-    console.warn('[PWA] promptPWAInstall called but no deferredPrompt is available.');
     return false;
   }
 
@@ -132,8 +131,8 @@ export const promptPWAInstall = async (timeoutMs = 3500): Promise<boolean> => {
 };
 
 export const installOnAndroidDirectly = async (): Promise<boolean> => {
-  // First attempt native prompt (waiting up to 3500ms for SW and manifest validation)
-  const success = await promptPWAInstall(3500);
+  // First attempt native prompt directly without annoying delays
+  const success = await promptPWAInstall(400);
   if (success) return true;
 
   if (typeof window !== 'undefined') {
