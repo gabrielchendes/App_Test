@@ -539,7 +539,7 @@ export default function Dashboard({ user }: DashboardProps) {
 
   const isUnlocked = useCallback((course: Course) => {
     // 1. If it has a direct purchase or is part of an owned package, it's unlocked
-    if (purchases.some(p => p.product_id === course.id)) return true;
+    if (purchases.some(p => p.product_id === course.id || (course.hotmart_product_id && p.product_id === course.hotmart_product_id))) return true;
 
     // 2. If a course is a Main Product (is_free = true, is_bonus = false), it's always unlocked for all users
     const isMainCourse = !!course.is_free && !course.is_bonus;
@@ -618,7 +618,7 @@ export default function Dashboard({ user }: DashboardProps) {
     });
 
     // 2. Paid courses that are purchased
-    const purchasedPaidList = courses.filter(c => !c.is_free && !c.is_bonus && purchases.some(p => p.product_id === c.id));
+    const purchasedPaidList = courses.filter(c => !c.is_free && !c.is_bonus && purchases.some(p => p.product_id === c.id || (c.hotmart_product_id && p.product_id === c.hotmart_product_id)));
     const sortedPurchasedPaid = [...purchasedPaidList].sort((a, b) => {
       const orderA = a.order_index ?? 9999;
       const orderB = b.order_index ?? 9999;
@@ -632,7 +632,7 @@ export default function Dashboard({ user }: DashboardProps) {
 
   const paidCourses = useMemo(() => {
     // Paid courses that are NOT purchased
-    const list = courses.filter(c => !c.is_free && !c.is_bonus && !purchases.some(p => p.product_id === c.id));
+    const list = courses.filter(c => !c.is_free && !c.is_bonus && !purchases.some(p => p.product_id === c.id || (c.hotmart_product_id && p.product_id === c.hotmart_product_id)));
     return [...list].sort((a, b) => {
       const orderA = a.order_index ?? 9999;
       const orderB = b.order_index ?? 9999;

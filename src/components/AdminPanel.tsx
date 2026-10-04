@@ -1503,14 +1503,43 @@ export default function AdminPanel({ user }: AdminPanelProps) {
     }
   };
 
-  const fetchUserPurchases = async (userId: string) => {
+  const getAdminTokenSafe = async (): Promise<string | undefined> => {
     try {
       const { data: { session } } = await supabase.auth.getSession();
-      const response = await safeFetch(`/api/v1/admin?action=purchases-list&userId=${userId}`, {
+      if (!session) {
+        const { data: refreshed } = await supabase.auth.refreshSession();
+        return refreshed.session?.access_token;
+      }
+      const expiresAt = session.expires_at ? session.expires_at * 1000 : 0;
+      if (expiresAt > 0 && expiresAt < Date.now() + 120000) {
+        const { data: refreshed } = await supabase.auth.refreshSession();
+        return refreshed.session?.access_token || session.access_token;
+      }
+      return session.access_token;
+    } catch {
+      return undefined;
+    }
+  };
+
+  const fetchUserPurchases = async (userId: string) => {
+    try {
+      let token = await getAdminTokenSafe();
+      let response = await safeFetch(`/api/v1/admin?action=purchases-list&userId=${userId}`, {
         headers: {
-          'Authorization': `Bearer ${session?.access_token}`
+          ...(token ? { 'Authorization': `Bearer ${token}` } : {})
         }
       });
+
+      if (response?.error && (response.error.includes('Session expired') || response.status === 401)) {
+        const { data: refreshed } = await supabase.auth.refreshSession();
+        if (refreshed.session?.access_token) {
+          response = await safeFetch(`/api/v1/admin?action=purchases-list&userId=${userId}`, {
+            headers: {
+              'Authorization': `Bearer ${refreshed.session.access_token}`
+            }
+          });
+        }
+      }
       
       if (response && Array.isArray(response)) {
         setUserPurchases(response.map((p: any) => p.product_id));
@@ -1528,17 +1557,17 @@ export default function AdminPanel({ user }: AdminPanelProps) {
     }
   };
 
-  const toggleCourseAccess = async (userId: string, courseId: string, isUnlocked: boolean) => {
+  const toggleCourseAccess = async (userId: string, courseId: string, isUnlocked: boolean, courseTitle?: string) => {
     const executeToggle = async () => {
       try {
-        const { data: { session } } = await supabase.auth.getSession();
+        let token = await getAdminTokenSafe();
         const userEmail = selectedUserForCourses?.email;
         
-        const response = await safeFetch('/api/v1/admin?action=user-access-toggle', {
+        let response = await safeFetch('/api/v1/admin?action=user-access-toggle', {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
-            'Authorization': `Bearer ${session?.access_token}`
+            ...(token ? { 'Authorization': `Bearer ${token}` } : {})
           },
           body: JSON.stringify({
             userId,
@@ -1548,7 +1577,41 @@ export default function AdminPanel({ user }: AdminPanelProps) {
           })
         });
 
-        if (!response || response.error) throw new Error(response?.error || 'Erro ao comunicar com o servidor');
+        if (response?.error && (response.error.includes('Session expired') || response.status === 401)) {
+          const { data: refreshed } = await supabase.auth.refreshSession();
+          if (refreshed.session?.access_token) {
+            response = await safeFetch('/api/v1/admin?action=user-access-toggle', {
+              method: 'POST',
+              headers: {
+                'Content-Type': 'application/json',
+                'Authorization': `Bearer ${refreshed.session.access_token}`
+              },
+              body: JSON.stringify({
+                userId,
+                userEmail,
+                courseId,
+                action: isUnlocked ? 'revoke' : 'grant'
+              })
+            });
+          }
+        }
+
+        if (!response || response.error) {
+          const hasAnySuccess = response?.details?.some((r: any) =>
+            (typeof r.status === 'string' && r.status.includes('granted')) ||
+            r.status === 'already_exists' ||
+            r.status === 'skipped_package_fk' ||
+            r.status === 'revoked'
+          ) || response?.results?.some((r: any) =>
+            (typeof r.status === 'string' && r.status.includes('granted')) ||
+            r.status === 'already_exists' ||
+            r.status === 'skipped_package_fk' ||
+            r.status === 'revoked'
+          );
+          if (!hasAnySuccess) {
+            throw new Error(response?.error || 'Erro ao comunicar com o servidor');
+          }
+        }
 
         const isAi = ['ai_subscription', 'prod_ai_default', 'hotmart_ia_victoria', 'ia_vip', 'unlimited_ai', 'ai_unlimited'].includes(courseId);
 
@@ -1571,19 +1634,28 @@ export default function AdminPanel({ user }: AdminPanelProps) {
         }
 
         if (isUnlocked) {
+          const courseObj = courses.find(c => c.id === courseId);
+          const idsToRemove = [courseId, courseObj?.hotmart_product_id].filter(Boolean);
+          // Also remove any packages containing this course from local state
+          coursePackages.forEach(pkg => {
+            if (pkg.package_courses?.some((pc: any) => pc.course_id === courseId)) {
+              if (pkg.id) idsToRemove.push(pkg.id);
+              if (pkg.hotmart_product_id) idsToRemove.push(pkg.hotmart_product_id);
+            }
+          });
           if (isAi) {
             setUserPurchases(prev => prev.filter(id => !['ai_subscription', 'prod_ai_default', 'hotmart_ia_victoria', 'ia_vip', 'unlimited_ai', 'ai_unlimited'].includes(id)));
           } else {
-            setUserPurchases(prev => prev.filter(id => id !== courseId));
+            setUserPurchases(prev => prev.filter(id => !idsToRemove.includes(id)));
           }
-          toast.success(isAi ? 'Acesso Ilimitado VIP revogado' : 'Acesso removido');
+          toast.success(isAi ? 'Acesso Ilimitado VIP revogado' : 'Curso bloqueado com sucesso');
         } else {
           if (isAi) {
             setUserPurchases(prev => [...new Set([...prev, courseId, 'ai_subscription'])]);
           } else {
             setUserPurchases(prev => [...new Set([...prev, courseId])]);
           }
-          toast.success(isAi ? 'Acesso Ilimitado VIP liberado' : 'Acesso liberado');
+          toast.success(isAi ? 'Acesso Ilimitado VIP liberado' : 'Curso liberado com sucesso');
         }
         setTimeout(() => fetchUserPurchases(userId), 800);
       } catch (err: any) {
@@ -1593,16 +1665,17 @@ export default function AdminPanel({ user }: AdminPanelProps) {
     };
 
     const isAi = ['ai_subscription', 'prod_ai_default', 'hotmart_ia_victoria', 'ia_vip', 'unlimited_ai', 'ai_unlimited'].includes(courseId);
+    const resolvedTitle = courseTitle || courses.find(c => c.id === courseId)?.title || 'este curso';
 
     if (isUnlocked) {
       setConfirmationModal({
         isOpen: true,
-        title: isAi ? 'Revogar Acesso Ilimitado VIP' : 'Remover Acesso ao Curso',
+        title: isAi ? 'Revogar Acesso Ilimitado VIP' : 'Bloquear Curso Pago',
         message: isAi 
           ? 'Tem certeza que deseja revogar o Plano Ilimitado VIP deste usuário?' 
-          : 'Tem certeza que deseja remover o acesso do usuário a este curso?',
+          : `Tem certeza que deseja bloquear o acesso do usuário ao curso "${resolvedTitle}"?`,
         type: 'danger',
-        confirmText: 'Sim, Remover',
+        confirmText: 'Sim, Bloquear',
         onConfirm: () => {
           executeToggle();
         }
@@ -1630,13 +1703,13 @@ export default function AdminPanel({ user }: AdminPanelProps) {
       // ALWAYS use pkg.id (UUID) for internal API calls to ensure valid expansion in the backend
       const productId = pkg.id; 
       try {
-        const { data: { session } } = await supabase.auth.getSession();
+        let token = await getAdminTokenSafe();
         
-        const response = await safeFetch('/api/v1/admin?action=user-access-toggle', {
+        let response = await safeFetch('/api/v1/admin?action=user-access-toggle', {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
-            'Authorization': `Bearer ${session?.access_token}`
+            ...(token ? { 'Authorization': `Bearer ${token}` } : {})
           },
           body: JSON.stringify({
             userId,
@@ -1644,6 +1717,24 @@ export default function AdminPanel({ user }: AdminPanelProps) {
             action: isUnlocked ? 'revoke' : 'grant'
           })
         });
+
+        if (response?.error && (response.error.includes('Session expired') || response.status === 401)) {
+          const { data: refreshed } = await supabase.auth.refreshSession();
+          if (refreshed.session?.access_token) {
+            response = await safeFetch('/api/v1/admin?action=user-access-toggle', {
+              method: 'POST',
+              headers: {
+                'Content-Type': 'application/json',
+                'Authorization': `Bearer ${refreshed.session.access_token}`
+              },
+              body: JSON.stringify({
+                userId,
+                courseId: productId,
+                action: isUnlocked ? 'revoke' : 'grant'
+              })
+            });
+          }
+        }
 
         if (!response || response.error) {
           const hasAnySuccess = response?.details?.some((r: any) =>
@@ -2800,7 +2891,7 @@ export default function AdminPanel({ user }: AdminPanelProps) {
                                 Cursos Pagos Adquiridos 🤑💰
                               </h4>
                               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                                {courses.filter(c => !c.is_bonus && !c.is_free && userPurchases.includes(c.id)).map(course => {
+                                {courses.filter(c => !c.is_bonus && !c.is_free && (userPurchases.includes(c.id) || (c.hotmart_product_id && userPurchases.includes(c.hotmart_product_id)))).map(course => {
                                   const isUnlocked = true;
                                   
                                   return (
@@ -2822,15 +2913,8 @@ export default function AdminPanel({ user }: AdminPanelProps) {
                                       </div>
                                       <div className="flex flex-col items-end gap-2">
                                         <button 
-                                          onClick={() => setConfirmationModal({
-                                            isOpen: true,
-                                            title: 'Confirmar Bloqueio',
-                                            message: 'Tem certeza que deseja bloquear este curso pago?',
-                                            type: 'danger',
-                                            confirmText: 'Sim, Bloquear',
-                                            onConfirm: () => toggleCourseAccess(selectedUserForCourses.id, course.id, isUnlocked)
-                                          })}
-                                          className="px-4 py-2 rounded-xl text-[10px] font-black transition-all bg-red-500 text-white hover:bg-red-600 active:scale-95 shadow-lg shadow-red-500/20"
+                                          onClick={() => toggleCourseAccess(selectedUserForCourses.id, course.id, isUnlocked, course.title)}
+                                          className="px-4 py-2 rounded-xl text-[10px] font-black transition-all bg-red-500 text-white hover:bg-red-600 active:scale-95 shadow-lg shadow-red-500/20 cursor-pointer"
                                         >
                                           BLOQUEAR
                                         </button>
@@ -2838,7 +2922,7 @@ export default function AdminPanel({ user }: AdminPanelProps) {
                                     </div>
                                   );
                                 })}
-                                {courses.filter(c => !c.is_bonus && !c.is_free && userPurchases.includes(c.id)).length === 0 && (
+                                {courses.filter(c => !c.is_bonus && !c.is_free && (userPurchases.includes(c.id) || (c.hotmart_product_id && userPurchases.includes(c.hotmart_product_id)))).length === 0 && (
                                   <div className="col-span-full py-8 text-center bg-white/5 rounded-2xl border border-dashed border-white/10 text-gray-500 text-xs font-bold">
                                     Nenhum curso pago liberado
                                   </div>
@@ -2852,7 +2936,7 @@ export default function AdminPanel({ user }: AdminPanelProps) {
                                 Cursos Pagos Ainda Não Adquiridos ⏳
                               </h4>
                               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                                {courses.filter(c => !c.is_bonus && !c.is_free && !userPurchases.includes(c.id)).map(course => {
+                                {courses.filter(c => !c.is_bonus && !c.is_free && !userPurchases.includes(c.id) && (!c.hotmart_product_id || !userPurchases.includes(c.hotmart_product_id))).map(course => {
                                   const isUnlocked = false;
                                   return (
                                     <div key={course.id} className="bg-black/40 rounded-2xl border border-white/5 p-4 flex items-center justify-between group hover:border-white/10 transition-all">
@@ -2872,15 +2956,15 @@ export default function AdminPanel({ user }: AdminPanelProps) {
                                         </div>
                                       </div>
                                       <button 
-                                        onClick={() => toggleCourseAccess(selectedUserForCourses.id, course.id, isUnlocked)}
-                                        className="px-4 py-2 rounded-xl text-[10px] font-black transition-all bg-green-500 text-white hover:bg-green-600 active:scale-95 shadow-lg shadow-green-500/20"
+                                        onClick={() => toggleCourseAccess(selectedUserForCourses.id, course.id, isUnlocked, course.title)}
+                                        className="px-4 py-2 rounded-xl text-[10px] font-black transition-all bg-green-500 text-white hover:bg-green-600 active:scale-95 shadow-lg shadow-green-500/20 cursor-pointer"
                                       >
                                         LIBERAR
                                       </button>
                                     </div>
                                   );
                                 })}
-                                {courses.filter(c => !c.is_bonus && !c.is_free && !userPurchases.includes(c.id)).length === 0 && (
+                                {courses.filter(c => !c.is_bonus && !c.is_free && !userPurchases.includes(c.id) && (!c.hotmart_product_id || !userPurchases.includes(c.hotmart_product_id))).length === 0 && (
                                   <div className="col-span-full py-8 text-center bg-white/5 rounded-2xl border border-dashed border-white/10 text-gray-500 text-xs font-bold">
                                     Todos os cursos pagos já estão liberados
                                   </div>
