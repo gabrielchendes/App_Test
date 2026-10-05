@@ -1,4 +1,4 @@
-import { memo } from 'react';
+import { memo, useState, useEffect } from 'react';
 import { LogOut, User as UserIcon, Bell, Shield, Download, GraduationCap } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 import { User } from '@supabase/supabase-js';
@@ -44,8 +44,83 @@ const Navbar = memo(({
     else toast.success(t('auth.logout_success') || 'Até logo!');
   };
 
-    const rawName = user.user_metadata?.full_name || user.email?.split('@')[0] || 'Usuário';
-    const displayName = rawName.length > 18 ? rawName.substring(0, 18) + '...' : rawName;
+  const [overrideName, setOverrideName] = useState<string | null>(() => {
+    return user?.id ? localStorage.getItem(`cached_full_name_${user.id}`) : null;
+  });
+  const [overrideAvatar, setOverrideAvatar] = useState<string | null>(() => {
+    return user?.id ? localStorage.getItem(`cached_avatar_url_${user.id}`) : null;
+  });
+
+  // Sync from localStorage whenever user.id changes
+  useEffect(() => {
+    if (user?.id) {
+      const cachedName = localStorage.getItem(`cached_full_name_${user.id}`);
+      if (cachedName) setOverrideName(cachedName);
+      const cachedAvatar = localStorage.getItem(`cached_avatar_url_${user.id}`);
+      if (cachedAvatar) setOverrideAvatar(cachedAvatar);
+    }
+  }, [user?.id]);
+
+  // Reactive listener for instant (0ms) profile changes across components and storage
+  useEffect(() => {
+    const handleProfileUpdated = (e: any) => {
+      const detail = e.detail;
+      if (detail?.full_name !== undefined) {
+        setOverrideName(detail.full_name);
+      }
+      if (detail?.avatar_url !== undefined) {
+        setOverrideAvatar(detail.avatar_url);
+      }
+    };
+
+    const handleStorageChange = (e: StorageEvent) => {
+      if (user?.id) {
+        if (e.key === `cached_full_name_${user.id}` && e.newValue !== null) {
+          setOverrideName(e.newValue);
+        }
+        if (e.key === `cached_avatar_url_${user.id}` && e.newValue !== null) {
+          setOverrideAvatar(e.newValue);
+        }
+      }
+    };
+
+    window.addEventListener('user-profile-updated', handleProfileUpdated);
+    window.addEventListener('storage', handleStorageChange);
+
+    // Initial background check from profiles table if cache is empty
+    if (user?.id && !overrideName) {
+      supabase
+        .from('profiles')
+        .select('full_name, avatar_url')
+        .eq('id', user.id)
+        .maybeSingle()
+        .then(({ data }) => {
+          if (data?.full_name) {
+            setOverrideName(data.full_name);
+            try {
+              localStorage.setItem(`cached_full_name_${user.id}`, data.full_name);
+            } catch (err) {}
+          }
+          if (data?.avatar_url) {
+            setOverrideAvatar(data.avatar_url);
+            try {
+              localStorage.setItem(`cached_avatar_url_${user.id}`, data.avatar_url);
+            } catch (err) {}
+          }
+        })
+        .catch(() => {});
+    }
+
+    return () => {
+      window.removeEventListener('user-profile-updated', handleProfileUpdated);
+      window.removeEventListener('storage', handleStorageChange);
+    };
+  }, [user?.id, overrideName]);
+
+  const effectiveFullName = (overrideName && overrideName.trim()) ? overrideName.trim() : user.user_metadata?.full_name;
+  const effectiveAvatar = (overrideAvatar && overrideAvatar.trim()) ? overrideAvatar.trim() : user.user_metadata?.avatar_url;
+  const rawName = effectiveFullName || user.email?.split('@')[0] || 'Usuário';
+  const displayName = rawName.length > 18 ? rawName.substring(0, 18) + '...' : rawName;
 
     return (
       <nav className="absolute top-0 left-0 right-0 z-50 bg-gradient-to-b from-black/80 to-transparent px-4 sm:px-6 py-4 transition-all duration-300">
@@ -70,8 +145,8 @@ const Navbar = memo(({
               title={t('gamification.view_progress_tooltip') || "Ver Progresso & Medalhas"}
             >
               <div className="w-7 h-7 rounded-full bg-zinc-800 overflow-hidden flex items-center justify-center border border-white/25 shrink-0">
-                {user.user_metadata?.avatar_url && user.user_metadata.avatar_url.trim() ? (
-                  <img src={user.user_metadata.avatar_url.trim()} alt="Avatar" className="w-full h-full object-cover" referrerPolicy="no-referrer" />
+                {effectiveAvatar && effectiveAvatar.trim() ? (
+                  <img src={effectiveAvatar.trim()} alt="Avatar" className="w-full h-full object-cover" referrerPolicy="no-referrer" />
                 ) : (
                   <UserIcon size={14} className="text-primary" />
                 )}
@@ -188,14 +263,14 @@ const Navbar = memo(({
             title={t('gamification.view_progress_tooltip') || "Ver Progresso & Medalhas"}
           >
             <div className="w-8 h-8 rounded-full bg-zinc-800 overflow-hidden flex items-center justify-center border border-white/25 shrink-0">
-              {user.user_metadata?.avatar_url && user.user_metadata.avatar_url.trim() ? (
-                <img src={user.user_metadata.avatar_url.trim()} alt="Avatar" className="w-full h-full object-cover" referrerPolicy="no-referrer" />
+              {effectiveAvatar && effectiveAvatar.trim() ? (
+                <img src={effectiveAvatar.trim()} alt="Avatar" className="w-full h-full object-cover" referrerPolicy="no-referrer" />
               ) : (
                 <UserIcon size={16} className="text-primary" />
               )}
             </div>
             <span className="text-xs font-bold tracking-tight">
-              {user.user_metadata?.full_name || user.email?.split('@')[0]}
+              {rawName}
             </span>
 
             {/* Progress circle */}

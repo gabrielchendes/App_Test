@@ -84,7 +84,9 @@ const validateDateOfBirth = (val: string): string | null => {
 export default function Profile({ user, canInstall, onInstall }: ProfileProps) {
   const { settings } = useSettings();
   const { t } = useI18n();
-  const [fullName, setFullName] = useState(user.user_metadata?.full_name || '');
+  const [fullName, setFullName] = useState(() => {
+    return (user?.id ? localStorage.getItem(`cached_full_name_${user.id}`) : null) || user.user_metadata?.full_name || '';
+  });
   const [profileAppIconError, setProfileAppIconError] = useState(false);
   const rawProfileAppIcon = settings.pwa_icon_url || settings.android_icon_url || settings.ios_icon_url || settings.favicon_url;
   const profileAppIcon = (!profileAppIconError && rawProfileAppIcon && rawProfileAppIcon.trim()) ? rawProfileAppIcon.trim() : null;
@@ -120,7 +122,9 @@ export default function Profile({ user, canInstall, onInstall }: ProfileProps) {
   const [dobError, setDobError] = useState<string | null>(null);
   const [city, setCity] = useState(user.user_metadata?.city || '');
 
-  const [avatarUrl, setAvatarUrl] = useState(user.user_metadata?.avatar_url || '');
+  const [avatarUrl, setAvatarUrl] = useState(() => {
+    return (user?.id ? localStorage.getItem(`cached_avatar_url_${user.id}`) : null) || user.user_metadata?.avatar_url || '';
+  });
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
   const [loading, setLoading] = useState(false);
@@ -146,8 +150,24 @@ export default function Profile({ user, canInstall, onInstall }: ProfileProps) {
           .maybeSingle();
 
         if (!error && data && isMounted) {
-          if (data.full_name) setFullName(data.full_name);
-          if (data.avatar_url) setAvatarUrl(data.avatar_url);
+          if (data.full_name) {
+            setFullName(data.full_name);
+            try {
+              localStorage.setItem(`cached_full_name_${user.id}`, data.full_name);
+            } catch (e) {}
+            window.dispatchEvent(new CustomEvent('user-profile-updated', {
+              detail: { full_name: data.full_name }
+            }));
+          }
+          if (data.avatar_url) {
+            setAvatarUrl(data.avatar_url);
+            try {
+              localStorage.setItem(`cached_avatar_url_${user.id}`, data.avatar_url);
+            } catch (e) {}
+            window.dispatchEvent(new CustomEvent('user-profile-updated', {
+              detail: { avatar_url: data.avatar_url }
+            }));
+          }
           if (data.city) setCity(data.city);
           if (data.date_of_birth) setDateOfBirth(formatDateOfBirth(data.date_of_birth));
           if (data.phone) {
@@ -229,7 +249,6 @@ export default function Profile({ user, canInstall, onInstall }: ProfileProps) {
 
   const handleUpdateProfile = async (e: React.FormEvent) => {
     e.preventDefault();
-    setLoading(true);
 
     // Validate Date of Birth if entered
     if (dateOfBirth && dateOfBirth.trim() !== '') {
@@ -237,62 +256,71 @@ export default function Profile({ user, canInstall, onInstall }: ProfileProps) {
       if (errorMsg) {
         setDobError(errorMsg);
         toast.error(errorMsg);
-        setLoading(false);
         return;
       }
     }
 
-    try {
-      // Step 1: Get session first to ensure it's loaded
-      const { data: { session }, error: sessionError } = await supabase.auth.getSession();
-      
-      if (sessionError) {
-        console.error('Session error on mobile:', sessionError);
-        throw new Error(`${t('profile.update_error') || 'Erro ao atualizar perfil'}: ${sessionError.message}`);
-      }
+    const cleanDigits = phoneBody.replace(/\D/g, '');
+    const fullPhone = cleanDigits ? `+${countryCode || '1'} ${phoneBody}` : '';
+    const trimmedName = fullName.trim();
+    const targetUserId = user?.id;
 
-      // Step 2: Get user as the primary verification with refresh fallback
-      let { data: { user: currentUser }, error: userError } = await supabase.auth.getUser();
-      
-      if (userError || !currentUser) {
-        console.warn('User missing from session, attempting refresh...');
-        const { data: { session: refreshedSession }, error: refreshError } = await supabase.auth.refreshSession();
-        if (refreshedSession) {
-          currentUser = refreshedSession.user;
-        } else {
-          console.error('Final user verification failure:', userError || refreshError);
-          throw new Error('Auth session missing');
-        }
-      }
-
-      // Update Auth metadata
-      const cleanDigits = phoneBody.replace(/\D/g, '');
-      const fullPhone = cleanDigits ? `+${countryCode || '1'} ${phoneBody}` : '';
-      const { error: authError } = await supabase.auth.updateUser({
-        data: { 
-          full_name: fullName,
-          phone: fullPhone,
-          country_code: countryCode || '1',
-          avatar_url: avatarUrl,
-          date_of_birth: dateOfBirth,
-          city: city
-        }
-      });
-
-      if (authError) throw authError;
-
-      // Also try to update profiles table if available
+    // 1. INSTANT OPTIMISTIC PROPAGATION (0ms - Immediate visual feedback in top banner & components)
+    if (targetUserId) {
       try {
-        await supabase.from('profiles').update({
-          full_name: fullName,
-          avatar_url: avatarUrl,
-          phone: fullPhone,
-          date_of_birth: dateOfBirth,
-          city: city,
-          updated_at: new Date().toISOString()
-        }).eq('id', currentUser.id);
-      } catch (profileErr) {
-        console.warn('Profiles table sync optional error:', profileErr);
+        localStorage.setItem(`cached_full_name_${targetUserId}`, trimmedName);
+        if (avatarUrl) {
+          localStorage.setItem(`cached_avatar_url_${targetUserId}`, avatarUrl);
+        }
+      } catch (err) {
+        console.warn('LocalStorage error:', err);
+      }
+    }
+
+    // Synchronously broadcast reactive event to Navbar chip and root App state
+    window.dispatchEvent(new CustomEvent('user-profile-updated', {
+      detail: { 
+        full_name: trimmedName,
+        avatar_url: avatarUrl,
+        phone: fullPhone,
+        country_code: countryCode || '1',
+        date_of_birth: dateOfBirth,
+        city: city
+      }
+    }));
+
+    setLoading(true);
+
+    try {
+      const updateData = { 
+        full_name: trimmedName,
+        phone: fullPhone,
+        country_code: countryCode || '1',
+        avatar_url: avatarUrl,
+        date_of_birth: dateOfBirth,
+        city: city
+      };
+
+      // 2. Parallel cloud persistence (Auth metadata + Supabase profiles table)
+      const authPromise = supabase.auth.updateUser({ data: updateData });
+      const profilePromise = targetUserId 
+        ? supabase.from('profiles').update({
+            full_name: trimmedName,
+            avatar_url: avatarUrl,
+            phone: fullPhone,
+            date_of_birth: dateOfBirth,
+            city: city,
+            updated_at: new Date().toISOString()
+          }).eq('id', targetUserId)
+        : Promise.resolve();
+
+      const [authRes, profileRes] = await Promise.allSettled([authPromise, profilePromise]);
+
+      if (authRes.status === 'rejected') {
+        console.warn('Auth updateUser warning:', authRes.reason);
+      }
+      if (profileRes.status === 'rejected') {
+        console.warn('Profiles update warning:', profileRes.reason);
       }
 
       toast.success(t('profile.update_success') || 'Perfil atualizado com sucesso!');
@@ -339,13 +367,24 @@ export default function Profile({ user, canInstall, onInstall }: ProfileProps) {
       
       setAvatarUrl(publicUrl);
       
-      // Update metadata immediately
-      const { data: { user: currentUser } } = await supabase.auth.getUser();
-      if (currentUser) {
-        await supabase.auth.updateUser({
-          data: { avatar_url: publicUrl }
-        });
+      // INSTANT OPTIMISTIC PROPAGATION (0ms)
+      if (user?.id) {
+        try {
+          localStorage.setItem(`cached_avatar_url_${user.id}`, publicUrl);
+        } catch (e) {}
       }
+      window.dispatchEvent(new CustomEvent('user-profile-updated', {
+        detail: {
+          avatar_url: publicUrl,
+          full_name: fullName.trim()
+        }
+      }));
+
+      // Background cloud updates in parallel
+      await Promise.allSettled([
+        supabase.auth.updateUser({ data: { avatar_url: publicUrl } }),
+        user?.id ? supabase.from('profiles').update({ avatar_url: publicUrl, updated_at: new Date().toISOString() }).eq('id', user.id) : Promise.resolve()
+      ]);
       
       toast.success(t('profile.avatar_success') || 'Foto de perfil atualizada!');
     } catch (error: any) {

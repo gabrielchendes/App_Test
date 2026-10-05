@@ -417,14 +417,13 @@ export async function processHotmartWebhookPayload(payload: any) {
 
     if (prof?.id) {
       existingProfile = prof;
+      targetUserId = prof.id;
       try {
         const { data: authUser, error: authErr } = await supabaseAdmin.auth.admin.getUserById(prof.id);
         if (!authErr && authUser?.user) {
-          targetUserId = prof.id;
+          targetUserId = authUser.user.id;
         }
-      } catch (_) {
-        targetUserId = prof.id;
-      }
+      } catch (_) {}
     }
 
     if (!targetUserId && email) {
@@ -550,11 +549,37 @@ export async function processHotmartWebhookPayload(payload: any) {
         .update({ has_access: true, updated_at: new Date().toISOString() })
         .eq('id', targetUserId);
 
+      // Liberar o identificador do produto/pacote
       await supabaseAdmin.from('purchases').upsert({
         user_id: targetUserId,
         product_id: internalTargetId,
         created_at: new Date().toISOString()
       }, { onConflict: 'user_id,product_id' as any });
+
+      // Se for pacote, também liberar todos os cursos que compõem este pacote
+      if (productType === 'package') {
+        try {
+          const { data: pkgCourses } = await supabaseAdmin
+            .from('package_courses')
+            .select('course_id')
+            .eq('package_id', internalTargetId);
+
+          if (pkgCourses && pkgCourses.length > 0) {
+            for (const pc of pkgCourses) {
+              if (pc.course_id) {
+                await supabaseAdmin.from('purchases').upsert({
+                  user_id: targetUserId,
+                  product_id: pc.course_id,
+                  created_at: new Date().toISOString()
+                }, { onConflict: 'user_id,product_id' as any });
+              }
+            }
+            console.log(`[Hotmart Webhook] Liberados ${pkgCourses.length} cursos do pacote ${internalTargetId} para o usuário ${targetUserId}`);
+          }
+        } catch (pkgErr) {
+          console.error('[Hotmart Webhook] Erro ao liberar cursos do pacote:', pkgErr);
+        }
+      }
 
       actionSummary = `Produto Adicional (${productType}) Liberado: ${internalTargetId}`;
     }
@@ -594,11 +619,36 @@ export async function processHotmartWebhookPayload(payload: any) {
       actionSummary = 'Assinatura IA Expert VIP REVOGADA';
     } else if ((productType === 'course' || productType === 'package') && internalTargetId) {
       if (targetUserId) {
+        // Remover o produto ou pacote
         await supabaseAdmin
           .from('purchases')
           .delete()
           .eq('user_id', targetUserId)
           .eq('product_id', internalTargetId);
+
+        // Se for pacote, também revogar os cursos que pertenciam a este pacote
+        if (productType === 'package') {
+          try {
+            const { data: pkgCourses } = await supabaseAdmin
+              .from('package_courses')
+              .select('course_id')
+              .eq('package_id', internalTargetId);
+
+            if (pkgCourses && pkgCourses.length > 0) {
+              const cIds = pkgCourses.map((pc: any) => pc.course_id).filter(Boolean);
+              if (cIds.length > 0) {
+                await supabaseAdmin
+                  .from('purchases')
+                  .delete()
+                  .eq('user_id', targetUserId)
+                  .in('product_id', cIds);
+              }
+              console.log(`[Hotmart Webhook] Bloqueados ${cIds.length} cursos do pacote ${internalTargetId} para o usuário ${targetUserId}`);
+            }
+          } catch (pkgErr) {
+            console.error('[Hotmart Webhook] Erro ao revogar cursos do pacote:', pkgErr);
+          }
+        }
       }
 
       actionSummary = `Produto Adicional (${productType}) Bloqueado: ${internalTargetId}`;

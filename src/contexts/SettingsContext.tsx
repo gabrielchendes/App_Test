@@ -41,6 +41,7 @@ export interface AppSettings {
   support_type?: 'floating' | 'box';
   login_display_type: 'title' | 'logo' | 'both';
   login_install_button_pulsing: 'pulsing' | 'static' | 'hidden' | boolean;
+  login_platform_name?: string;
   logo_height?: number;
   custom_texts: { [key: string]: string };
   banner_images: string[];
@@ -66,6 +67,7 @@ const defaultSettings: AppSettings = {
   enable_testimonials: true,
   main_course_hotmart_id: '',
   app_name: 'Missing Trigger',
+  login_platform_name: '',
   admin_email: 'atendimento@suporte.com',
   app_description: 'Access your exclusive area',
   primary_color: '#ef4444',
@@ -265,6 +267,9 @@ export function SettingsProvider({ children }: { children: React.ReactNode }) {
           }
           if (data.custom_texts['config.pwa_app_name']) {
             data.app_name = data.custom_texts['config.pwa_app_name'];
+          }
+          if (data.custom_texts['auth.platform_name'] !== undefined) {
+            data.login_platform_name = data.custom_texts['auth.platform_name'];
           }
         }
         setSettings(data);

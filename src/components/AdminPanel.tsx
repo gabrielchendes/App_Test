@@ -748,6 +748,7 @@ export default function AdminPanel({ user }: AdminPanelProps) {
       initialLocal.pwa_icon_url = resolvedAndroid;
       initialLocal.android_icon_url = resolvedAndroid;
       initialLocal.ios_icon_url = resolvedIos;
+      initialLocal.login_platform_name = settings.login_platform_name || settings.custom_texts?.['auth.platform_name'] || '';
 
       setLocalSettings(initialLocal);
     }
@@ -854,6 +855,23 @@ export default function AdminPanel({ user }: AdminPanelProps) {
     }
   };
 
+  const fetchPackages = async () => {
+    try {
+      const { data: packagesData, error: packagesError } = await supabase
+        .from('course_packages')
+        .select('*, package_courses(course_id)')
+        .order('created_at', { ascending: false });
+      
+      if (!packagesError && packagesData) {
+        setCoursePackages(packagesData);
+        return packagesData;
+      }
+    } catch (e) {
+      console.error('Error fetching packages:', e);
+    }
+    return [];
+  };
+
   const fetchData = async () => {
     setLoading(true);
     try {
@@ -864,19 +882,8 @@ export default function AdminPanel({ user }: AdminPanelProps) {
         tasks.push(fetchCourses(false));
       }
 
-      // Only fetch packages if not loaded
-      if (coursePackages.length === 0) {
-        tasks.push((async () => {
-          const { data: packagesData, error: packagesError } = await supabase
-            .from('course_packages')
-            .select('*, package_courses(course_id)')
-            .order('created_at', { ascending: false });
-          
-          if (!packagesError && packagesData) {
-            setCoursePackages(packagesData);
-          }
-        })());
-      }
+      // Always keep packages freshly loaded
+      tasks.push(fetchPackages());
 
       // Questions
       if (pendingQuestions.length === 0 || activeTab === 'questions') {
@@ -1012,29 +1019,34 @@ export default function AdminPanel({ user }: AdminPanelProps) {
         
         // Reconcile packages: ensure packages that were deleted from course_packages are never displayed
         try {
-          const { data: currentPkgs } = await supabase.from('course_packages').select('id');
-          const activePkgIds = new Set((currentPkgs || []).map((p: any) => p.id));
-          rawList = rawList.filter(item => {
-            if (item.product_type === 'package') {
-              if (item.internal_target_id) {
-                return activePkgIds.has(item.internal_target_id);
+          const { data: currentPkgs } = await supabase
+            .from('course_packages')
+            .select('*, package_courses(course_id)');
+          if (currentPkgs) {
+            setCoursePackages(currentPkgs);
+            const activePkgIds = new Set(currentPkgs.map((p: any) => p.id));
+            rawList = rawList.filter(item => {
+              if (item.product_type === 'package') {
+                if (item.internal_target_id) {
+                  return activePkgIds.has(item.internal_target_id);
+                }
+                return false; // Package without valid internal_target_id is an orphan, do not display
               }
-              return false; // Package without valid internal_target_id is an orphan, do not display
-            }
-            return true;
-          });
+              return true;
+            });
+          }
         } catch (_) {}
 
-        // Sanitize duplicates by product_type and hotmart_product_id
+        // Sanitize duplicates by product_type and unique target IDs
         const cleanedList: any[] = [];
-        const seenHotmartIds = new Set<string>();
+        const seenPackageTargetIds = new Set<string>();
+        const seenCourseTargetIds = new Set<string>();
 
         // 1. Pick single main_product (prioritizing custom ID over HOTMART_PRODUTO_PRINCIPAL)
         const mainProds = rawList.filter(p => p.product_type === 'main_product');
         if (mainProds.length > 0) {
           const chosenMain = mainProds.find(p => p.hotmart_product_id && p.hotmart_product_id.trim() !== 'HOTMART_PRODUTO_PRINCIPAL') || mainProds[0];
           cleanedList.push(chosenMain);
-          if (chosenMain.hotmart_product_id) seenHotmartIds.add(chosenMain.hotmart_product_id);
         }
 
         // 2. Pick single ai_subscription (prioritizing custom ID over HOTMART_IA_VICTORIA)
@@ -1042,15 +1054,35 @@ export default function AdminPanel({ user }: AdminPanelProps) {
         if (aiProds.length > 0) {
           const chosenAi = aiProds.find(p => p.hotmart_product_id && p.hotmart_product_id.trim() !== 'HOTMART_IA_VICTORIA') || aiProds[0];
           cleanedList.push(chosenAi);
-          if (chosenAi.hotmart_product_id) seenHotmartIds.add(chosenAi.hotmart_product_id);
         }
 
-        // 3. Add all remaining products without duplicating hotmart_product_ids or special types
+        // 3. Add all packages (deduplicating strictly by package internal_target_id)
         for (const item of rawList) {
-          if (item.product_type === 'main_product' || item.product_type === 'ai_subscription') continue;
-          if (item.hotmart_product_id && seenHotmartIds.has(item.hotmart_product_id)) continue;
-          cleanedList.push(item);
-          if (item.hotmart_product_id) seenHotmartIds.add(item.hotmart_product_id);
+          if (item.product_type === 'package') {
+            const pkgKey = item.internal_target_id || item.id;
+            if (!seenPackageTargetIds.has(pkgKey)) {
+              seenPackageTargetIds.add(pkgKey);
+              cleanedList.push(item);
+            }
+          }
+        }
+
+        // 4. Add all courses (deduplicating strictly by course internal_target_id)
+        for (const item of rawList) {
+          if (item.product_type === 'course') {
+            const courseKey = item.internal_target_id || item.id;
+            if (!seenCourseTargetIds.has(courseKey)) {
+              seenCourseTargetIds.add(courseKey);
+              cleanedList.push(item);
+            }
+          }
+        }
+
+        // 5. Add any other custom products
+        for (const item of rawList) {
+          if (!['main_product', 'ai_subscription', 'package', 'course'].includes(item.product_type)) {
+            cleanedList.push(item);
+          }
         }
 
         // Sanitize names for ai_subscription products
@@ -1405,6 +1437,11 @@ export default function AdminPanel({ user }: AdminPanelProps) {
         delete payload.support_type;
       }
 
+      if ('login_platform_name' in payload) {
+        if (!payload.custom_texts) payload.custom_texts = { ...(settings?.custom_texts || {}) };
+        payload.custom_texts['auth.platform_name'] = payload.login_platform_name || '';
+      }
+
       if ('show_course_titles_home' in payload) {
         if (!payload.custom_texts) payload.custom_texts = { ...(settings?.custom_texts || {}) };
         payload.custom_texts['config.show_course_titles_home'] = String(!!payload.show_course_titles_home);
@@ -1472,6 +1509,7 @@ export default function AdminPanel({ user }: AdminPanelProps) {
         const sbPayload = { ...payload };
         delete sbPayload.android_icon_url;
         delete sbPayload.ios_icon_url;
+        delete sbPayload.login_platform_name;
         await supabase
           .from('app_settings')
           .update(sbPayload)
@@ -1956,6 +1994,15 @@ export default function AdminPanel({ user }: AdminPanelProps) {
     setMappedProducts(prev => prev.filter(p => !(p.product_type === 'package' && (p.internal_target_id === packageId || p.id === packageId))));
 
     try {
+      // 1. Remover dependências em package_courses
+      try {
+        await supabase
+          .from('package_courses')
+          .delete()
+          .eq('package_id', packageId);
+      } catch (_) {}
+
+      // 2. Remover da tabela course_packages
       const { error } = await supabase
         .from('course_packages')
         .delete()
@@ -1963,15 +2010,15 @@ export default function AdminPanel({ user }: AdminPanelProps) {
 
       if (error) throw error;
 
-      // Remove da tabela hotmart_products
+      // 3. Remove da tabela hotmart_products
       try {
         await supabase
           .from('hotmart_products')
           .delete()
-          .eq('internal_target_id', packageId);
+          .or(`internal_target_id.eq.${packageId},id.eq.${packageId}`);
       } catch (_) {}
 
-      // Purga do catálogo salvo no backend
+      // 4. Purga do catálogo salvo no backend
       const { data: { session } } = await supabase.auth.getSession();
       if (session?.access_token) {
         await safeFetch('/api/v1/admin?action=package-delete-cleanup', {
@@ -1984,6 +2031,7 @@ export default function AdminPanel({ user }: AdminPanelProps) {
         }).catch(() => {});
       }
 
+      await fetchPackages();
       await fetchCentralProducts();
       toast.success('Pacote excluído com sucesso!');
     } catch (err: any) {
@@ -4015,6 +4063,31 @@ export default function AdminPanel({ user }: AdminPanelProps) {
                                   <p className="text-xs text-gray-400 line-clamp-2">{prod.description}</p>
                                 )}
 
+                                {prod.product_type === 'package' && (() => {
+                                  const pkgData = coursePackages.find(p => p.id === prod.internal_target_id);
+                                  const pkgCourseIds = (pkgData?.package_courses || []).map((pc: any) => pc.course_id);
+                                  const pkgCourses = courses.filter(c => pkgCourseIds.includes(c.id));
+                                  return (
+                                    <div className="bg-purple-950/30 border border-purple-500/20 rounded-xl p-3 space-y-1.5">
+                                      <div className="flex items-center justify-between text-[11px] font-bold text-purple-300">
+                                        <span className="flex items-center gap-1.5"><Layers size={13} /> Cursos Inclusos:</span>
+                                        <span className="px-1.5 py-0.5 rounded bg-purple-500/20 text-purple-200 text-[10px] font-mono">{pkgCourses.length} curso(s)</span>
+                                      </div>
+                                      {pkgCourses.length > 0 ? (
+                                        <div className="flex flex-wrap gap-1 mt-1 max-h-24 overflow-y-auto custom-scrollbar">
+                                          {pkgCourses.map(c => (
+                                            <span key={c.id} className="text-[10px] bg-white/5 border border-white/10 px-2 py-0.5 rounded text-gray-300 truncate max-w-full">
+                                              • {c.title}
+                                            </span>
+                                          ))}
+                                        </div>
+                                      ) : (
+                                        <p className="text-[10px] text-gray-500 italic">Nenhum curso associado a este pacote.</p>
+                                      )}
+                                    </div>
+                                  );
+                                })()}
+
                               <div className="pt-4 border-t border-white/5 flex items-center justify-between gap-3">
                                 <button
                                   onClick={() => {
@@ -5881,9 +5954,14 @@ export default function AdminPanel({ user }: AdminPanelProps) {
                               updates.custom_texts['config.ios_icon_url'] = localSettings.ios_icon_url;
                             }
 
-                            // Se estiver na aba login, inclui configurações específicas
+                            // Se estiver na aba login, inclui configurações específicas da página de login
                             if (activePageTab === 'login') {
-                              updates.app_name = localSettings.app_name;
+                              const platformName = localSettings?.login_platform_name !== undefined 
+                                ? localSettings.login_platform_name 
+                                : (draftCustomTexts['auth.platform_name'] !== undefined ? draftCustomTexts['auth.platform_name'] : (settings.login_platform_name || settings.custom_texts?.['auth.platform_name'] || ''));
+                              updates.login_platform_name = platformName;
+                              updates.custom_texts['auth.platform_name'] = platformName;
+                              // IMPORTANTE: NÃO salvar app_name aqui, pois app_name pertence exclusivamente à Identidade Visual Global
                               updates.login_display_type = localSettings.login_display_type;
                               updates.login_install_button_pulsing = localSettings.login_install_button_pulsing;
                               updates.logo_url = localSettings.logo_url;
@@ -6034,13 +6112,28 @@ export default function AdminPanel({ user }: AdminPanelProps) {
 
                                   {/* 5. Nome da Plataforma */}
                                   <div className="space-y-2">
-                                    <label className="text-xs font-black text-gray-500 uppercase tracking-widest">Nome da Plataforma</label>
+                                    <div className="flex items-center justify-between">
+                                      <label className="text-xs font-black text-gray-500 uppercase tracking-widest">Nome da Plataforma</label>
+                                      <span className="text-[10px] text-blue-400 font-mono">Exclusivo da Página de Login</span>
+                                    </div>
                                     <input 
                                       type="text" 
-                                      value={localSettings?.app_name || ''}
-                                      onChange={(e) => setLocalSettings({ ...localSettings, app_name: e.target.value })}
+                                      value={localSettings?.login_platform_name !== undefined 
+                                        ? localSettings.login_platform_name 
+                                        : (draftCustomTexts['auth.platform_name'] !== undefined 
+                                            ? draftCustomTexts['auth.platform_name'] 
+                                            : (settings.login_platform_name || settings.custom_texts?.['auth.platform_name'] || ''))}
+                                      onChange={(e) => {
+                                        const val = e.target.value;
+                                        setLocalSettings({ ...localSettings, login_platform_name: val });
+                                        setDraftCustomTexts({ ...draftCustomTexts, 'auth.platform_name': val });
+                                      }}
+                                      placeholder="Nome da plataforma exclusivo para a tela de login"
                                       className="w-full bg-black border border-white/10 rounded-xl px-4 py-3 text-white focus:border-blue-500 outline-none"
                                     />
+                                    <p className="text-[11px] text-gray-400 leading-relaxed">
+                                      Nome específico exibido no título da tela de login. Salvo em variável separada, sem alterar o Nome da Aplicação / PWA da Identidade Visual Global.
+                                    </p>
                                   </div>
 
                                   {/* 6. Cor da Letra do Nome da Plataforma */}
@@ -9368,11 +9461,15 @@ export default function AdminPanel({ user }: AdminPanelProps) {
             onClose={() => {
               setShowPackageEditor(false);
               setEditingPackageId(null);
+              fetchPackages();
+              fetchCentralProducts();
               fetchData();
             }}
-            onSave={() => {
+            onSave={async () => {
               setShowPackageEditor(false);
               setEditingPackageId(null);
+              await fetchPackages();
+              await fetchCentralProducts();
               fetchData();
             }}
           />
@@ -9731,20 +9828,58 @@ export default function AdminPanel({ user }: AdminPanelProps) {
                   </select>
                 </div>
 
-                {(productForm.product_type === 'course' || productForm.product_type === 'package') && (
+                {productForm.product_type === 'course' && (
                   <div className="space-y-2">
                     <label className="text-xs font-bold text-gray-300 uppercase tracking-wider">
-                      {productForm.product_type === 'course' ? 'Curso Correspondente *' : 'Pacote de Cursos *'}
+                      Curso Correspondente *
                     </label>
                     <select
                       value={productForm.internal_target_id}
-                      onChange={(e) => setProductForm({ ...productForm, internal_target_id: e.target.value })}
+                      onChange={(e) => {
+                        const selectedCourse = courses.find(c => c.id === e.target.value);
+                        setProductForm({
+                          ...productForm,
+                          internal_target_id: e.target.value,
+                          name: productForm.name || (selectedCourse ? `Curso: ${selectedCourse.title}` : ''),
+                          hotmart_product_id: selectedCourse?.hotmart_product_id || productForm.hotmart_product_id,
+                          checkout_url: selectedCourse?.checkout_url || productForm.checkout_url
+                        });
+                      }}
                       className="w-full bg-black border border-white/10 rounded-xl px-4 py-3 text-sm text-white focus:border-amber-500 outline-none"
                     >
                       <option value="">Selecione um curso...</option>
                       {courses.map((c) => (
                         <option key={c.id} value={c.id}>
                           {c.title}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                )}
+
+                {productForm.product_type === 'package' && (
+                  <div className="space-y-2">
+                    <label className="text-xs font-bold text-gray-300 uppercase tracking-wider">
+                      Pacote de Cursos Correspondente *
+                    </label>
+                    <select
+                      value={productForm.internal_target_id}
+                      onChange={(e) => {
+                        const selectedPkg = coursePackages.find(p => p.id === e.target.value);
+                        setProductForm({
+                          ...productForm,
+                          internal_target_id: e.target.value,
+                          name: productForm.name || (selectedPkg ? `Pacote: ${selectedPkg.title}` : ''),
+                          hotmart_product_id: selectedPkg?.hotmart_product_id || productForm.hotmart_product_id,
+                          checkout_url: selectedPkg?.hotmart_checkout_url || productForm.checkout_url
+                        });
+                      }}
+                      className="w-full bg-black border border-white/10 rounded-xl px-4 py-3 text-sm text-white focus:border-amber-500 outline-none"
+                    >
+                      <option value="">Selecione um pacote...</option>
+                      {coursePackages.map((pkg) => (
+                        <option key={pkg.id} value={pkg.id}>
+                          {pkg.title} ({pkg.package_courses?.length || 0} cursos)
                         </option>
                       ))}
                     </select>

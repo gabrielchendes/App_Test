@@ -118,6 +118,31 @@ export default function PackageEditor({ packageId, onClose, onSave, courses }: P
         if (insertError) throw insertError;
       }
 
+      // Sincronizar automaticamente com o Catálogo de Produtos Mapeados da Central de Produtos
+      try {
+        const { data: { session } } = await supabase.auth.getSession();
+        if (session?.access_token) {
+          await fetch('/api/v1/admin?action=product-save', {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'Authorization': `Bearer ${session.access_token}`
+            },
+            body: JSON.stringify({
+              name: `Pacote: ${title}`,
+              product_type: 'package',
+              internal_target_id: id,
+              hotmart_product_id: hotmartId ? hotmartId.trim() : '',
+              checkout_url: checkoutUrl ? checkoutUrl.trim() : '',
+              description: description ? description.trim() : '',
+              is_active: true
+            })
+          });
+        }
+      } catch (syncErr) {
+        console.warn('Erro ao sincronizar pacote com a Central de Produtos:', syncErr);
+      }
+
       toast.success('Pacote salvo com sucesso!');
       onSave();
     } catch (err: any) {

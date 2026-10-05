@@ -1761,10 +1761,39 @@ async function autoDiscoverProducts(client?: any): Promise<{ catalog: any[], mig
 
   // Parallelize initial queries
   const [productsRes, coursesRes, packagesRes, settingsRes] = await Promise.all([
-    (async () => { try { const { data } = await db.from('hotmart_products').select('*'); return data; } catch { return null; } })(),
-    (async () => { try { const { data } = await db.from('courses').select('id, title, hotmart_product_id, is_free, is_bonus, is_package_exclusive_bonus, checkout_url'); return data; } catch { return null; } })(),
-    (async () => { try { const { data } = await db.from('course_packages').select('id, title, hotmart_product_id'); return data; } catch { return null; } })(),
-    (async () => { try { const { data } = await db.from('app_settings').select('custom_texts').eq('id', 1).maybeSingle(); return data; } catch { return null; } })()
+    (async () => {
+      try {
+        const { data, error } = await db.from('hotmart_products').select('*');
+        if (!error && data) return data;
+        const { data: adminData } = await supabaseAdmin.from('hotmart_products').select('*');
+        return adminData;
+      } catch { return null; }
+    })(),
+    (async () => {
+      try {
+        const { data, error } = await db.from('courses').select('id, title, hotmart_product_id, is_free, is_bonus, is_package_exclusive_bonus, checkout_url');
+        if (!error && data) return data;
+        const { data: adminData } = await supabaseAdmin.from('courses').select('id, title, hotmart_product_id, is_free, is_bonus, is_package_exclusive_bonus, checkout_url');
+        return adminData;
+      } catch { return null; }
+    })(),
+    (async () => {
+      try {
+        const { data, error } = await db.from('course_packages').select('id, title, hotmart_product_id, hotmart_checkout_url, description');
+        if (!error && data) return data;
+        const { data: adminData } = await supabaseAdmin.from('course_packages').select('id, title, hotmart_product_id, hotmart_checkout_url, description');
+        return adminData;
+      } catch { return null; }
+    })(),
+    (async () => {
+      try {
+        const { data, error } = await db.from('app_settings').select('custom_texts').eq('id', 1).maybeSingle();
+        if (!error && data) return data;
+        return await getAppSettingsSafe();
+      } catch {
+        return await getAppSettingsSafe();
+      }
+    })()
   ]);
 
   if (productsRes && productsRes.length > 0) {
@@ -1785,6 +1814,7 @@ async function autoDiscoverProducts(client?: any): Promise<{ catalog: any[], mig
 
   const initialCatalogCount = catalog.length;
   const removedProductIds: string[] = [];
+  const seenPackageTargetIds = new Set<string>();
 
   // Clean catalog: remove course items that are now free, bonus, package-exclusive, or deleted; and remove deleted packages
   catalog = catalog.filter(item => {
@@ -1806,22 +1836,35 @@ async function autoDiscoverProducts(client?: any): Promise<{ catalog: any[], mig
     }
 
     if (item.product_type === 'package') {
-      if (item.internal_target_id) {
-        const p = packageMap.get(item.internal_target_id);
-        if (!p) {
-          removedProductIds.push(item.id);
-          return false; // Package was deleted from course_packages!
-        }
-      } else {
-        // If package has no internal_target_id, check if any package matches its title or hotmart id
-        const matchingPkg = packages.find((p: any) => 
-          (p.title && item.name && item.name.toLowerCase().includes(p.title.toLowerCase())) ||
-          (p.hotmart_product_id && item.hotmart_product_id && String(p.hotmart_product_id).trim() === String(item.hotmart_product_id).trim())
-        );
-        if (!matchingPkg) {
-          removedProductIds.push(item.id);
-          return false; // Orphan package, remove it!
-        }
+      const targetPkgId = item.internal_target_id || packages.find((p: any) => 
+        (p.title && item.name && item.name.toLowerCase().includes(p.title.toLowerCase())) ||
+        (p.hotmart_product_id && item.hotmart_product_id && String(p.hotmart_product_id).trim() === String(item.hotmart_product_id).trim())
+      )?.id;
+
+      if (!targetPkgId || !packageMap.has(targetPkgId)) {
+        removedProductIds.push(item.id);
+        return false; // Package was deleted from course_packages!
+      }
+
+      // Deduplicate: if we already have an entry for this package, remove the duplicate
+      if (seenPackageTargetIds.has(targetPkgId)) {
+        removedProductIds.push(item.id);
+        return false;
+      }
+      seenPackageTargetIds.add(targetPkgId);
+
+      // Keep package reference and metadata aligned with course_packages
+      item.internal_target_id = targetPkgId;
+      const p = packageMap.get(targetPkgId);
+      item.name = `Pacote: ${p.title}`;
+      if (p.hotmart_product_id && p.hotmart_product_id.trim() !== '') {
+        item.hotmart_product_id = p.hotmart_product_id.trim();
+      }
+      if (p.hotmart_checkout_url) {
+        item.checkout_url = p.hotmart_checkout_url;
+      }
+      if (p.description) {
+        item.description = p.description;
       }
     }
     return true;
@@ -1844,6 +1887,9 @@ async function autoDiscoverProducts(client?: any): Promise<{ catalog: any[], mig
   );
   const existingCourseTargetIds = new Set(
     catalog.filter(p => p.product_type === 'course' && p.internal_target_id).map(p => p.internal_target_id)
+  );
+  const existingPackageTargetIds = new Set(
+    catalog.filter(p => p.product_type === 'package' && p.internal_target_id).map(p => p.internal_target_id)
   );
 
   if (courses.length > 0) {
@@ -1870,22 +1916,25 @@ async function autoDiscoverProducts(client?: any): Promise<{ catalog: any[], mig
     }
   }
 
-  // 3. Discover Packages
+  // 3. Discover Packages: Ensure every package in course_packages is present in the mapped catalog
   if (packages.length > 0) {
     for (const pkg of packages) {
-      const hId = pkg.hotmart_product_id ? String(pkg.hotmart_product_id).trim() : `PACOTE_${pkg.id.substring(0, 8).toUpperCase()}`;
-      if (!existingHotmartIds.has(hId)) {
+      if (!existingPackageTargetIds.has(pkg.id)) {
+        const hId = pkg.hotmart_product_id ? String(pkg.hotmart_product_id).trim() : '';
         const item = {
           id: 'prod_' + Math.random().toString(36).substring(2, 9),
           hotmart_product_id: hId,
           name: `Pacote: ${pkg.title}`,
           product_type: 'package',
           internal_target_id: pkg.id,
+          checkout_url: pkg.hotmart_checkout_url || '',
+          description: pkg.description || '',
           is_active: true,
           created_at: new Date().toISOString()
         };
         catalog.push(item);
-        existingHotmartIds.add(hId);
+        existingPackageTargetIds.add(pkg.id);
+        if (hId) existingHotmartIds.add(hId);
         migratedCount++;
       }
     }
@@ -2116,9 +2165,17 @@ async function handleProductSave(req: VercelRequest, res: VercelResponse) {
       } catch (e) {}
     } else if (product_type === 'package' && internal_target_id) {
       try {
+        const updatePayload: any = {
+          hotmart_product_id: payload.hotmart_product_id
+        };
+        if (checkout_url !== undefined) updatePayload.hotmart_checkout_url = checkout_url;
+        if (description !== undefined) updatePayload.description = description;
+        const cleanTitle = payload.name.replace(/^Pacote:\s*/i, '').trim();
+        if (cleanTitle) updatePayload.title = cleanTitle;
+
         await client
           .from('course_packages')
-          .update({ hotmart_product_id: payload.hotmart_product_id })
+          .update(updatePayload)
           .eq('id', internal_target_id);
       } catch (e) {}
     }
@@ -2157,9 +2214,10 @@ async function handleProductDelete(req: VercelRequest, res: VercelResponse) {
         .or(`id.eq.${id},hotmart_product_id.eq.${id}`);
     } catch (e) {}
 
-    // If target was a package, also clean course_packages if applicable
+    // If target was a package, also clean package_courses and course_packages
     if (targetProd?.product_type === 'package' && targetProd.internal_target_id) {
       try {
+        await client.from('package_courses').delete().eq('package_id', targetProd.internal_target_id);
         await client.from('course_packages').delete().eq('id', targetProd.internal_target_id);
       } catch (e) {}
     }
@@ -2181,12 +2239,22 @@ async function handlePackageDeleteCleanup(req: VercelRequest, res: VercelRespons
 
     const client = getScopedClient(req);
 
-    // 1. Delete from hotmart_products
+    // 1. Delete from package_courses
     try {
-      await client.from('hotmart_products').delete().eq('internal_target_id', packageId);
+      await client.from('package_courses').delete().eq('package_id', packageId);
     } catch (_) {}
 
-    // 2. Remove from fallback catalog
+    // 2. Delete from course_packages
+    try {
+      await client.from('course_packages').delete().eq('id', packageId);
+    } catch (_) {}
+
+    // 3. Delete from hotmart_products
+    try {
+      await client.from('hotmart_products').delete().or(`internal_target_id.eq.${packageId},id.eq.${packageId}`);
+    } catch (_) {}
+
+    // 4. Remove from fallback catalog
     const { data: settings } = await client
       .from('app_settings')
       .select('custom_texts')
@@ -2304,7 +2372,7 @@ async function handleWebhookSimulate(req: VercelRequest, res: VercelResponse) {
           resolvedProductName = catProd.name;
           resolvedProductType = catProd.product_type || 'main_product';
         } else {
-          // 3. Courses
+          // 3. Courses & Packages
           const { data: cMatch } = await supabaseAdmin
             .from('courses')
             .select('title')
@@ -2314,8 +2382,16 @@ async function handleWebhookSimulate(req: VercelRequest, res: VercelResponse) {
             resolvedProductName = cMatch.title;
             resolvedProductType = 'course';
           } else {
-            // Check if main product setting matches
-            if (configuredMainId && String(configuredMainId).trim() === resolvedHotmartId) {
+            const { data: pMatch } = await supabaseAdmin
+              .from('course_packages')
+              .select('title')
+              .eq('hotmart_product_id', resolvedHotmartId)
+              .maybeSingle();
+            if (pMatch?.title) {
+              resolvedProductName = `Pacote: ${pMatch.title}`;
+              resolvedProductType = 'package';
+            } else if (configuredMainId && String(configuredMainId).trim() === resolvedHotmartId) {
+              // Check if main product setting matches
               resolvedProductName = 'Acesso Geral à Plataforma (Produto Principal)';
               resolvedProductType = 'main_product';
             }

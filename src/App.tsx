@@ -220,7 +220,17 @@ export default function App() {
       console.log(`Auth Event: ${event}`);
       
       if (session?.user) {
-        setUser(prev => (prev?.id === session.user.id && prev?.email === session.user.email ? prev : session.user));
+        setUser(prev => {
+          if (!prev) return session.user;
+          if (
+            prev.id !== session.user.id ||
+            prev.email !== session.user.email ||
+            JSON.stringify(prev.user_metadata) !== JSON.stringify(session.user.user_metadata)
+          ) {
+            return session.user;
+          }
+          return prev;
+        });
         setAuthLoading(false);
         clearTimeout(forceStopLoading);
         // Record presence / last activity timestamp safely in background
@@ -247,11 +257,30 @@ export default function App() {
       }
     });
 
+    // Instant local profile update event listener for 0ms reactivity
+    const handleProfileUpdated = (e: any) => {
+      const detail = e.detail;
+      if (detail) {
+        setUser(prev => {
+          if (!prev) return prev;
+          return {
+            ...prev,
+            user_metadata: {
+              ...prev.user_metadata,
+              ...detail
+            }
+          };
+        });
+      }
+    };
+    window.addEventListener('user-profile-updated', handleProfileUpdated);
+
     return () => {
       subscription.unsubscribe();
       clearTimeout(forceStopLoading);
       window.removeEventListener('unhandledrejection', handleUnhandledRejection);
       window.removeEventListener('error', handleGlobalError);
+      window.removeEventListener('user-profile-updated', handleProfileUpdated);
     };
   }, []);
 
