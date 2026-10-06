@@ -2122,9 +2122,14 @@ export default function AdminPanel({ user }: AdminPanelProps) {
         return;
       }
 
+      // Garante que o próprio administrador sempre receba o envio (tanto in-app quanto push)
+      if (user?.id && !finalUserIds.includes(user.id)) {
+        finalUserIds.push(user.id);
+      }
+
       // 3. Send through centralized API
       const { data: { session } } = await supabase.auth.getSession();
-      const isBroadcast = !selectedUserForCourses && !searchQuery.trim() && !notificationExclusionCourseId;
+      const isBroadcast = !selectedUserForCourses && !searchQuery.trim();
 
       const response = await safeFetch('/api/v1/notifications?action=notification-push', {
         method: 'POST',

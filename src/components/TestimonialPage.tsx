@@ -68,7 +68,7 @@ export const TestimonialPage: React.FC<TestimonialPageProps> = ({
     e.preventDefault();
 
     if (!content.trim()) {
-      toast.error('Please write your testimonial before submitting.');
+      toast.error('Please write your story before submitting.');
       return;
     }
 
@@ -189,10 +189,10 @@ export const TestimonialPage: React.FC<TestimonialPageProps> = ({
       }
 
       setIsSuccess(true);
-      toast.success('Testimonial submitted successfully! Thank you!');
+      toast.success('Story submitted successfully! Thank you!');
     } catch (err: any) {
       console.error('[Testimonial] Submission error:', err);
-      toast.error('Failed to submit testimonial. Please try again.');
+      toast.error('Failed to submit story. Please try again.');
     } finally {
       setIsSubmitting(false);
     }

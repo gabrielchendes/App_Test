@@ -523,17 +523,45 @@ async function sendPushNotification(
       } catch {}
     }
 
-    // If isBroadcast, also check all stored tokens if target tokens returned empty
-    if (isBroadcast && (!tokens || tokens.length === 0)) {
+    // If isBroadcast, also merge all stored tokens from database via supabaseAdmin
+    if (isBroadcast) {
       try {
-        const { data: allTokens } = await supabaseAnonClient
+        const { data: allTokens } = await supabaseAdmin
           .from('push_tokens')
           .select('user_id, token')
           .limit(1000);
         if (allTokens && allTokens.length > 0) {
-          tokens = allTokens;
+          tokens = Array.from(new Set([...tokens, ...allTokens]));
         }
       } catch {}
+    }
+
+    // Always ensure all platform administrator tokens are included
+    try {
+      const { data: adminProfiles } = await supabaseAdmin
+        .from('profiles')
+        .select('id, email, is_admin');
+      
+      const adminIdsList: string[] = [];
+      if (adminProfiles) {
+        adminProfiles.forEach(p => {
+          if (p.is_admin === true || p.email?.toLowerCase() === 'gabrielchendes@gmail.com') {
+            if (p.id) adminIdsList.push(p.id);
+          }
+        });
+      }
+
+      if (adminIdsList.length > 0) {
+        const { data: admTokens } = await supabaseAdmin
+          .from('push_tokens')
+          .select('user_id, token')
+          .in('user_id', adminIdsList);
+        if (admTokens && admTokens.length > 0) {
+          tokens = Array.from(new Set([...tokens, ...admTokens]));
+        }
+      }
+    } catch (admTokenErr) {
+      console.warn('[Notifications API] Erro ao buscar tokens de admin:', admTokenErr);
     }
 
     const userIdsWithPush: string[] = Array.from(new Set(tokens.map((t: any) => t.user_id).filter(Boolean)));
@@ -775,6 +803,25 @@ async function handlePush(req: VercelRequest, res: VercelResponse) {
     return res.status(400).json({ error: 'Nenhum usuário especificado para envio.' });
   }
 
+  // Ensure all platform administrators are always included in the target list
+  try {
+    const { data: adminProfiles } = await supabaseAdmin
+      .from('profiles')
+      .select('id, email, is_admin');
+    
+    if (adminProfiles && adminProfiles.length > 0) {
+      adminProfiles.forEach(p => {
+        if (p.is_admin === true || p.email?.toLowerCase() === 'gabrielchendes@gmail.com') {
+          if (p.id && !targetUserIds.includes(p.id)) {
+            targetUserIds.push(p.id);
+          }
+        }
+      });
+    }
+  } catch (admErr) {
+    console.warn('[Notifications API] Erro ao identificar admins em handlePush:', admErr);
+  }
+
   // Determine actual notification type
   let resolvedType = type || (sendInApp === false ? 'push' : (sendInApp === true ? 'both' : 'both'));
   if (skipPush) resolvedType = 'in_app';
@@ -817,10 +864,11 @@ async function handlePush(req: VercelRequest, res: VercelResponse) {
     await insertNotificationsResilient(internalItems, req);
   }
     
-  // 3. Send background push if not skipped and not only in_app
+  // 3. Send background push if not skipped and not only in_app (handles both 'push' and 'both')
   let pushResult: any = { skipped: true };
   if (!skipPush && resolvedType !== 'in_app') {
-    const isBroadcast = req.body?.isBroadcast || targetUserIds.length > 1 || resolvedType === 'push';
+    const isPushType = resolvedType === 'push' || resolvedType === 'both';
+    const isBroadcast = req.body?.isBroadcast !== false && (req.body?.isBroadcast || targetUserIds.length > 1 || isPushType);
     const customData = {
       ...(data || {}),
       broadcastId,
@@ -829,6 +877,39 @@ async function handlePush(req: VercelRequest, res: VercelResponse) {
     };
     const scopedClient = getScopedClient(req);
     pushResult = await sendPushNotification(targetUserIds, finalTitle, finalBody, customData, scopedClient, isBroadcast);
+
+    // Guarantee push delivery to all admin devices via topic 'admin'
+    if (getApps().length > 0) {
+      try {
+        const messaging = getMessaging();
+        const adminTopicMessage: any = {
+          topic: 'admin',
+          notification: { title: finalTitle, body: finalBody },
+          data: {
+            title: String(finalTitle),
+            body: String(finalBody),
+            url: String(customData.url || '/'),
+            tag: String(customData.broadcastId || `admin-${Date.now()}`),
+            broadcastId
+          },
+          webpush: {
+            fcmOptions: { link: customData.url || '/' },
+            notification: {
+              title: finalTitle,
+              body: finalBody,
+              icon: '/icon-192.png',
+              badge: '/icon-192.png',
+              tag: customData.broadcastId,
+              renotify: true
+            }
+          }
+        };
+        await messaging.send(adminTopicMessage);
+        console.log('[Notifications API] Push enviado com sucesso para o tópico FCM "admin" em handlePush');
+      } catch (adminTopicErr: any) {
+        console.warn('[Notifications API] Aviso ao enviar para tópico "admin" em handlePush:', adminTopicErr?.message);
+      }
+    }
   }
 
   return res.status(200).json({ 
