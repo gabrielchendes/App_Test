@@ -170,6 +170,9 @@ async function startServer() {
     if (merged.custom_texts?.['config.favicon_url'] && merged.custom_texts['config.favicon_url'].includes('LogoMT.png')) {
       merged.custom_texts['config.favicon_url'] = merged.custom_texts['config.favicon_url'].replace('LogoMT.png', 'LogoMTiPhone.png');
     }
+    if (merged.custom_texts?.['auth.platform_name'] !== undefined) {
+      merged.login_platform_name = merged.custom_texts['auth.platform_name'];
+    }
 
     cachedAppSettings = merged;
     lastSettingsFetchTime = now;

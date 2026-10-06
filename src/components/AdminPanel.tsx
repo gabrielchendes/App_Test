@@ -245,7 +245,44 @@ export default function AdminPanel({ user }: AdminPanelProps) {
   const { settings, refreshSettings, applyTheme } = useSettings();
   const { t } = useI18n();
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
-  const [activeTab, setActiveTab] = useState<'users' | 'courses' | 'community' | 'notifications' | 'texts' | 'settings' | 'security' | 'pages' | 'vendas' | 'packages' | 'languages' | 'questions' | 'ai_expert' | 'central_produtos' | 'testimonials'>('central_produtos');
+  const [activeTab, setActiveTab] = useState<'users' | 'courses' | 'community' | 'notifications' | 'texts' | 'settings' | 'security' | 'pages' | 'vendas' | 'packages' | 'languages' | 'questions' | 'ai_expert' | 'central_produtos' | 'testimonials'>(() => {
+    if (typeof window !== 'undefined') {
+      const params = new URLSearchParams(window.location.search);
+      const subtab = params.get('subtab');
+      const validTabs = ['users', 'courses', 'community', 'notifications', 'texts', 'settings', 'security', 'pages', 'vendas', 'packages', 'languages', 'questions', 'ai_expert', 'central_produtos', 'testimonials'];
+      if (subtab && validTabs.includes(subtab)) {
+        return subtab as any;
+      }
+      const hash = window.location.hash.replace('#', '');
+      if (hash && validTabs.includes(hash)) {
+        return hash as any;
+      }
+    }
+    return 'central_produtos';
+  });
+
+  useEffect(() => {
+    const handleUrlChange = () => {
+      if (typeof window !== 'undefined') {
+        const params = new URLSearchParams(window.location.search);
+        const subtab = params.get('subtab');
+        const validTabs = ['users', 'courses', 'community', 'notifications', 'texts', 'settings', 'security', 'pages', 'vendas', 'packages', 'languages', 'questions', 'ai_expert', 'central_produtos', 'testimonials'];
+        if (subtab && validTabs.includes(subtab)) {
+          setActiveTab(subtab as any);
+        }
+        const hash = window.location.hash.replace('#', '');
+        if (hash && validTabs.includes(hash)) {
+          setActiveTab(hash as any);
+        }
+      }
+    };
+    window.addEventListener('popstate', handleUrlChange);
+    window.addEventListener('hashchange', handleUrlChange);
+    return () => {
+      window.removeEventListener('popstate', handleUrlChange);
+      window.removeEventListener('hashchange', handleUrlChange);
+    };
+  }, []);
   const [activePageTab, setActivePageTab] = useState<'home' | 'community' | 'profile' | 'login' | 'nav' | 'course' | 'lesson' | 'push' | 'pwa' | 'support'>('home');
   const [loading, setLoading] = useState(true);
   
@@ -6298,7 +6335,7 @@ export default function AdminPanel({ user }: AdminPanelProps) {
                                                  color: draftCustomTexts['auth.title_color'] || settings.custom_texts?.['auth.title_color'] || '#ffffff' 
                                                }}
                                              >
-                                               {localSettings?.app_name || 'App Name'}
+                                               {localSettings?.login_platform_name || draftCustomTexts['auth.platform_name'] || settings.login_platform_name || settings.custom_texts?.['auth.platform_name'] || localSettings?.app_name || settings.app_name || 'App Name'}
                                              </h2>
                                            )}
                                            <p className="text-[9px] text-gray-500 mt-1 font-medium">

@@ -11,6 +11,7 @@ import {
 } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 import { notifyAdmin } from '../lib/notifications';
+import { safeFetch } from '../lib/utils';
 import { Course } from '../types/lms';
 import { AppSettings } from '../contexts/SettingsContext';
 import { toast } from 'sonner';
@@ -112,10 +113,14 @@ export const TestimonialPage: React.FC<TestimonialPageProps> = ({
 
       // 2. Sync to server API (syncs testimonials.json and backend cache)
       try {
-        await fetch('/api/v1/testimonials', {
+        const { data: { session } } = await supabase.auth.getSession();
+        await safeFetch('/api/v1/testimonials', {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ action: 'create', testimonial: testimonialData })
+          headers: { 
+            'Content-Type': 'application/json',
+            ...(session?.access_token ? { 'Authorization': `Bearer ${session.access_token}` } : {})
+          },
+          body: JSON.stringify({ action: 'create', testimonial: testimonialData, skipPush: true })
         });
       } catch (apiErr) {
         console.warn('[Testimonial] API save exception:', apiErr);
@@ -133,19 +138,54 @@ export const TestimonialPage: React.FC<TestimonialPageProps> = ({
         console.warn('[Testimonial] Local storage cache exception:', cacheErr);
       }
 
-      // 3. Notify Admin (Push notification + in-app notification)
-      const pushTitle = '🌟 New Testimonial Received!';
-      const pushBody = `${authorName.trim()} rated ${rating}★: "${content.trim().slice(0, 80)}..."`;
+      // 4. Notify Admin (Push notification + in-app notification) - idêntico ao disparo de posts/comentários da comunidade
+      const cleanSnippet = content.trim().substring(0, 90) + (content.length > 90 ? '...' : '');
+      const pushTitle = '⭐ Novo depoimento recebido!';
+      const pushBody = `${authorName.trim()} enviou um depoimento (${rating}★): "${cleanSnippet}"`;
+
+      console.log('🔔 [Testimonial] Disparando notificação PUSH para o Admin:', { 
+        title: pushTitle, 
+        body: pushBody, 
+        canonicalId 
+      });
 
       try {
-        await notifyAdmin(pushTitle, pushBody, {
-          type: 'testimonial',
-          userName: authorName.trim(),
-          userEmail: userEmail,
-          rating
+        const { data: { session } } = await supabase.auth.getSession();
+        
+        await safeFetch('/api/v1/notifications?action=notify-admin', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            ...(session?.access_token ? { 'Authorization': `Bearer ${session.access_token}` } : {})
+          },
+          body: JSON.stringify({
+            title: pushTitle,
+            body: pushBody,
+            data: {
+              type: 'testimonial',
+              url: '/?tab=admin&subtab=testimonials',
+              testimonialId: canonicalId,
+              userName: authorName.trim(),
+              userEmail: userEmail,
+              rating
+            }
+          })
         });
       } catch (notifErr) {
         console.warn('[Testimonial] Admin notification dispatch warning:', notifErr);
+        // Fallback via helper central
+        try {
+          await notifyAdmin(pushTitle, pushBody, {
+            type: 'testimonial',
+            url: '/?tab=admin&subtab=testimonials',
+            testimonialId: canonicalId,
+            userName: authorName.trim(),
+            userEmail: userEmail,
+            rating
+          });
+        } catch (fbErr) {
+          console.warn('[Testimonial] Fallback admin notification error:', fbErr);
+        }
       }
 
       setIsSuccess(true);

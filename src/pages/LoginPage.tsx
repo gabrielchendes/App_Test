@@ -23,7 +23,7 @@ export default function LoginPage() {
         
         <div className="mt-8 flex flex-col items-center gap-6">
           <p className="text-gray-500 text-xs max-w-sm text-center leading-relaxed">
-            {settings.custom_texts?.['auth.disclaimer'] || `Ao entrar, você concorda com nossos Termos de Uso e Política de Privacidade. ${settings.app_name} © ${new Date().getFullYear()}`}
+            {settings.custom_texts?.['auth.disclaimer'] || `Ao entrar, você concorda com nossos Termos de Uso e Política de Privacidade. ${settings.login_platform_name || settings.custom_texts?.['auth.platform_name'] || settings.app_name} © ${new Date().getFullYear()}`}
           </p>
         </div>
       </div>

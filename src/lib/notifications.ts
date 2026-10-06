@@ -124,9 +124,9 @@ export async function notifyAdmin(title: string, message: string, data?: any) {
   try {
     const { data: { session } } = await supabase.auth.getSession();
     
-    // 1. Try centralized backend notify-admin API (handles FCM, OneSignal, Web Push & notifications table)
+    // 1. Try centralized backend notify-admin API (handles FCM, Web Push & notifications table)
     try {
-      const response = await safeFetch('/api/v1/notify-admin', {
+      const response = await safeFetch('/api/v1/notifications?action=notify-admin', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -139,7 +139,7 @@ export async function notifyAdmin(title: string, message: string, data?: any) {
         })
       });
 
-      if (response && (response.success || response.notifiedAdmins)) {
+      if (response && (response.success || response.notifiedAdmins || response.adminCount !== undefined)) {
         return true;
       }
     } catch (apiErr) {

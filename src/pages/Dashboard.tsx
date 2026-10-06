@@ -121,13 +121,45 @@ export default function Dashboard({ user }: DashboardProps) {
       if (tabParam === 'community' || tabParam === 'admin' || tabParam === 'profile' || tabParam === 'home') {
         return tabParam;
       }
+      if (urlParams.get('subtab') === 'testimonials' || urlParams.get('subtab') === 'questions') {
+        return 'admin';
+      }
       const hash = window.location.hash.replace('#', '');
       if (hash === 'community' || hash === 'admin' || hash === 'profile' || hash === 'home') {
         return hash as any;
       }
+      if (hash === 'testimonials' || hash === 'questions') {
+        return 'admin';
+      }
     }
     return 'home';
   });
+
+  useEffect(() => {
+    const handleUrlChange = () => {
+      if (typeof window !== 'undefined') {
+        const urlParams = new URLSearchParams(window.location.search);
+        const tabParam = urlParams.get('tab');
+        if (tabParam === 'community' || tabParam === 'admin' || tabParam === 'profile' || tabParam === 'home') {
+          setActiveTab(tabParam as any);
+        } else if (urlParams.get('subtab') === 'testimonials' || urlParams.get('subtab') === 'questions') {
+          setActiveTab('admin');
+        }
+        const hash = window.location.hash.replace('#', '');
+        if (hash === 'community' || hash === 'admin' || hash === 'profile' || hash === 'home') {
+          setActiveTab(hash as any);
+        } else if (hash === 'testimonials' || hash === 'questions') {
+          setActiveTab('admin');
+        }
+      }
+    };
+    window.addEventListener('popstate', handleUrlChange);
+    window.addEventListener('hashchange', handleUrlChange);
+    return () => {
+      window.removeEventListener('popstate', handleUrlChange);
+      window.removeEventListener('hashchange', handleUrlChange);
+    };
+  }, []);
 
   const handleGlobalRefresh = async () => {
     if (activeTab === 'home') {

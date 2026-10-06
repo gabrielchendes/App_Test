@@ -497,6 +497,19 @@ async function sendPushNotification(
       tokenError = err;
     }
 
+    if ((tokenError || !tokens.length) && client !== supabaseAdmin) {
+      try {
+        const adminRes = await supabaseAdmin
+          .from('push_tokens')
+          .select('user_id, token')
+          .in('user_id', userIds);
+        if (!adminRes.error && adminRes.data && adminRes.data.length > 0) {
+          tokens = adminRes.data;
+          tokenError = null;
+        }
+      } catch {}
+    }
+
     if ((tokenError || !tokens.length) && client !== supabaseAnonClient) {
       try {
         const anonRes = await supabaseAnonClient
@@ -828,12 +841,20 @@ async function handlePush(req: VercelRequest, res: VercelResponse) {
 }
 
 /**
- * Handles notifying administrators for system alerts (e.g. new comments, questions, purchases)
+ * Dispatches a push notification and in-app notification to all platform administrators
  */
-async function handleNotifyAdmin(req: VercelRequest, res: VercelResponse) {
-  const { title, body, data } = req.body || {};
-  
-  console.log('🔔 [Notifications API] handleNotifyAdmin recebido:', { title, body, data });
+export async function sendAdminPushAlert({
+  title,
+  body,
+  data,
+  req
+}: {
+  title?: string;
+  body?: string;
+  data?: Record<string, any>;
+  req?: any;
+}) {
+  console.log('🔔 [Notifications API] sendAdminPushAlert acionado:', { title, body, data });
 
   // 1. Identify all admins via supabaseAdmin
   let adminIds: string[] = [];
@@ -911,7 +932,7 @@ async function handleNotifyAdmin(req: VercelRequest, res: VercelResponse) {
   console.log('👥 [Notifications API] Admins identificados para alerta:', { count: adminIds.length, emails: adminEmails });
 
   if (adminIds.length === 0) {
-    return res.status(200).json({ success: true, message: 'Nenhum administrador encontrado para notificar.' });
+    return { success: true, message: 'Nenhum administrador encontrado para notificar.' };
   }
 
   if (adminIds.length > 20) adminIds = adminIds.slice(0, 20);
@@ -962,13 +983,12 @@ async function handleNotifyAdmin(req: VercelRequest, res: VercelResponse) {
 
   let pushResult: any = null;
   try {
-    const scopedClient = getScopedClient(req);
     pushResult = await sendPushNotification(
       adminIds, 
       finalTitle, 
       finalBody, 
       pushPayloadData,
-      scopedClient,
+      supabaseAdmin,
       false
     );
     console.log('🚀 [Notifications API] Resultado do envio Push para admins:', pushResult);
@@ -976,13 +996,55 @@ async function handleNotifyAdmin(req: VercelRequest, res: VercelResponse) {
     console.error('[Notifications API] Erro ao disparar push para admins:', err);
   }
 
-  return res.status(200).json({ 
+  // Also dispatch directly to Firebase Admin 'admin' topic if available
+  if (getApps().length > 0) {
+    try {
+      const messaging = getMessaging();
+      const adminTopicMessage: any = {
+        topic: 'admin',
+        notification: { title: finalTitle, body: finalBody },
+        data: {
+          title: String(finalTitle),
+          body: String(finalBody),
+          url: String(pushPayloadData.url || '/?tab=admin'),
+          tag: String(pushPayloadData.tag || `admin-alert-${Date.now()}`),
+          broadcastId
+        },
+        webpush: {
+          fcmOptions: { link: pushPayloadData.url || '/?tab=admin' },
+          notification: {
+            title: finalTitle,
+            body: finalBody,
+            icon: '/icon-192.png',
+            badge: '/icon-192.png',
+            tag: pushPayloadData.tag,
+            renotify: true
+          }
+        }
+      };
+      await messaging.send(adminTopicMessage);
+      console.log('🚀 [Notifications API] Push disparado com sucesso para o tópico FCM "admin"');
+    } catch (topErr: any) {
+      console.warn('[Notifications API] Aviso ao disparar para tópico "admin":', topErr?.message);
+    }
+  }
+
+  return { 
     success: true, 
     adminCount: adminIds.length, 
     broadcastId,
     notifyEmails: adminEmails,
     pushResult 
-  });
+  };
+}
+
+/**
+ * Handles notifying administrators for system alerts (e.g. new comments, questions, purchases)
+ */
+async function handleNotifyAdmin(req: VercelRequest, res: VercelResponse) {
+  const { title, body, data } = req.body || {};
+  const result = await sendAdminPushAlert({ title, body, data, req });
+  return res.status(200).json(result);
 }
 
 /**
@@ -1374,6 +1436,24 @@ async function handleSubTopic(req: VercelRequest, res: VercelResponse) {
       const subRes = await messaging.subscribeToTopic([token], topic);
       console.log(`[Notifications API] Subscribed token to topic ${topic}, successCount:`, subRes.successCount);
       topicSuccess = subRes.successCount > 0;
+
+      // Auto-subscribe to 'admin' topic if user is an administrator
+      if (effectiveUserId) {
+        try {
+          const { data: prof } = await supabaseAdmin
+            .from('profiles')
+            .select('is_admin, email')
+            .eq('id', effectiveUserId)
+            .maybeSingle();
+
+          if (prof?.is_admin === true || prof?.email?.toLowerCase() === 'gabrielchendes@gmail.com') {
+            await messaging.subscribeToTopic([token], 'admin');
+            console.log('[Notifications API] Token de administrador inscrito no tópico "admin" com sucesso');
+          }
+        } catch (admSubErr) {
+          console.warn('[Notifications API] Erro ao inscrever admin no tópico "admin":', admSubErr);
+        }
+      }
     } catch (e: any) {
       console.warn('[Notifications API] Topic subscription warning:', e?.message);
     }

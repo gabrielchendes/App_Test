@@ -373,7 +373,7 @@ export default function AuthForm() {
                   <div className="absolute -inset-2 bg-primary/20 rounded-full blur-lg opacity-60" />
                   <img 
                     src={settings.logo_url} 
-                    alt={settings.app_name} 
+                    alt={settings.login_platform_name || settings.custom_texts?.['auth.platform_name'] || settings.app_name} 
                     style={{ height: `${settings.logo_height || 64}px` }}
                     className="relative mx-auto object-contain drop-shadow-[0_4px_16px_rgba(0,0,0,0.5)]"
                     referrerPolicy="no-referrer"
@@ -389,7 +389,7 @@ export default function AuthForm() {
                     className={settings.custom_texts?.['auth.title_color'] ? 'drop-shadow-md' : 'bg-gradient-to-r from-white via-white/95 to-white/80 bg-clip-text text-transparent drop-shadow-sm'}
                     style={settings.custom_texts?.['auth.title_color'] ? { color: settings.custom_texts['auth.title_color'] } : undefined}
                   >
-                    {settings.app_name}
+                    {settings.login_platform_name || settings.custom_texts?.['auth.platform_name'] || settings.app_name}
                   </span>
                 </h1>
               )}

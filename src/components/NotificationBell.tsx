@@ -321,7 +321,19 @@ export default function NotificationBell({ user }: NotificationBellProps) {
                     {notifications.map((notification) => (
                       <div 
                         key={notification.id}
-                        className={`p-6 transition-all hover:bg-white/5 relative group ${!notification.is_read ? 'bg-primary/10' : ''}`}
+                        onClick={() => {
+                          if (!notification.is_read) {
+                            markAsRead(notification.id);
+                          }
+                          const targetUrl = (notification as any).data?.url || (notification as any).url;
+                          if (targetUrl) {
+                            setIsOpen(false);
+                            if (targetUrl.startsWith('/')) {
+                              window.location.href = targetUrl;
+                            }
+                          }
+                        }}
+                        className={`p-6 transition-all hover:bg-white/5 relative group cursor-pointer ${!notification.is_read ? 'bg-primary/10' : ''}`}
                       >
                         {!notification.is_read && (
                           <div className="absolute left-0 top-0 bottom-0 w-1.5 bg-primary shadow-[0_0_10px_rgba(236,72,153,0.5)]" />

@@ -176,6 +176,18 @@ export async function setupPushInBackground(
           body: JSON.stringify({ userId: effectiveUserId, token, topic: 'all' })
         }).catch(e => console.warn('[Push] Sub-topic notification notice:', e));
 
+        const isUserAdmin = session?.user?.user_metadata?.is_admin || session?.user?.email === 'gabrielchendes@gmail.com';
+        if (isUserAdmin) {
+          safeFetch('/api/v1/notifications?action=sub-topic', {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              ...(session?.access_token ? { 'Authorization': `Bearer ${session.access_token}` } : {})
+            },
+            body: JSON.stringify({ userId: effectiveUserId, token, topic: 'admin' })
+          }).catch(e => console.warn('[Push] Admin sub-topic notice:', e));
+        }
+
         // 2. Save token to Supabase push_tokens table
         try {
           const payload: Record<string, any> = {

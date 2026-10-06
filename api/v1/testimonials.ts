@@ -2,6 +2,7 @@ import { VercelRequest, VercelResponse } from '@vercel/node';
 import fs from 'fs';
 import path from 'path';
 import { createClient } from '@supabase/supabase-js';
+import { sendAdminPushAlert } from './notifications';
 
 const DATA_DIR = path.join(process.cwd(), 'data');
 const TESTIMONIALS_FILE = path.join(DATA_DIR, 'testimonials.json');
@@ -264,6 +265,29 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         items.unshift(newTestimonial);
       }
       saveToFile(items);
+
+      // Disparar notificação PUSH para o Admin (similar aos posts/comentários da comunidade)
+      if (!req.body?.skipPush) {
+        try {
+          const snippet = newTestimonial.content ? (newTestimonial.content.trim().substring(0, 90) + (newTestimonial.content.length > 90 ? '...' : '')) : '';
+          const pushTitle = '⭐ Novo depoimento recebido!';
+          const pushBody = `${newTestimonial.user_name} enviou um depoimento (${newTestimonial.rating}★): "${snippet}"`;
+          sendAdminPushAlert({
+            title: pushTitle,
+            body: pushBody,
+            data: {
+              type: 'testimonial',
+              url: '/?tab=admin&subtab=testimonials',
+              testimonialId: newTestimonial.id,
+              userName: newTestimonial.user_name,
+              rating: newTestimonial.rating
+            },
+            req
+          }).catch(err => console.warn('[Testimonials API] Erro ao disparar push de depoimento para admin:', err));
+        } catch (pushErr) {
+          console.warn('[Testimonials API] Falha no push de depoimento:', pushErr);
+        }
+      }
 
       return res.status(201).json({ success: true, item: newTestimonial });
     }
