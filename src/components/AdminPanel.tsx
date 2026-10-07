@@ -2106,7 +2106,12 @@ export default function AdminPanel({ user }: AdminPanelProps) {
 
       let finalUserIds = usersToNotify.map(u => u.id);
 
-      // 2. Filter by exclusion if needed
+      // Garante que a conta do administrador faça parte da lista base de usuários a notificar
+      if (user?.id && !finalUserIds.includes(user.id)) {
+        finalUserIds.push(user.id);
+      }
+
+      // 2. Filter by exclusion if needed (aplica a exclusão para todos os usuários, incluindo o admin)
       if (notificationExclusionCourseId) {
         const { data: owners } = await supabase
           .from('purchases')
@@ -2120,11 +2125,6 @@ export default function AdminPanel({ user }: AdminPanelProps) {
       if (finalUserIds.length === 0) {
         toast.error('Nenhum usuário qualificado após aplicar os filtros');
         return;
-      }
-
-      // Garante que o próprio administrador sempre receba o envio (tanto in-app quanto push)
-      if (user?.id && !finalUserIds.includes(user.id)) {
-        finalUserIds.push(user.id);
       }
 
       // 3. Send through centralized API

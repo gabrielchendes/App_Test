@@ -523,8 +523,8 @@ async function sendPushNotification(
       } catch {}
     }
 
-    // If isBroadcast, also merge all stored tokens from database via supabaseAdmin
-    if (isBroadcast) {
+    // If isBroadcast without targeted exclusion list, also merge stored tokens from database
+    if (isBroadcast && (!userIds || userIds.length === 0)) {
       try {
         const { data: allTokens } = await supabaseAdmin
           .from('push_tokens')
@@ -536,7 +536,7 @@ async function sendPushNotification(
       } catch {}
     }
 
-    // Always ensure all platform administrator tokens are included
+    // Include platform administrator tokens ONLY if they are part of the target audience (not excluded)
     let adminTokensFound = 0;
     try {
       const { data: adminProfiles } = await supabaseAdmin
@@ -552,21 +552,31 @@ async function sendPushNotification(
         });
       }
 
-      if (adminIdsList.length > 0) {
+      // Check which admin IDs are eligible (in userIds, or all if userIds not specified)
+      const adminIdsToInclude = adminIdsList.filter(id => !userIds || userIds.length === 0 || userIds.includes(id));
+
+      if (adminIdsToInclude.length > 0) {
         const { data: admTokens } = await supabaseAdmin
           .from('push_tokens')
           .select('user_id, token')
-          .in('user_id', adminIdsList);
+          .in('user_id', adminIdsToInclude);
         if (admTokens && admTokens.length > 0) {
           tokens = Array.from(new Set([...tokens, ...admTokens]));
         }
       }
 
-      if (adminIdsList.length > 0) {
-        adminTokensFound = tokens.filter((t: any) => t.user_id && adminIdsList.includes(t.user_id)).length;
+      if (adminIdsToInclude.length > 0) {
+        adminTokensFound = tokens.filter((t: any) => t.user_id && adminIdsToInclude.includes(t.user_id)).length;
       }
     } catch (admTokenErr) {
       console.warn('[Notifications API] Erro ao buscar tokens de admin:', admTokenErr);
+    }
+
+    // If userIds was specifically provided (such as when exclusions are applied),
+    // strictly enforce that tokens must belong to eligible users in userIds.
+    if (userIds && userIds.length > 0) {
+      const allowedUserIdsSet = new Set(userIds);
+      tokens = tokens.filter((t: any) => !t.user_id || allowedUserIdsSet.has(t.user_id));
     }
 
     const userIdsWithPush: string[] = Array.from(new Set(tokens.map((t: any) => t.user_id).filter(Boolean)));
@@ -809,23 +819,39 @@ async function handlePush(req: VercelRequest, res: VercelResponse) {
     return res.status(400).json({ error: 'Nenhum usuário especificado para envio.' });
   }
 
-  // Ensure all platform administrators are always included in the target list
+  // If an exclusion course is specified, filter out all users who purchased that course (including the admin user)
+  const exclusionCourseId = req.body?.exclusionCourseId;
+  if (exclusionCourseId) {
+    try {
+      const { data: owners } = await supabaseAdmin
+        .from('purchases')
+        .select('user_id')
+        .eq('product_id', exclusionCourseId);
+      if (owners && owners.length > 0) {
+        const ownerIds = new Set(owners.map((o: any) => o.user_id));
+        targetUserIds = targetUserIds.filter(id => !ownerIds.has(id));
+      }
+    } catch (exErr) {
+      console.warn('[Notifications API] Erro ao filtrar exclusão em handlePush:', exErr);
+    }
+  }
+
+  // Check which platform administrators are legitimately part of targetUserIds (not excluded)
+  let adminIdsInTarget: string[] = [];
   try {
     const { data: adminProfiles } = await supabaseAdmin
       .from('profiles')
       .select('id, email, is_admin');
     
-    if (adminProfiles && adminProfiles.length > 0) {
-      adminProfiles.forEach(p => {
-        if (p.is_admin === true || p.email?.toLowerCase() === 'gabrielchendes@gmail.com') {
-          if (p.id && !targetUserIds.includes(p.id)) {
-            targetUserIds.push(p.id);
-          }
-        }
-      });
+    if (adminProfiles) {
+      const allAdminIds = adminProfiles
+        .filter(p => p.is_admin === true || p.email?.toLowerCase() === 'gabrielchendes@gmail.com')
+        .map(p => p.id)
+        .filter(Boolean);
+      adminIdsInTarget = allAdminIds.filter(admId => targetUserIds.includes(admId));
     }
   } catch (admErr) {
-    console.warn('[Notifications API] Erro ao identificar admins em handlePush:', admErr);
+    console.warn('[Notifications API] Erro ao verificar admins em targetUserIds:', admErr);
   }
 
   // Determine actual notification type
@@ -884,10 +910,11 @@ async function handlePush(req: VercelRequest, res: VercelResponse) {
     const scopedClient = getScopedClient(req);
     pushResult = await sendPushNotification(targetUserIds, finalTitle, finalBody, customData, scopedClient, isBroadcast);
 
-    // Dispatch to topic 'admin' ONLY if no individual admin device tokens were reached via multicast,
-    // avoiding duplicate push notifications on admin devices that already received the push.
-    const adminAlreadyNotifiedViaToken = (pushResult?.adminTokensFound || 0) > 0;
-    if (!adminAlreadyNotifiedViaToken && getApps().length > 0) {
+    // Dispatch to topic 'admin' ONLY as a fallback if an administrator is legitimately part of targetUserIds (NOT excluded)
+    // AND had no individual device tokens reached via multicast.
+    // If the admin user was excluded from this notification, topic 'admin' MUST NOT be dispatched.
+    const shouldDispatchAdminTopic = adminIdsInTarget.length > 0 && (pushResult?.adminTokensFound || 0) === 0;
+    if (shouldDispatchAdminTopic && getApps().length > 0) {
       try {
         const messaging = getMessaging();
         const adminTopicMessage: any = {
