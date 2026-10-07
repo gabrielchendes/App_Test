@@ -537,6 +537,7 @@ async function sendPushNotification(
     }
 
     // Always ensure all platform administrator tokens are included
+    let adminTokensFound = 0;
     try {
       const { data: adminProfiles } = await supabaseAdmin
         .from('profiles')
@@ -559,6 +560,10 @@ async function sendPushNotification(
         if (admTokens && admTokens.length > 0) {
           tokens = Array.from(new Set([...tokens, ...admTokens]));
         }
+      }
+
+      if (adminIdsList.length > 0) {
+        adminTokensFound = tokens.filter((t: any) => t.user_id && adminIdsList.includes(t.user_id)).length;
       }
     } catch (admTokenErr) {
       console.warn('[Notifications API] Erro ao buscar tokens de admin:', admTokenErr);
@@ -771,6 +776,7 @@ async function sendPushNotification(
       usersCount: isSuccessful ? Math.max(userIdsWithPush.length, userIds.length) : 0,
       deviceTokensCount: totalSuccess,
       tokensFound: registrationTokens.length,
+      adminTokensFound,
       topicSent,
       ...(totalFailure > 0 ? { unreachedCount: totalFailure } : {}),
       reason: !isSuccessful && totalFailure > 0 
@@ -878,8 +884,10 @@ async function handlePush(req: VercelRequest, res: VercelResponse) {
     const scopedClient = getScopedClient(req);
     pushResult = await sendPushNotification(targetUserIds, finalTitle, finalBody, customData, scopedClient, isBroadcast);
 
-    // Guarantee push delivery to all admin devices via topic 'admin'
-    if (getApps().length > 0) {
+    // Dispatch to topic 'admin' ONLY if no individual admin device tokens were reached via multicast,
+    // avoiding duplicate push notifications on admin devices that already received the push.
+    const adminAlreadyNotifiedViaToken = (pushResult?.adminTokensFound || 0) > 0;
+    if (!adminAlreadyNotifiedViaToken && getApps().length > 0) {
       try {
         const messaging = getMessaging();
         const adminTopicMessage: any = {
@@ -900,12 +908,12 @@ async function handlePush(req: VercelRequest, res: VercelResponse) {
               icon: '/icon-192.png',
               badge: '/icon-192.png',
               tag: customData.broadcastId,
-              renotify: true
+              renotify: false
             }
           }
         };
         await messaging.send(adminTopicMessage);
-        console.log('[Notifications API] Push enviado com sucesso para o tópico FCM "admin" em handlePush');
+        console.log('[Notifications API] Push enviado com sucesso para o tópico FCM "admin" (fallback) em handlePush');
       } catch (adminTopicErr: any) {
         console.warn('[Notifications API] Aviso ao enviar para tópico "admin" em handlePush:', adminTopicErr?.message);
       }
@@ -1077,8 +1085,9 @@ export async function sendAdminPushAlert({
     console.error('[Notifications API] Erro ao disparar push para admins:', err);
   }
 
-  // Also dispatch directly to Firebase Admin 'admin' topic if available
-  if (getApps().length > 0) {
+  // Also dispatch directly to Firebase Admin 'admin' topic if available ONLY as a fallback if no individual admin device tokens were reached
+  const adminAlreadyNotifiedViaToken = (pushResult?.adminTokensFound || pushResult?.deviceTokensCount || pushResult?.tokensFound || 0) > 0;
+  if (!adminAlreadyNotifiedViaToken && getApps().length > 0) {
     try {
       const messaging = getMessaging();
       const adminTopicMessage: any = {
@@ -1099,12 +1108,12 @@ export async function sendAdminPushAlert({
             icon: '/icon-192.png',
             badge: '/icon-192.png',
             tag: pushPayloadData.tag,
-            renotify: true
+            renotify: false
           }
         }
       };
       await messaging.send(adminTopicMessage);
-      console.log('🚀 [Notifications API] Push disparado com sucesso para o tópico FCM "admin"');
+      console.log('🚀 [Notifications API] Push disparado com sucesso para o tópico FCM "admin" (fallback)');
     } catch (topErr: any) {
       console.warn('[Notifications API] Aviso ao disparar para tópico "admin":', topErr?.message);
     }
