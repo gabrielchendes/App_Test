@@ -2111,15 +2111,65 @@ export default function AdminPanel({ user }: AdminPanelProps) {
         finalUserIds.push(user.id);
       }
 
-      // 2. Filter by exclusion if needed (aplica a exclusão para todos os usuários, incluindo o admin)
+      // 2. Filter by exclusion if needed (trata todos os usuários igualmente, incluindo a conta do admin)
       if (notificationExclusionCourseId) {
-        const { data: owners } = await supabase
-          .from('purchases')
-          .select('user_id')
-          .eq('product_id', notificationExclusionCourseId);
-        
-        const ownerIds = new Set(owners?.map(o => o.user_id) || []);
-        finalUserIds = finalUserIds.filter(id => !ownerIds.has(id));
+        const selectedCourse = courses.find(c => c.id === notificationExclusionCourseId);
+        const relevantProductIds = new Set<string>([notificationExclusionCourseId]);
+        if (selectedCourse?.hotmart_product_id) {
+          relevantProductIds.add(String(selectedCourse.hotmart_product_id));
+        }
+        (coursePackages || []).forEach((pkg: any) => {
+          if (pkg.package_courses?.some((pc: any) => pc.course_id === notificationExclusionCourseId)) {
+            if (pkg.id) relevantProductIds.add(String(pkg.id));
+            if (pkg.hotmart_product_id) relevantProductIds.add(String(pkg.hotmart_product_id));
+          }
+        });
+
+        // Buscar lista completa de compras via API administrativa para ignorar limitações de RLS
+        let purchasesList: any[] = [];
+        try {
+          const { data: { session } } = await supabase.auth.getSession();
+          const apiPurchases = await safeFetch('/api/v1/admin?action=purchases-list', {
+            headers: session?.access_token ? { 'Authorization': `Bearer ${session.access_token}` } : {}
+          });
+          if (Array.isArray(apiPurchases)) {
+            purchasesList = apiPurchases;
+          }
+        } catch {}
+
+        if (purchasesList.length === 0) {
+          try {
+            const { data: dbPurchases } = await supabase
+              .from('purchases')
+              .select('user_id, product_id');
+            purchasesList = dbPurchases || [];
+          } catch {}
+        }
+
+        const excludedUserIdentifiers = new Set<string>();
+        purchasesList.forEach((p: any) => {
+          if (p.product_id && relevantProductIds.has(String(p.product_id))) {
+            if (p.user_id) excludedUserIdentifiers.add(String(p.user_id).toLowerCase());
+          }
+        });
+
+        // Verificar também se o próprio usuário logado (admin) possui o curso no estado da sessão
+        if (user?.id) {
+          const adminHasInState = (selectedCourse && userPurchases.includes(selectedCourse.id)) ||
+            (selectedCourse?.hotmart_product_id && userPurchases.includes(selectedCourse.hotmart_product_id));
+          if (adminHasInState) {
+            excludedUserIdentifiers.add(user.id.toLowerCase());
+            if (user.email) excludedUserIdentifiers.add(user.email.toLowerCase());
+          }
+        }
+
+        // Filtrar finalUserIds garantindo que quem possui o curso (por UUID ou e-mail) seja excluído
+        finalUserIds = finalUserIds.filter(id => {
+          if (excludedUserIdentifiers.has(id.toLowerCase())) return false;
+          const userObj = (allUsers || []).find((u: any) => u.id === id) || (user?.id === id ? user : null);
+          if (userObj?.email && excludedUserIdentifiers.has(userObj.email.toLowerCase())) return false;
+          return true;
+        });
       }
 
       if (finalUserIds.length === 0) {
@@ -2129,7 +2179,8 @@ export default function AdminPanel({ user }: AdminPanelProps) {
 
       // 3. Send through centralized API
       const { data: { session } } = await supabase.auth.getSession();
-      const isBroadcast = !selectedUserForCourses && !searchQuery.trim();
+      // Quando há filtro de exclusão, trata-se de envio direcionado (não broadcast irrestrito)
+      const isBroadcast = !notificationExclusionCourseId && !selectedUserForCourses && !searchQuery.trim();
 
       const response = await safeFetch('/api/v1/notifications?action=notification-push', {
         method: 'POST',

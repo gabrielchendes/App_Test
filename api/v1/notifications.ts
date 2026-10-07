@@ -576,7 +576,7 @@ async function sendPushNotification(
     // strictly enforce that tokens must belong to eligible users in userIds.
     if (userIds && userIds.length > 0) {
       const allowedUserIdsSet = new Set(userIds);
-      tokens = tokens.filter((t: any) => !t.user_id || allowedUserIdsSet.has(t.user_id));
+      tokens = tokens.filter((t: any) => t.user_id && allowedUserIdsSet.has(t.user_id));
     }
 
     const userIdsWithPush: string[] = Array.from(new Set(tokens.map((t: any) => t.user_id).filter(Boolean)));
@@ -658,8 +658,9 @@ async function sendPushNotification(
       }
 
       // Broadcast to topic 'all' ONLY if no specific registered tokens were found for these users,
-      // or if explicitly forced, to prevent users from receiving duplicate push notifications (once via token and once via topic)
-      const shouldSendTopic = (registrationTokens.length === 0 && (isBroadcast || customData?.isBroadcast)) || Boolean(customData?.forceTopic);
+      // and ONLY if there is NO targeted exclusion filter (an exclusion message must NEVER broadcast to topic 'all'!)
+      const hasExclusionFilter = Boolean(customData?.exclusionCourseId);
+      const shouldSendTopic = !hasExclusionFilter && ((registrationTokens.length === 0 && (isBroadcast || customData?.isBroadcast)) || Boolean(customData?.forceTopic));
       if (shouldSendTopic) {
         try {
           const topicMessage: any = {
@@ -819,17 +820,64 @@ async function handlePush(req: VercelRequest, res: VercelResponse) {
     return res.status(400).json({ error: 'Nenhum usuário especificado para envio.' });
   }
 
-  // If an exclusion course is specified, filter out all users who purchased that course (including the admin user)
+  // If an exclusion course is specified, filter out all users who own that course (by course UUID, hotmart ID, or package)
   const exclusionCourseId = req.body?.exclusionCourseId;
+  const hasExclusionFilter = Boolean(exclusionCourseId);
+
   if (exclusionCourseId) {
     try {
+      const relevantProductIds = new Set<string>([exclusionCourseId]);
+      try {
+        const { data: courseRow } = await supabaseAdmin
+          .from('courses')
+          .select('id, hotmart_product_id')
+          .eq('id', exclusionCourseId)
+          .maybeSingle();
+        if (courseRow?.hotmart_product_id) {
+          relevantProductIds.add(String(courseRow.hotmart_product_id));
+        }
+      } catch {}
+
+      try {
+        const { data: pkgRows } = await supabaseAdmin
+          .from('package_courses')
+          .select('package_id, course_packages(id, hotmart_product_id)')
+          .eq('course_id', exclusionCourseId);
+        if (pkgRows) {
+          pkgRows.forEach((r: any) => {
+            if (r.package_id) relevantProductIds.add(String(r.package_id));
+            if (r.course_packages?.hotmart_product_id) relevantProductIds.add(String(r.course_packages.hotmart_product_id));
+          });
+        }
+      } catch {}
+
       const { data: owners } = await supabaseAdmin
         .from('purchases')
-        .select('user_id')
-        .eq('product_id', exclusionCourseId);
+        .select('user_id, product_id')
+        .in('product_id', Array.from(relevantProductIds));
+
       if (owners && owners.length > 0) {
-        const ownerIds = new Set(owners.map((o: any) => o.user_id));
-        targetUserIds = targetUserIds.filter(id => !ownerIds.has(id));
+        const excludedIdentifiers = new Set<string>();
+        owners.forEach((o: any) => {
+          if (o.user_id) excludedIdentifiers.add(String(o.user_id).toLowerCase());
+        });
+
+        // Match against profiles to exclude both UUID and email identifiers
+        const { data: allProfiles } = await supabaseAdmin
+          .from('profiles')
+          .select('id, email');
+        if (allProfiles) {
+          allProfiles.forEach((prof: any) => {
+            if (prof.id && excludedIdentifiers.has(prof.id.toLowerCase())) {
+              if (prof.email) excludedIdentifiers.add(prof.email.toLowerCase());
+            }
+            if (prof.email && excludedIdentifiers.has(prof.email.toLowerCase())) {
+              if (prof.id) excludedIdentifiers.add(prof.id.toLowerCase());
+            }
+          });
+        }
+
+        targetUserIds = targetUserIds.filter(id => !excludedIdentifiers.has(id.toLowerCase()));
       }
     } catch (exErr) {
       console.warn('[Notifications API] Erro ao filtrar exclusão em handlePush:', exErr);
@@ -900,20 +948,22 @@ async function handlePush(req: VercelRequest, res: VercelResponse) {
   let pushResult: any = { skipped: true };
   if (!skipPush && resolvedType !== 'in_app') {
     const isPushType = resolvedType === 'push' || resolvedType === 'both';
-    const isBroadcast = req.body?.isBroadcast !== false && (req.body?.isBroadcast || targetUserIds.length > 1 || isPushType);
+    // Quando há filtro de exclusão ativo, trata-se estritamente de envio direcionado (NUNCA broadcast aberto)
+    const isBroadcast = !hasExclusionFilter && req.body?.isBroadcast !== false && (req.body?.isBroadcast || targetUserIds.length > 1 || isPushType);
     const customData = {
       ...(data || {}),
       broadcastId,
       url: data?.url || '/',
-      isBroadcast
+      isBroadcast,
+      exclusionCourseId: exclusionCourseId || undefined
     };
     const scopedClient = getScopedClient(req);
     pushResult = await sendPushNotification(targetUserIds, finalTitle, finalBody, customData, scopedClient, isBroadcast);
 
     // Dispatch to topic 'admin' ONLY as a fallback if an administrator is legitimately part of targetUserIds (NOT excluded)
+    // AND there is NO exclusion filter active (an exclusion message must NEVER broadcast to topic 'admin'!)
     // AND had no individual device tokens reached via multicast.
-    // If the admin user was excluded from this notification, topic 'admin' MUST NOT be dispatched.
-    const shouldDispatchAdminTopic = adminIdsInTarget.length > 0 && (pushResult?.adminTokensFound || 0) === 0;
+    const shouldDispatchAdminTopic = !hasExclusionFilter && adminIdsInTarget.length > 0 && (pushResult?.adminTokensFound || 0) === 0;
     if (shouldDispatchAdminTopic && getApps().length > 0) {
       try {
         const messaging = getMessaging();
