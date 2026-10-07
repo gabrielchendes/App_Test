@@ -1580,15 +1580,15 @@ export default function AdminPanel({ user }: AdminPanelProps) {
 
   const getAdminTokenSafe = async (): Promise<string | undefined> => {
     try {
-      const { data: { session } } = await supabase.auth.getSession();
+      const { data: { session } } = await supabase.auth.getSession().catch(() => ({ data: { session: null } }));
       if (!session) {
-        const { data: refreshed } = await supabase.auth.refreshSession();
-        return refreshed.session?.access_token;
+        const { data: refreshed } = await supabase.auth.refreshSession().catch(() => ({ data: { session: null } }));
+        return refreshed?.session?.access_token;
       }
       const expiresAt = session.expires_at ? session.expires_at * 1000 : 0;
       if (expiresAt > 0 && expiresAt < Date.now() + 120000) {
-        const { data: refreshed } = await supabase.auth.refreshSession();
-        return refreshed.session?.access_token || session.access_token;
+        const { data: refreshed } = await supabase.auth.refreshSession().catch(() => ({ data: { session: null } }));
+        return refreshed?.session?.access_token || session.access_token;
       }
       return session.access_token;
     } catch {
@@ -1606,8 +1606,8 @@ export default function AdminPanel({ user }: AdminPanelProps) {
       });
 
       if (response?.error && (response.error.includes('Session expired') || response.status === 401)) {
-        const { data: refreshed } = await supabase.auth.refreshSession();
-        if (refreshed.session?.access_token) {
+        const { data: refreshed } = await supabase.auth.refreshSession().catch(() => ({ data: { session: null } }));
+        if (refreshed?.session?.access_token) {
           response = await safeFetch(`/api/v1/admin?action=purchases-list&userId=${userId}`, {
             headers: {
               'Authorization': `Bearer ${refreshed.session.access_token}`
@@ -1653,8 +1653,8 @@ export default function AdminPanel({ user }: AdminPanelProps) {
         });
 
         if (response?.error && (response.error.includes('Session expired') || response.status === 401)) {
-          const { data: refreshed } = await supabase.auth.refreshSession();
-          if (refreshed.session?.access_token) {
+          const { data: refreshed } = await supabase.auth.refreshSession().catch(() => ({ data: { session: null } }));
+          if (refreshed?.session?.access_token) {
             response = await safeFetch('/api/v1/admin?action=user-access-toggle', {
               method: 'POST',
               headers: {
@@ -1794,8 +1794,8 @@ export default function AdminPanel({ user }: AdminPanelProps) {
         });
 
         if (response?.error && (response.error.includes('Session expired') || response.status === 401)) {
-          const { data: refreshed } = await supabase.auth.refreshSession();
-          if (refreshed.session?.access_token) {
+          const { data: refreshed } = await supabase.auth.refreshSession().catch(() => ({ data: { session: null } }));
+          if (refreshed?.session?.access_token) {
             response = await safeFetch('/api/v1/admin?action=user-access-toggle', {
               method: 'POST',
               headers: {

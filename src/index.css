@@ -132,6 +132,39 @@ body {
   }
 }
 
+/* Organic Slow Breathing Glowing Halos for Mobile/Desktop */
+@keyframes auroraPulse {
+  0%, 100% {
+    opacity: 0.12;
+    transform: scale(1) translate3d(0, 0, 0);
+  }
+  50% {
+    opacity: 0.22;
+    transform: scale(1.08) translate3d(0, -8px, 0);
+  }
+}
+
+@keyframes amberPulse {
+  0%, 100% {
+    opacity: 0.09;
+    transform: scale(1) translate3d(0, 0, 0);
+  }
+  50% {
+    opacity: 0.18;
+    transform: scale(1.07) translate3d(8px, 0, 0);
+  }
+}
+
+.animate-aurora-glow {
+  animation: auroraPulse 9s ease-in-out infinite;
+  will-change: transform, opacity;
+}
+
+.animate-amber-glow {
+  animation: amberPulse 11s ease-in-out infinite 2s;
+  will-change: transform, opacity;
+}
+
 .animated-luxury-border {
   background: linear-gradient(
     135deg,

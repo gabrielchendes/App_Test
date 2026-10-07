@@ -39,9 +39,13 @@ const Navbar = memo(({
   );
   
   const handleLogout = async () => {
-    const { error } = await supabase.auth.signOut();
-    if (error) toast.error(t('auth.logout_error') || 'Erro ao sair');
-    else toast.success(t('auth.logout_success') || 'Até logo!');
+    try {
+      const { error } = await supabase.auth.signOut().catch(() => ({ error: null }));
+      if (error) toast.error(t('auth.logout_error') || 'Erro ao sair');
+      else toast.success(t('auth.logout_success') || 'Até logo!');
+    } catch {
+      toast.success(t('auth.logout_success') || 'Até logo!');
+    }
   };
 
   const [overrideName, setOverrideName] = useState<string | null>(() => {
@@ -169,7 +173,7 @@ const Navbar = memo(({
                     cx="16"
                     cy="16"
                     r="13"
-                    className="stroke-primary"
+                    className="stroke-blue-700"
                     strokeWidth="2"
                     fill="transparent"
                     strokeDasharray={2 * Math.PI * 13}
@@ -288,7 +292,7 @@ const Navbar = memo(({
                   cx="18"
                   cy="18"
                   r="15"
-                  className="stroke-primary"
+                  className="stroke-blue-700"
                   strokeWidth="2"
                   fill="transparent"
                   strokeDasharray={2 * Math.PI * 15}

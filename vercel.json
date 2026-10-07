@@ -134,6 +134,14 @@
       "destination": "/api/v1/ai?action=refine-sales-copy"
     },
     {
+      "source": "/api/v1/progress",
+      "destination": "/api/v1/progress"
+    },
+    {
+      "source": "/api/v1/user-progress",
+      "destination": "/api/v1/progress"
+    },
+    {
       "source": "/((?!api/).*)",
       "destination": "/index.html"
     }

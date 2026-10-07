@@ -22,7 +22,7 @@ export default function AccessDeniedModal({ userEmail }: AccessDeniedModalProps)
 
   const handleLogout = async () => {
     try {
-      await supabase.auth.signOut();
+      await supabase.auth.signOut().catch(() => {});
       window.location.reload();
     } catch (e) {
       toast.error('Erro ao encerrar sessão');

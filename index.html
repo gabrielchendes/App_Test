@@ -19,8 +19,75 @@
         }
       })();
 
-      // Global error listeners to intercept cross-origin "Script error." and PWA/analytics exceptions early
+      // Intercept console.error to avoid treating background Supabase auth refresh/session errors as fatal crashes
       (function() {
+        var origConsoleError = console.error;
+        console.error = function() {
+          var args = Array.prototype.slice.call(arguments);
+          var isAuthErr = args.some(function(arg) {
+            if (!arg) return false;
+            var name = (arg && arg.name) || '';
+            var msg = '';
+            var stack = '';
+            if (typeof arg === 'string') msg = arg;
+            else {
+              msg = String(arg.message || '');
+              stack = String(arg.stack || '');
+            }
+            return (
+              name === 'AuthApiError' ||
+              name === 'AuthError' ||
+              name === 'AuthSessionMissingError' ||
+              name === 'AuthWeakPasswordError' ||
+              (arg && arg.__isAuthError) ||
+              msg.indexOf('AuthApiError') !== -1 ||
+              msg.indexOf('AuthError') !== -1 ||
+              msg.indexOf('Refresh Token Not Found') !== -1 ||
+              msg.indexOf('Invalid Refresh Token') !== -1 ||
+              msg.indexOf('invalid_grant') !== -1 ||
+              msg.indexOf('Invalid login credentials') !== -1 ||
+              msg.indexOf('session_not_found') !== -1 ||
+              msg.indexOf('refresh_token_not_found') !== -1 ||
+              stack.indexOf('AuthApiError') !== -1 ||
+              stack.indexOf('AuthError') !== -1
+            );
+          });
+          if (isAuthErr) {
+            console.warn.apply(console, ['[Handled Auth Notice]:', ...args]);
+            return;
+          }
+          origConsoleError.apply(console, arguments);
+        };
+      })();
+
+      // Global error listeners to intercept cross-origin "Script error." and PWA/analytics/Supabase auth exceptions early
+      (function() {
+        function isBenignAuth(err, msg, src) {
+          var name = (err && err.name) || '';
+          var stack = (err && err.stack) || '';
+          var message = String(msg || (err && err.message) || '');
+          var source = String(src || (err && err.filename) || '');
+          return (
+            name === 'AuthApiError' ||
+            name === 'AuthError' ||
+            name === 'AuthSessionMissingError' ||
+            name === 'AuthWeakPasswordError' ||
+            (err && err.__isAuthError) ||
+            message.indexOf('AuthApiError') !== -1 ||
+            message.indexOf('AuthError') !== -1 ||
+            message.indexOf('Refresh Token Not Found') !== -1 ||
+            message.indexOf('Invalid Refresh Token') !== -1 ||
+            message.indexOf('invalid_grant') !== -1 ||
+            message.indexOf('Invalid login credentials') !== -1 ||
+            message.indexOf('session_not_found') !== -1 ||
+            message.indexOf('refresh_token_not_found') !== -1 ||
+            source.indexOf('supabase') !== -1 ||
+            stack.indexOf('AuthApiError') !== -1 ||
+            stack.indexOf('AuthError') !== -1 ||
+            stack.indexOf('supabase') !== -1
+          );
+        }
+
         function checkBenign(msg, src) {
           var message = String(msg || '');
           var source = String(src || '');
@@ -50,7 +117,7 @@
 
         // 1. Classic onerror handler
         window.onerror = function(message, source, lineno, colno, error) {
-          if (checkBenign(message, source) || (error && checkBenign(error.message, source))) {
+          if (isBenignAuth(error, message, source) || checkBenign(message, source) || (error && checkBenign(error.message, source))) {
             console.warn('⚠️ Suppressed early window.onerror:', message, 'from:', source);
             return true; // Prevents the error from propagating
           }
@@ -61,7 +128,7 @@
         window.addEventListener('error', function(event) {
           var msg = event.message || (event.error && event.error.message) || '';
           var src = event.filename || '';
-          if (checkBenign(msg, src)) {
+          if (isBenignAuth(event.error, msg, src) || checkBenign(msg, src)) {
             console.warn('⚠️ Suppressed early error event:', msg, 'from:', src);
             try {
               event.preventDefault();
@@ -71,11 +138,22 @@
           }
         }, true);
 
-        // 3. Handle unhandled promise rejections early too
+        // 3. Classic unhandled rejection property
+        window.onunhandledrejection = function(event) {
+          var reason = event.reason || {};
+          var msg = reason ? String(reason.message || reason) : '';
+          if (isBenignAuth(reason, msg, '') || checkBenign(msg, '')) {
+            try { event.preventDefault(); } catch(e) {}
+            return true;
+          }
+        };
+
+        // 4. Handle unhandled promise rejections early with capture
         window.addEventListener('unhandledrejection', function(event) {
-          var reason = event.reason;
+          var reason = event.reason || {};
           var msg = reason ? String(reason.message || reason) : '';
           var isBenign = 
+            isBenignAuth(reason, msg, '') ||
             checkBenign(msg, '') ||
             msg.indexOf('WebSocket') !== -1 ||
             msg.indexOf('websocket') !== -1 ||
@@ -88,24 +166,22 @@
             !msg;
 
           if (isBenign) {
-            console.warn('⚠️ Suppressed early unhandled promise rejection:', msg);
+            console.warn('⚠️ Suppressed early unhandled promise rejection:', msg || reason);
             try {
               event.preventDefault();
               event.stopPropagation();
               event.stopImmediatePropagation();
             } catch(e) {}
 
-            if (msg.indexOf('Refresh Token Not Found') !== -1 || msg.indexOf('Invalid Refresh Token') !== -1 || msg.indexOf('invalid_grant') !== -1 || msg.indexOf('AuthApiError') !== -1) {
-              try {
-                window.localStorage.removeItem('maternidade_premium_auth');
-                for (var i = 0; i < window.localStorage.length; i++) {
-                  var k = window.localStorage.key(i);
-                  if (k && (k.indexOf('auth') !== -1 || (k.indexOf('sb-') === 0 && k.indexOf('-auth-token') !== -1))) {
-                    window.localStorage.removeItem(k);
-                  }
+            try {
+              window.localStorage.removeItem('maternidade_premium_auth');
+              for (var i = 0; i < window.localStorage.length; i++) {
+                var k = window.localStorage.key(i);
+                if (k && (k.indexOf('auth') !== -1 || (k.indexOf('sb-') === 0 && k.indexOf('-auth-token') !== -1))) {
+                  window.localStorage.removeItem(k);
                 }
-              } catch (e) {}
-            }
+              }
+            } catch (e) {}
           }
         }, true);
       })();

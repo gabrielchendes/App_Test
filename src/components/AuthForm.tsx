@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Mail, Lock, ArrowRight, Key, ShieldAlert, MessageSquare, Smartphone, Download, ArrowDownToLine, ArrowDown, ChevronRight } from 'lucide-react';
+import { Mail, Lock, ArrowRight, Key, ShieldAlert, MessageSquare, Smartphone, Download, ArrowDownToLine, ArrowDown, ChevronRight, Eye, EyeOff, Check } from 'lucide-react';
 import { GlowingSpinner } from './GlowingSpinner';
 import WhatsAppIcon from './WhatsAppIcon';
 import { supabase } from '../lib/supabase';
@@ -20,6 +20,8 @@ export default function AuthForm() {
   const { isInstallable, isInstalled, isDismissed, promptInstall } = usePWAInstall();
   const [loading, setLoading] = useState(false);
   const [isPWAModalOpen, setIsPWAModalOpen] = useState(false);
+  const [showPassword, setShowPassword] = useState(false);
+  const [showMasterPassword, setShowMasterPassword] = useState(false);
   const [email, setEmail] = useState(() => {
     try {
       const saved = localStorage.getItem('prefilled_email');
@@ -36,6 +38,7 @@ export default function AuthForm() {
 
   const method = settings.auth_method || 'passwordless';
   const MASTER_EMAIL = settings.admin_email;
+  const isEmailValid = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim());
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -73,10 +76,21 @@ export default function AuthForm() {
           email, 
           password: masterPassword 
         });
-        if (error) throw error;
+        if (error) {
+          toast.error(t('auth.invalid_password'));
+          return;
+        }
       } else if (method === 'password') {
         const { error } = await supabase.auth.signInWithPassword({ email, password });
-        if (error) throw error;
+        if (error) {
+          const errorMsg = error.message || '';
+          if (errorMsg.includes('Invalid login credentials')) {
+            toast.error(t('auth.invalid_password'));
+          } else {
+            toast.error(errorMsg || t('auth.generic_error'));
+          }
+          return;
+        }
       } else {
         // Direct login for passwordless using temporary password
         const data = await safeFetch('/api/v1/auth?action=login-verify', {
@@ -88,12 +102,15 @@ export default function AuthForm() {
         if (!data || data.error) {
           const errorMsg = data?.error || '';
           if (errorMsg.includes('Usuário não encontrado') || errorMsg.includes('User not found')) {
-            throw new Error(t('auth.user_not_found'));
+            toast.error(t('auth.user_not_found'));
+            return;
           }
           if (errorMsg.includes('JSON')) {
-            throw new Error(t('auth.invalid_response'));
+            toast.error(t('auth.invalid_response'));
+            return;
           }
-          throw new Error(data?.error || t('auth.generic_error'));
+          toast.error(data?.error || t('auth.generic_error'));
+          return;
         }
 
         if (data.tempPassword) {
@@ -103,13 +120,12 @@ export default function AuthForm() {
             password: data.tempPassword 
           });
           if (error) {
-            if (error.message.includes('Invalid login credentials')) {
-              throw new Error(t('auth.user_not_found'));
-            }
-            throw error;
+            toast.error(t('auth.user_not_found'));
+            return;
           }
         } else {
-          throw new Error(t('auth.credentials_error'));
+          toast.error(t('auth.credentials_error'));
+          return;
         }
       }
 
@@ -182,10 +198,13 @@ export default function AuthForm() {
   if (step === 'master_password') {
     return (
       <div 
-        className="w-full max-w-md p-8 bg-black/60 backdrop-blur-xl rounded-2xl border border-red-500/30 shadow-2xl animate-in fade-in zoom-in-95 duration-200"
+        className="w-full max-w-md p-8 bg-black/70 backdrop-blur-2xl rounded-2xl border border-red-500/30 shadow-[0_20px_50px_rgba(0,0,0,0.8),0_0_30px_rgba(239,68,68,0.15)] relative overflow-hidden animate-in fade-in zoom-in-95 duration-200"
       >
-        <div className="text-center mb-8">
-          <div className="w-16 h-16 bg-red-500/20 rounded-full flex items-center justify-center mx-auto mb-4">
+        {/* Top Specular Arc Reflex */}
+        <div className="absolute top-0 inset-x-8 h-[1px] bg-gradient-to-r from-transparent via-red-400/40 to-transparent pointer-events-none" />
+
+        <div className="text-center mb-8 relative z-10">
+          <div className="w-16 h-16 bg-red-500/20 border border-red-500/30 rounded-full flex items-center justify-center mx-auto mb-4 shadow-[0_0_20px_rgba(239,68,68,0.25)]">
             <ShieldAlert className="text-red-500" size={32} />
           </div>
           <h2 className="text-2xl font-bold text-white mb-2">{t('auth.restricted_access')}</h2>
@@ -194,42 +213,53 @@ export default function AuthForm() {
           </p>
         </div>
 
-        <form onSubmit={handleSubmit} className="space-y-4">
-          <div className="relative">
-            <Key className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-500" size={18} />
+        <form onSubmit={handleSubmit} className="space-y-4 relative z-10">
+          <div className="relative group/pass">
+            <Key className="absolute left-3.5 top-1/2 -translate-y-1/2 text-gray-500 group-focus-within/pass:text-red-400 group-focus-within/pass:scale-105 transition-all duration-200 pointer-events-none" size={18} />
             <input
-              type="password"
+              type={showMasterPassword ? 'text' : 'password'}
               placeholder={t('auth.master_password')}
               value={masterPassword}
               onChange={(e) => setMasterPassword(e.target.value)}
-              className="w-full bg-white/5 border border-white/10 rounded-lg py-3 pl-10 pr-4 text-white placeholder:text-gray-600 focus:outline-none focus:border-red-500 transition-colors text-base"
+              className="w-full bg-white/[0.04] hover:bg-white/[0.07] border border-white/10 hover:border-white/20 rounded-xl py-3.5 pl-11 pr-11 text-white placeholder:text-gray-500 focus:outline-none focus:border-red-500/70 focus:bg-white/[0.06] focus:ring-4 focus:ring-red-500/15 transition-all duration-200 text-base shadow-inner"
               required
-            onInvalid={(e) => {
-              const target = e.target as HTMLInputElement;
-              if (target.validity.valueMissing) {
-                target.setCustomValidity(t('auth.fill_this_field'));
-              } else {
-                target.setCustomValidity('');
-              }
-            }}
-            onInput={(e) => (e.target as HTMLInputElement).setCustomValidity('')}
-            title={t('auth.fill_this_field')}
-            autoFocus
-          />
+              onInvalid={(e) => {
+                const target = e.target as HTMLInputElement;
+                if (target.validity.valueMissing) {
+                  target.setCustomValidity(t('auth.fill_this_field'));
+                } else {
+                  target.setCustomValidity('');
+                }
+              }}
+              onInput={(e) => (e.target as HTMLInputElement).setCustomValidity('')}
+              title={t('auth.fill_this_field')}
+              autoFocus
+            />
+            <button
+              type="button"
+              onClick={() => setShowMasterPassword(!showMasterPassword)}
+              className="absolute right-1 top-1/2 -translate-y-1/2 w-11 h-11 flex items-center justify-center text-gray-400 hover:text-white active:scale-90 active:text-white transition-all cursor-pointer select-none rounded-lg focus:outline-none"
+              tabIndex={-1}
+              aria-label="Toggle password visibility"
+            >
+              {showMasterPassword ? <EyeOff size={18} /> : <Eye size={18} />}
+            </button>
           </div>
 
           <button
             type="submit"
             disabled={loading}
-            className="w-full bg-red-600 hover:bg-red-700 text-white font-bold py-3 rounded-lg flex items-center justify-center gap-2 transition-all active:scale-95 disabled:opacity-50"
+            className="w-full relative group/btn overflow-hidden rounded-xl p-[1px] font-bold py-3.5 text-white flex items-center justify-center gap-2 bg-gradient-to-r from-red-600 via-rose-600 to-red-600 hover:brightness-110 active:scale-[0.97] active:brightness-95 transition-all duration-150 shadow-[0_8px_24px_rgba(239,68,68,0.35)] disabled:opacity-50 select-none"
           >
-            {loading ? <GlowingSpinner size="sm" color="white" /> : t('auth.verify_access')}
+            <div className="absolute inset-0 bg-gradient-to-r from-transparent via-white/15 to-transparent -translate-x-full group-hover/btn:translate-x-full transition-transform duration-700 pointer-events-none" />
+            <div className="absolute top-0 inset-x-0 h-[1px] bg-gradient-to-r from-transparent via-white/30 to-transparent pointer-events-none" />
+            {loading ? <GlowingSpinner size="sm" color="white" /> : <span className="relative z-10">{t('auth.verify_access')}</span>}
           </button>
 
           <button
             type="button"
             onClick={() => setStep('initial')}
-            className="w-full text-gray-500 text-sm hover:text-white transition-colors"
+            className="w-full text-gray-500 text-sm hover:text-white active:scale-98 transition-all py-1 select-none"
           >
             {t('global.back')}
           </button>
@@ -258,7 +288,7 @@ export default function AuthForm() {
           <button
             type="button"
             onClick={handleInstallClick}
-            className="relative w-full rounded-[20px] p-[1.5px] shadow-[0_12px_30px_rgba(0,0,0,0.7),0_0_22px_rgba(245,158,11,0.3)] text-left cursor-pointer transition-all duration-300 group-hover:scale-[1.02] active:scale-[0.98] overflow-hidden"
+            className="relative w-full rounded-[20px] p-[1.5px] shadow-[0_12px_30px_rgba(0,0,0,0.7),0_0_22px_rgba(245,158,11,0.3)] text-left cursor-pointer transition-all duration-300 group-hover:scale-[1.02] active:scale-[0.98] select-none overflow-hidden"
             style={{
               background: 'linear-gradient(135deg, #fbbf24 0%, #ffffff 45%, #f43f5e 100%)'
             }}
@@ -362,10 +392,14 @@ export default function AuthForm() {
         <div className="absolute -inset-[2px] rounded-[26px] animated-luxury-border opacity-75 blur-md group-hover:opacity-100 group-hover:blur-lg transition-all duration-700 pointer-events-none" />
         
         {/* Border wrapper for crisp 1px gradient frame */}
-        <div className="relative rounded-[24px] p-[1.5px] animated-luxury-border shadow-[0_20px_50px_rgba(0,0,0,0.8),0_0_30px_rgba(244,63,94,0.15)]">
-          <div className="w-full p-8 sm:p-10 bg-[#0d0f18]/90 backdrop-blur-2xl rounded-[22.5px] relative overflow-hidden">
+        <div className="relative rounded-[24px] p-[1.5px] animated-luxury-border shadow-[0_25px_60px_-15px_rgba(0,0,0,0.9),0_0_35px_rgba(244,63,94,0.15)]">
+          <div className="w-full p-6 sm:p-10 bg-[#0d0f18]/92 backdrop-blur-2xl rounded-[22.5px] relative overflow-hidden">
+            {/* Top Specular Arc Reflex (macOS/iOS glass edge) */}
+            <div className="absolute top-0 inset-x-8 h-[1px] bg-gradient-to-r from-transparent via-white/25 to-transparent pointer-events-none z-20" />
+            <div className="absolute bottom-0 inset-x-12 h-[1px] bg-gradient-to-r from-transparent via-white/5 to-transparent pointer-events-none z-20" />
+
             {/* Soft inner radial sheen */}
-            <div className="absolute top-0 left-1/2 -translate-x-1/2 w-3/4 h-24 bg-gradient-to-b from-white/10 to-transparent pointer-events-none blur-xl" />
+            <div className="absolute top-0 left-1/2 -translate-x-1/2 w-3/4 h-28 bg-gradient-to-b from-white/10 to-transparent pointer-events-none blur-xl" />
 
             <div className="text-center mb-8 relative z-10">
               {(settings.login_display_type === 'logo' || settings.login_display_type === 'both') && settings.logo_url && (
@@ -400,13 +434,24 @@ export default function AuthForm() {
 
             <form onSubmit={handleSubmit} className="space-y-4 relative z-10">
               <div className="relative group/input">
-                <Mail className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-400 group-focus-within/input:text-primary transition-colors" size={18} />
+                <Mail 
+                  className={`absolute left-4 top-1/2 -translate-y-1/2 transition-all duration-200 pointer-events-none ${
+                    isEmailValid 
+                      ? 'text-emerald-400 scale-105 drop-shadow-[0_0_8px_rgba(52,211,153,0.35)]' 
+                      : 'text-gray-400 group-focus-within/input:text-primary group-focus-within/input:scale-105'
+                  }`} 
+                  size={18} 
+                />
                 <input
                   type="email"
                   placeholder={t('auth.email')}
                   value={email}
                   onChange={(e) => setEmail(e.target.value)}
-                  className="w-full bg-white/[0.04] hover:bg-white/[0.07] border border-white/10 focus:border-primary/60 rounded-xl py-3.5 pl-12 pr-4 text-white placeholder:text-gray-500 focus:outline-none focus:ring-2 focus:ring-primary/20 transition-all text-base shadow-inner"
+                  className={`w-full bg-white/[0.04] hover:bg-white/[0.07] border rounded-xl py-3.5 pl-12 pr-11 text-white placeholder:text-gray-500 focus:outline-none focus:bg-white/[0.06] transition-all duration-200 text-base shadow-inner ${
+                    isEmailValid 
+                      ? 'border-emerald-500/40 focus:border-emerald-400 focus:ring-4 focus:ring-emerald-500/15' 
+                      : 'border-white/10 hover:border-white/20 focus:border-primary/70 focus:ring-4 focus:ring-primary/15'
+                  }`}
                   required
                   onInvalid={(e) => {
                     const target = e.target as HTMLInputElement;
@@ -421,6 +466,11 @@ export default function AuthForm() {
                   onInput={(e) => (e.target as HTMLInputElement).setCustomValidity('')}
                   title={email ? t('auth.invalid_email') : t('auth.fill_this_field')}
                 />
+                {isEmailValid && (
+                  <div className="absolute right-3.5 top-1/2 -translate-y-1/2 text-emerald-400 pointer-events-none animate-in fade-in zoom-in-75 duration-200">
+                    <Check size={16} className="drop-shadow-[0_0_6px_rgba(52,211,153,0.45)]" />
+                  </div>
+                )}
               </div>
 
               <AnimatePresence mode="wait">
@@ -432,13 +482,13 @@ export default function AuthForm() {
                     className="overflow-hidden"
                   >
                     <div className="relative pt-2 group/pass">
-                      <Lock className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-400 group-focus-within/pass:text-primary transition-colors" size={18} />
+                      <Lock className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-400 group-focus-within/pass:text-primary group-focus-within/pass:scale-105 transition-all duration-200 pointer-events-none mt-1" size={18} />
                       <input
-                        type="password"
+                        type={showPassword ? 'text' : 'password'}
                         placeholder={t('auth.password')}
                         value={password}
                         onChange={(e) => setPassword(e.target.value)}
-                        className="w-full bg-white/[0.04] hover:bg-white/[0.07] border border-white/10 focus:border-primary/60 rounded-xl py-3.5 pl-12 pr-4 text-white placeholder:text-gray-500 focus:outline-none focus:ring-2 focus:ring-primary/20 transition-all text-base shadow-inner"
+                        className="w-full bg-white/[0.04] hover:bg-white/[0.07] border border-white/10 hover:border-white/20 focus:border-primary/70 focus:bg-white/[0.06] rounded-xl py-3.5 pl-12 pr-11 text-white placeholder:text-gray-500 focus:outline-none focus:ring-4 focus:ring-primary/15 transition-all duration-200 text-base shadow-inner"
                         required={method === 'password'}
                         onInvalid={(e) => {
                           const target = e.target as HTMLInputElement;
@@ -451,6 +501,15 @@ export default function AuthForm() {
                         onInput={(e) => (e.target as HTMLInputElement).setCustomValidity('')}
                         title={t('auth.fill_this_field')}
                       />
+                      <button
+                        type="button"
+                        onClick={() => setShowPassword(!showPassword)}
+                        className="absolute right-1 top-1/2 -translate-y-1/2 w-11 h-11 flex items-center justify-center text-gray-400 hover:text-white active:scale-90 active:text-white transition-all cursor-pointer select-none rounded-lg focus:outline-none mt-1"
+                        tabIndex={-1}
+                        aria-label="Toggle password visibility"
+                      >
+                        {showPassword ? <EyeOff size={18} /> : <Eye size={18} />}
+                      </button>
                     </div>
                   </motion.div>
                 )}
@@ -459,16 +518,25 @@ export default function AuthForm() {
               <button
                 type="submit"
                 disabled={loading}
-                className="w-full relative group/btn overflow-hidden rounded-xl p-[1px] font-black uppercase text-xs sm:text-sm tracking-widest transition-all duration-300 active:scale-[0.98] disabled:opacity-50 disabled:cursor-not-allowed shadow-[0_10px_25px_rgba(244,63,94,0.3)] mt-2"
+                className="w-full relative group/btn overflow-hidden rounded-xl p-[1px] font-black uppercase text-xs sm:text-sm tracking-widest transition-all duration-150 active:scale-[0.97] active:brightness-95 disabled:opacity-50 disabled:cursor-not-allowed shadow-[0_10px_25px_rgba(244,63,94,0.35)] hover:shadow-[0_14px_32px_rgba(244,63,94,0.5)] mt-2 select-none"
               >
-                <div className="absolute inset-0 bg-gradient-to-r from-primary via-rose-500 to-amber-500 group-hover:brightness-110 transition-all" />
-                <div className="relative w-full py-4 px-6 rounded-[11px] bg-gradient-to-r from-primary to-primary-hover text-white flex items-center justify-center gap-2 group-hover:bg-opacity-90 transition-all">
+                {/* Gradient Border Frame */}
+                <div className="absolute inset-0 bg-gradient-to-r from-primary via-rose-500 to-amber-500 group-hover:brightness-110 transition-all duration-300" />
+                
+                {/* Button Body with Specular Highlight and Sheen */}
+                <div className="relative w-full py-4 px-6 rounded-[11px] bg-gradient-to-r from-primary to-primary-hover text-white flex items-center justify-center gap-2 group-hover:brightness-105 transition-all overflow-hidden">
+                  {/* Top Hairline Light Reflex */}
+                  <div className="absolute top-0 inset-x-0 h-[1px] bg-gradient-to-r from-transparent via-white/35 to-transparent pointer-events-none" />
+                  
+                  {/* Light Sheen Sweep Effect on hover */}
+                  <div className="absolute inset-0 bg-gradient-to-r from-transparent via-white/20 to-transparent -translate-x-full group-hover/btn:translate-x-full transition-transform duration-700 ease-out pointer-events-none" />
+
                   {loading ? (
                     <GlowingSpinner size="sm" color="white" />
                   ) : (
                     <>
-                      <span>{t('auth.login')}</span>
-                      <ArrowRight size={18} className="group-hover/btn:translate-x-1 transition-transform" />
+                      <span className="relative z-10">{t('auth.login')}</span>
+                      <ArrowRight size={18} className="relative z-10 group-hover/btn:translate-x-1 transition-transform duration-200" />
                     </>
                   )}
                 </div>
@@ -485,7 +553,7 @@ export default function AuthForm() {
                 (settings.support_email_login_enabled && settings.support_email)
               ) && (
                 <div className="pt-4 border-t border-white/5 flex flex-col gap-2">
-                  <div className="bg-white/[0.03] rounded-xl p-4 border border-white/10 space-y-3">
+                  <div className="bg-white/[0.03] backdrop-blur-md rounded-xl p-4 border border-white/10 space-y-3 shadow-inner">
                     <p className="text-[10px] font-black text-gray-400 uppercase tracking-widest text-center">
                       {t('auth.support_box')}
                     </p>
@@ -495,7 +563,7 @@ export default function AuthForm() {
                           href={`https://wa.me/${settings.support_whatsapp.replace(/\D/g, '')}`}
                           target="_blank"
                           rel="noopener noreferrer"
-                          className="flex items-center justify-center gap-2 py-2.5 bg-green-500/10 hover:bg-green-500/20 text-green-400 border border-green-500/20 rounded-lg text-xs font-bold transition-all"
+                          className="flex items-center justify-center gap-2 py-2.5 px-3 bg-green-500/10 hover:bg-green-500/20 active:bg-green-500/30 text-green-400 border border-green-500/20 hover:border-green-500/35 rounded-lg text-xs font-bold transition-all duration-150 active:scale-[0.97] select-none"
                         >
                           <WhatsAppIcon size={14} /> {t('auth.whatsapp_label')}
                         </a>
@@ -503,7 +571,7 @@ export default function AuthForm() {
                       {settings.support_email_login_enabled && settings.support_email && (
                         <a 
                           href={`mailto:${settings.support_email}`}
-                          className="flex items-center justify-center gap-2 py-2.5 bg-primary/10 hover:bg-primary/20 text-primary border border-primary/20 rounded-lg text-xs font-bold transition-all"
+                          className="flex items-center justify-center gap-2 py-2.5 px-3 bg-primary/10 hover:bg-primary/20 active:bg-primary/30 text-primary border border-primary/20 hover:border-primary/35 rounded-lg text-xs font-bold transition-all duration-150 active:scale-[0.97] select-none"
                         >
                           <Mail size={14} /> {t('auth.email_label')}
                         </a>

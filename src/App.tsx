@@ -23,19 +23,31 @@ export default function App() {
   useEffect(() => {
     // Global listener for unhandled token refresh/Supabase API rejections and transient network errors
     const handleUnhandledRejection = (event: PromiseRejectionEvent) => {
-      const reason = event.reason;
+      const reason = event.reason || {};
       const errorMsg = reason?.message || String(reason || '');
+      const name = reason?.name || '';
+      const stack = reason?.stack || '';
       const isAuthError = 
+        name === 'AuthApiError' ||
+        name === 'AuthError' ||
+        name === 'AuthSessionMissingError' ||
+        name === 'AuthWeakPasswordError' ||
+        (reason && (reason as any).__isAuthError) ||
         errorMsg.includes('Refresh Token Not Found') || 
         errorMsg.includes('Invalid Refresh Token') ||
         errorMsg.includes('invalid_grant') || 
         errorMsg.includes('AuthApiError') ||
+        errorMsg.includes('AuthError') ||
         errorMsg.includes('AuthSessionMissingError') ||
         errorMsg.includes('session_not_found') ||
-        errorMsg.includes('refresh_token_not_found');
+        errorMsg.includes('refresh_token_not_found') ||
+        errorMsg.includes('Invalid login credentials') ||
+        stack.includes('AuthApiError') ||
+        stack.includes('AuthError') ||
+        stack.includes('@supabase');
 
       if (isAuthError) {
-        console.warn('⚠️ Caught background auth rejection gracefully (preventing unhandled crash):', errorMsg);
+        console.warn('⚠️ Caught background auth rejection gracefully (preventing unhandled crash):', errorMsg || name);
         try {
           event.preventDefault();
           event.stopPropagation();
@@ -43,7 +55,12 @@ export default function App() {
         } catch (e) {}
 
         // If the refresh token is truly gone/invalid, clear local auth storage to stop recurring failed attempts
-        if (errorMsg.includes('Refresh Token Not Found') || errorMsg.includes('Invalid Refresh Token') || errorMsg.includes('invalid_grant')) {
+        if (
+          errorMsg.includes('Refresh Token Not Found') || 
+          errorMsg.includes('Invalid Refresh Token') || 
+          errorMsg.includes('invalid_grant') ||
+          errorMsg.includes('refresh_token_not_found')
+        ) {
           try {
             window.localStorage.removeItem('maternidade_premium_auth');
             const keys = Object.keys(window.localStorage);
@@ -146,8 +163,8 @@ export default function App() {
             setTimeout(() => setAuthLoading(false), 5000);
           }
         }
-      } catch (error) {
-        console.error('Initial session check error:', error);
+      } catch (error: any) {
+        console.warn('Initial session check note:', error?.message || error);
         setUser(null);
         setAuthLoading(false);
       }
@@ -185,7 +202,7 @@ export default function App() {
               password: data.tempPassword
             });
             if (signInError) {
-              console.error('[Magic Link] Sign in failed:', signInError);
+              console.warn('[Magic Link] Sign in failed:', signInError);
               toast.error('Ocorreu um erro no login via MagicLink.');
               setAuthLoading(false);
             } else {
@@ -201,8 +218,8 @@ export default function App() {
           // Check normal initial session
           await checkInitialSession();
         }
-      } catch (err) {
-        console.error('[Magic Link] Error processing magic link:', err);
+      } catch (err: any) {
+        console.warn('[Magic Link] Error processing magic link note:', err?.message || err);
         setAuthLoading(false);
         await checkInitialSession();
       }

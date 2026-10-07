@@ -646,7 +646,15 @@ CREATE POLICY "Admin total em compras" ON public.purchases FOR ALL USING (public
 
 -- Políticas para user_progress
 DROP POLICY IF EXISTS "Usuários gerenciam seu próprio progresso" ON public.user_progress;
-CREATE POLICY "Usuários gerenciam seu próprio progresso" ON public.user_progress FOR ALL USING (auth.uid() = user_id);
+DROP POLICY IF EXISTS "Admin total em progresso" ON public.user_progress;
+CREATE POLICY "Usuários gerenciam seu próprio progresso" ON public.user_progress 
+    FOR ALL 
+    USING (auth.uid() = user_id OR public.is_admin())
+    WITH CHECK (auth.uid() = user_id OR public.is_admin());
+
+GRANT ALL ON public.user_progress TO authenticated;
+GRANT ALL ON public.user_progress TO anon;
+GRANT ALL ON public.user_progress TO service_role;
 
 -- Políticas para notifications
 DROP POLICY IF EXISTS "Usuários veem suas próprias notificações" ON public.notifications;

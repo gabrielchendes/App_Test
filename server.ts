@@ -516,6 +516,8 @@ async function startServer() {
         'v1/generate-course-copy': 'v1/ai?action=generate-course-copy',
         'v1/generate-lesson': 'v1/ai?action=generate-lesson',
         'v1/refine-sales-copy': 'v1/ai?action=refine-sales-copy',
+        'v1/progress': 'v1/progress',
+        'v1/user-progress': 'v1/progress',
       };
 
       if (apiPath.startsWith('v1/ai/')) {
