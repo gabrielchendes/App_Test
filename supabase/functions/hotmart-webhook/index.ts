@@ -632,11 +632,12 @@ const handleRequest = async (req: Request): Promise<Response> => {
                 .from("purchases")
                 .update({
                   transaction_id: transactionId,
-                  status: "approved",
                   created_at: new Date().toISOString()
                 })
                 .eq("id", existingPur.id);
-              if (purUpErr) throw new Error(`Falha ao atualizar compra principal: ${purUpErr.message}`);
+              if (purUpErr) {
+                console.warn(`[Hotmart Webhook] Aviso ao atualizar compra principal: ${purUpErr.message}`);
+              }
             } else {
               const { error: purInsErr } = await supabaseAdmin
                 .from("purchases")
@@ -644,10 +645,21 @@ const handleRequest = async (req: Request): Promise<Response> => {
                   user_id: targetUserId,
                   product_id: hotmartProductId,
                   transaction_id: transactionId,
-                  status: "approved",
                   created_at: new Date().toISOString()
                 });
-              if (purInsErr) throw new Error(`Falha ao registrar compra principal: ${purInsErr.message}`);
+              if (purInsErr) {
+                console.warn(`[Hotmart Webhook] Tentativa completa falhou ao registrar compra principal: ${purInsErr.message}`);
+                // Tentativa fallback com campos mínimos para compatibilidade com qualquer schema
+                const { error: minErr } = await supabaseAdmin
+                  .from("purchases")
+                  .insert({
+                    user_id: targetUserId,
+                    product_id: hotmartProductId
+                  });
+                if (minErr) {
+                  console.warn(`[Hotmart Webhook] Aviso ao registrar compra principal em purchases (acesso no perfil já ativo): ${minErr.message}`);
+                }
+              }
             }
           }
 
@@ -681,11 +693,12 @@ const handleRequest = async (req: Request): Promise<Response> => {
                 .from("purchases")
                 .update({
                   transaction_id: transactionId,
-                  status: "approved",
                   created_at: new Date().toISOString()
                 })
                 .eq("id", existingPur.id);
-              if (purUpErr) throw new Error(`Falha ao atualizar compra do item ${pid}: ${purUpErr.message}`);
+              if (purUpErr) {
+                console.warn(`[Hotmart Webhook] Aviso ao atualizar compra do item ${pid}: ${purUpErr.message}`);
+              }
             } else {
               const { error: purInsErr } = await supabaseAdmin
                 .from("purchases")
@@ -693,10 +706,21 @@ const handleRequest = async (req: Request): Promise<Response> => {
                   user_id: targetUserId,
                   product_id: pid,
                   transaction_id: transactionId,
-                  status: "approved",
                   created_at: new Date().toISOString()
                 });
-              if (purInsErr) throw new Error(`Falha ao inserir compra do item ${pid}: ${purInsErr.message}`);
+              if (purInsErr) {
+                console.warn(`[Hotmart Webhook] Tentativa completa falhou para item ${pid}: ${purInsErr.message}`);
+                // Tentativa fallback com campos mínimos
+                const { error: minErr } = await supabaseAdmin
+                  .from("purchases")
+                  .insert({
+                    user_id: targetUserId,
+                    product_id: pid
+                  });
+                if (minErr) {
+                  console.warn(`[Hotmart Webhook] Aviso ao registrar item ${pid} em purchases (acesso no perfil já ativo): ${minErr.message}`);
+                }
+              }
             }
           }
 

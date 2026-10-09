@@ -283,7 +283,7 @@ export default function AdminPanel({ user }: AdminPanelProps) {
       window.removeEventListener('hashchange', handleUrlChange);
     };
   }, []);
-  const [activePageTab, setActivePageTab] = useState<'home' | 'community' | 'profile' | 'login' | 'nav' | 'course' | 'lesson' | 'push' | 'pwa' | 'support'>('home');
+  const [activePageTab, setActivePageTab] = useState<'home' | 'community' | 'profile' | 'login' | 'nav' | 'course' | 'lesson' | 'push' | 'pwa' | 'support' | 'access_denied'>('home');
   const [loading, setLoading] = useState(true);
   
   // Data states
@@ -291,7 +291,16 @@ export default function AdminPanel({ user }: AdminPanelProps) {
   const [courses, setCourses] = useState<any[]>([]);
   const [coursePackages, setCoursePackages] = useState<any[]>([]);
   const [allPurchases, setAllPurchases] = useState<any[]>([]);
-  const [mappedProducts, setMappedProducts] = useState<any[]>([]);
+  const [mappedProducts, setMappedProducts] = useState<any[]>(() => {
+    const fromSettings = settings?.custom_texts?.hotmart_products_catalog;
+    if (Array.isArray(fromSettings) && fromSettings.length > 0) {
+      return fromSettings.map((p: any) => ({
+        ...p,
+        name: p.product_name || p.name || ''
+      }));
+    }
+    return [];
+  });
   const [webhookLogs, setWebhookLogs] = useState<any[]>([]);
   const [showProductModal, setShowProductModal] = useState(false);
   const [editingProduct, setEditingProduct] = useState<any | null>(null);
@@ -322,6 +331,8 @@ export default function AdminPanel({ user }: AdminPanelProps) {
   const [courseStats, setCourseStats] = useState<Record<string, { lessons: number, materials: number }>>({});
   const [loadingCourses, setLoadingCourses] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
+  const [userStatusFilter, setUserStatusFilter] = useState<'all' | 'active' | 'blocked'>('all');
+  const [isUpdatingUserAccess, setIsUpdatingUserAccess] = useState(false);
   const [previewUnlimitedHtmlModal, setPreviewUnlimitedHtmlModal] = useState(false);
   
   // Editor states
@@ -425,7 +436,7 @@ export default function AdminPanel({ user }: AdminPanelProps) {
   const [newUserEmail, setNewUserEmail] = useState('');
   const [newUserPassword, setNewUserPassword] = useState('123456');
   const [newUserName, setNewUserName] = useState('');
-  const [newUserCountryCode, setNewUserCountryCode] = useState('55');
+  const [newUserCountryCode, setNewUserCountryCode] = useState('1');
   const [newUserPhone, setNewUserPhone] = useState('');
   const [creatingUser, setCreatingUser] = useState(false);
   const [deletingUser, setDeletingUser] = useState(false);
@@ -804,6 +815,18 @@ export default function AdminPanel({ user }: AdminPanelProps) {
     if (settings?.custom_texts && Object.keys(draftCustomTexts).length === 0) {
       setDraftCustomTexts(settings.custom_texts);
     }
+
+    if (Array.isArray(settings?.custom_texts?.hotmart_products_catalog) && settings.custom_texts.hotmart_products_catalog.length > 0) {
+      setMappedProducts(prev => {
+        if (prev.length === 0) {
+          return settings.custom_texts.hotmart_products_catalog.map((p: any) => ({
+            ...p,
+            name: p.product_name || p.name || ''
+          }));
+        }
+        return prev;
+      });
+    }
   }, [settings, localSettings]);
 
   useEffect(() => {
@@ -1036,116 +1059,269 @@ export default function AdminPanel({ user }: AdminPanelProps) {
     }
   };
 
+  const cleanAndDeduplicateCatalog = (rawList: any[], pkgsList?: any[]) => {
+    if (!Array.isArray(rawList)) return [];
+    
+    const currentPkgs = pkgsList || coursePackages;
+    const activePkgIds = new Set((currentPkgs || []).map((p: any) => p.id));
+    
+    let list = rawList.map(item => ({
+      ...item,
+      name: item.name || item.product_name || '',
+      hotmart_product_id: item.hotmart_product_id ? String(item.hotmart_product_id).trim() : ''
+    }));
+
+    // Only filter out packages if we have a known populated list of active packages
+    if (currentPkgs && currentPkgs.length > 0) {
+      list = list.filter(item => {
+        if (item.product_type === 'package') {
+          const targetId = item.internal_target_id || item.id;
+          if (targetId && activePkgIds.has(targetId)) return true;
+          const matched = currentPkgs.some((p: any) => p.title && item.name && item.name.toLowerCase().includes(p.title.toLowerCase()));
+          return matched;
+        }
+        return true;
+      });
+    }
+
+    const cleanedList: any[] = [];
+    const seenPackageTargetIds = new Set<string>();
+    const seenCourseTargetIds = new Set<string>();
+
+    // 1. Pick single main_product (prioritizing custom ID over HOTMART_PRODUTO_PRINCIPAL)
+    const mainProds = list.filter(p => p.product_type === 'main_product');
+    if (mainProds.length > 0) {
+      const chosenMain = mainProds.find(p => p.hotmart_product_id && p.hotmart_product_id !== 'HOTMART_PRODUTO_PRINCIPAL') || mainProds[0];
+      cleanedList.push(chosenMain);
+    }
+
+    // 2. Pick single ai_subscription (prioritizing custom ID over HOTMART_IA_VICTORIA)
+    const aiProds = list.filter(p => p.product_type === 'ai_subscription');
+    if (aiProds.length > 0) {
+      const chosenAi = aiProds.find(p => p.hotmart_product_id && p.hotmart_product_id !== 'HOTMART_IA_VICTORIA') || aiProds[0];
+      cleanedList.push(chosenAi);
+    }
+
+    // 3. Add all packages (deduplicating strictly by package internal_target_id)
+    for (const item of list) {
+      if (item.product_type === 'package') {
+        const pkgKey = item.internal_target_id || item.id;
+        if (!seenPackageTargetIds.has(pkgKey)) {
+          seenPackageTargetIds.add(pkgKey);
+          cleanedList.push(item);
+        }
+      }
+    }
+
+    // 4. Add all courses (deduplicating strictly by course internal_target_id)
+    for (const item of list) {
+      if (item.product_type === 'course') {
+        const courseKey = item.internal_target_id || item.id;
+        if (!seenCourseTargetIds.has(courseKey)) {
+          seenCourseTargetIds.add(courseKey);
+          cleanedList.push(item);
+        }
+      }
+    }
+
+    // 5. Add any other custom products
+    for (const item of list) {
+      if (!['main_product', 'ai_subscription', 'package', 'course'].includes(item.product_type)) {
+        cleanedList.push(item);
+      }
+    }
+
+    // Sanitize names for ai_subscription products
+    for (const p of cleanedList) {
+      if (p.product_type === 'ai_subscription' || (p.name && p.name.includes('Victoria'))) {
+        p.name = p.name
+          ? p.name.replace(/IA Victoria VIP \(Ilimitada\)/gi, 'IA Expert VIP (Ilimitada)')
+                 .replace(/IA Victoria VIP/gi, 'IA Expert VIP')
+                 .replace(/IA Victoria/gi, 'IA Expert')
+          : 'IA Expert VIP (Ilimitada)';
+      }
+    }
+
+    // Sort so 'main_product' is strictly the first item in the catalog
+    cleanedList.sort((a: any, b: any) => {
+      if (a.product_type === 'main_product') return -1;
+      if (b.product_type === 'main_product') return 1;
+      return 0;
+    });
+
+    if (cleanedList.length === 0 && rawList.length > 0) {
+      return rawList.map(item => ({
+        ...item,
+        name: item.name || item.product_name || '',
+        hotmart_product_id: item.hotmart_product_id ? String(item.hotmart_product_id).trim() : ''
+      }));
+    }
+
+    return cleanedList;
+  };
+
   const fetchCentralProducts = async (showToast = false) => {
     try {
       setIsSyncingProducts(true);
       const { data: { session } } = await supabase.auth.getSession();
-      if (!session?.access_token) return;
 
-      const [productsRes, eventsRes] = await Promise.all([
-        safeFetch('/api/v1/admin?action=products-list', {
-          headers: { 'Authorization': `Bearer ${session.access_token}` }
-        }),
-        safeFetch('/api/v1/admin?action=webhook-events-list', {
-          headers: { 'Authorization': `Bearer ${session.access_token}` }
-        })
-      ]);
+      let rawList: any[] = [];
+      let eventsRes: any = null;
 
-      if (productsRes && !productsRes.error) {
-        let rawList: any[] = Array.isArray(productsRes) ? [...productsRes] : [];
-        
-        // Reconcile packages: ensure packages that were deleted from course_packages are never displayed
+      // 1. Try backend API endpoint if authenticated session exists
+      if (session?.access_token) {
         try {
-          const { data: currentPkgs } = await supabase
-            .from('course_packages')
-            .select('*, package_courses(course_id)');
-          if (currentPkgs) {
-            setCoursePackages(currentPkgs);
-            const activePkgIds = new Set(currentPkgs.map((p: any) => p.id));
-            rawList = rawList.filter(item => {
-              if (item.product_type === 'package') {
-                if (item.internal_target_id) {
-                  return activePkgIds.has(item.internal_target_id);
-                }
-                return false; // Package without valid internal_target_id is an orphan, do not display
-              }
-              return true;
-            });
+          const [productsRes, eRes] = await Promise.all([
+            safeFetch('/api/v1/admin?action=products-list', {
+              headers: { 'Authorization': `Bearer ${session.access_token}` }
+            }),
+            safeFetch('/api/v1/admin?action=webhook-events-list', {
+              headers: { 'Authorization': `Bearer ${session.access_token}` }
+            })
+          ]);
+          if (Array.isArray(productsRes) && productsRes.length > 0) {
+            rawList = productsRes;
           }
+          eventsRes = eRes;
         } catch (_) {}
-
-        // Sanitize duplicates by product_type and unique target IDs
-        const cleanedList: any[] = [];
-        const seenPackageTargetIds = new Set<string>();
-        const seenCourseTargetIds = new Set<string>();
-
-        // 1. Pick single main_product (prioritizing custom ID over HOTMART_PRODUTO_PRINCIPAL)
-        const mainProds = rawList.filter(p => p.product_type === 'main_product');
-        if (mainProds.length > 0) {
-          const chosenMain = mainProds.find(p => p.hotmart_product_id && p.hotmart_product_id.trim() !== 'HOTMART_PRODUTO_PRINCIPAL') || mainProds[0];
-          cleanedList.push(chosenMain);
-        }
-
-        // 2. Pick single ai_subscription (prioritizing custom ID over HOTMART_IA_VICTORIA)
-        const aiProds = rawList.filter(p => p.product_type === 'ai_subscription');
-        if (aiProds.length > 0) {
-          const chosenAi = aiProds.find(p => p.hotmart_product_id && p.hotmart_product_id.trim() !== 'HOTMART_IA_VICTORIA') || aiProds[0];
-          cleanedList.push(chosenAi);
-        }
-
-        // 3. Add all packages (deduplicating strictly by package internal_target_id)
-        for (const item of rawList) {
-          if (item.product_type === 'package') {
-            const pkgKey = item.internal_target_id || item.id;
-            if (!seenPackageTargetIds.has(pkgKey)) {
-              seenPackageTargetIds.add(pkgKey);
-              cleanedList.push(item);
-            }
-          }
-        }
-
-        // 4. Add all courses (deduplicating strictly by course internal_target_id)
-        for (const item of rawList) {
-          if (item.product_type === 'course') {
-            const courseKey = item.internal_target_id || item.id;
-            if (!seenCourseTargetIds.has(courseKey)) {
-              seenCourseTargetIds.add(courseKey);
-              cleanedList.push(item);
-            }
-          }
-        }
-
-        // 5. Add any other custom products
-        for (const item of rawList) {
-          if (!['main_product', 'ai_subscription', 'package', 'course'].includes(item.product_type)) {
-            cleanedList.push(item);
-          }
-        }
-
-        // Sanitize names for ai_subscription products
-        for (const p of cleanedList) {
-          if (p.product_type === 'ai_subscription' || (p.name && p.name.includes('Victoria'))) {
-            p.name = p.name
-              ? p.name.replace(/IA Victoria VIP \(Ilimitada\)/gi, 'IA Expert VIP (Ilimitada)')
-                     .replace(/IA Victoria VIP/gi, 'IA Expert VIP')
-                     .replace(/IA Victoria/gi, 'IA Expert')
-              : 'IA Expert VIP (Ilimitada)';
-          }
-        }
-
-        // Sort so 'main_product' is strictly the first item in the catalog
-        cleanedList.sort((a: any, b: any) => {
-          if (a.product_type === 'main_product') return -1;
-          if (b.product_type === 'main_product') return 1;
-          return 0;
-        });
-        setMappedProducts(cleanedList);
       }
 
+      // 2. Direct Supabase Fallback 1: check app_settings.custom_texts.hotmart_products_catalog
+      if (rawList.length === 0) {
+        try {
+          const { data: appSet } = await supabase
+            .from('app_settings')
+            .select('custom_texts')
+            .eq('id', 1)
+            .maybeSingle();
+          if (Array.isArray(appSet?.custom_texts?.hotmart_products_catalog) && appSet.custom_texts.hotmart_products_catalog.length > 0) {
+            rawList = appSet.custom_texts.hotmart_products_catalog;
+          }
+        } catch (_) {}
+      }
+
+      // 3. Dedicated Server Settings Fallback 2: /api/v1/settings
+      if (rawList.length === 0) {
+        try {
+          const sRes = await fetch('/api/v1/settings').then(r => r.json());
+          if (Array.isArray(sRes?.custom_texts?.hotmart_products_catalog) && sRes.custom_texts.hotmart_products_catalog.length > 0) {
+            rawList = sRes.custom_texts.hotmart_products_catalog;
+          }
+        } catch (_) {}
+      }
+
+      // 4. Memory Settings Context Fallback 3
+      if (rawList.length === 0 && Array.isArray(settings?.custom_texts?.hotmart_products_catalog) && settings.custom_texts.hotmart_products_catalog.length > 0) {
+        rawList = settings.custom_texts.hotmart_products_catalog;
+      }
+
+      // 5. Direct Supabase Fallback 4: check hotmart_products table directly
+      if (rawList.length === 0) {
+        try {
+          const { data: directProds } = await supabase
+            .from('hotmart_products')
+            .select('*');
+          if (Array.isArray(directProds) && directProds.length > 0) {
+            rawList = directProds.map((p: any) => ({
+              ...p,
+              name: p.product_name || p.name || ''
+            }));
+          }
+        } catch (_) {}
+      }
+
+      // 6. Synthesis Fallback 5: If still empty, auto-generate catalog from courses, packages, and settings
+      if (rawList.length === 0) {
+        const synth: any[] = [];
+        const mainId = settings?.custom_texts?.['hotmart.main_product_id'] || settings?.custom_texts?.['main_course_hotmart_id'] || '8551374';
+        const aiId = settings?.custom_texts?.['hotmart.unlimited_ai_product_id'] || settings?.custom_texts?.['hotmart.ai_product_id'] || '8602155';
+        
+        synth.push({
+          id: 'prod_main_default',
+          hotmart_product_id: String(mainId),
+          name: 'Produto Principal (Acesso Geral à Plataforma)',
+          product_type: 'main_product',
+          checkout_url: settings?.custom_texts?.['hotmart.main_checkout_url'] || settings?.custom_texts?.['main_checkout_url'] || 'google.com',
+          is_active: true,
+          created_at: new Date().toISOString()
+        });
+
+        synth.push({
+          id: 'prod_ai_default',
+          hotmart_product_id: String(aiId),
+          name: 'IA Expert VIP (Ilimitada)',
+          product_type: 'ai_subscription',
+          checkout_url: settings?.custom_texts?.['ai_expert.buy_more_url'] || 'https://www.google.com/',
+          is_active: true,
+          created_at: new Date().toISOString()
+        });
+
+        let liveCourses = courses;
+        if (liveCourses.length === 0) {
+          try {
+            const { data: cData } = await supabase.from('courses').select('*');
+            if (cData && cData.length > 0) liveCourses = cData;
+          } catch (_) {}
+        }
+
+        let livePackages = coursePackages;
+        if (livePackages.length === 0) {
+          try {
+            const { data: pData } = await supabase.from('course_packages').select('*');
+            if (pData && pData.length > 0) livePackages = pData;
+          } catch (_) {}
+        }
+
+        for (const c of liveCourses) {
+          if (c.is_free || c.is_bonus) continue;
+          synth.push({
+            id: 'prod_' + (c.id ? c.id.slice(0, 7) : Math.random().toString(36).substring(2, 9)),
+            hotmart_product_id: c.hotmart_product_id ? String(c.hotmart_product_id).trim() : '',
+            name: `Curso: ${c.title}`,
+            product_type: 'course',
+            internal_target_id: c.id,
+            checkout_url: (c as any).checkout_url || '',
+            is_active: true,
+            created_at: new Date().toISOString()
+          });
+        }
+
+        for (const p of livePackages) {
+          synth.push({
+            id: 'prod_' + (p.id ? p.id.slice(0, 7) : Math.random().toString(36).substring(2, 9)),
+            hotmart_product_id: p.hotmart_product_id ? String(p.hotmart_product_id).trim() : '',
+            name: `Pacote: ${p.title}`,
+            product_type: 'package',
+            internal_target_id: p.id,
+            checkout_url: p.hotmart_checkout_url || '',
+            description: p.description || '',
+            is_active: true,
+            created_at: new Date().toISOString()
+          });
+        }
+
+        rawList = synth;
+      }
+
+      // Reconcile packages to ensure deleted packages aren't included
+      let currentPkgs = coursePackages;
+      try {
+        const { data: freshPkgs } = await supabase
+          .from('course_packages')
+          .select('*, package_courses(course_id)');
+        if (freshPkgs && freshPkgs.length > 0) {
+          setCoursePackages(freshPkgs);
+          currentPkgs = freshPkgs;
+        }
+      } catch (_) {}
+
+      const cleanedList = cleanAndDeduplicateCatalog(rawList, currentPkgs);
+      setMappedProducts(cleanedList);
+
+      // Webhook logs handling
       if (eventsRes && !eventsRes.error && Array.isArray(eventsRes)) {
         setWebhookLogs(eventsRes);
       } else {
-        // Fallback: carregar diretamente da tabela hotmart_events
         try {
           const { data: directLogs } = await supabase
             .from('hotmart_events')
@@ -1159,10 +1335,14 @@ export default function AdminPanel({ user }: AdminPanelProps) {
       }
 
       if (showToast) {
-        toast.success('Catálogo de produtos e logs atualizados!');
+        toast.success(`Catálogo de produtos (${cleanedList.length}) e logs atualizados!`);
       }
     } catch (e) {
       console.error('Error loading central products:', e);
+      // Emergency context recovery if an uncaught exception occurred
+      if (Array.isArray(settings?.custom_texts?.hotmart_products_catalog) && settings.custom_texts.hotmart_products_catalog.length > 0) {
+        setMappedProducts(cleanAndDeduplicateCatalog(settings.custom_texts.hotmart_products_catalog));
+      }
       if (showToast) toast.error('Erro ao atualizar lista.');
     } finally {
       setIsSyncingProducts(false);
@@ -1287,14 +1467,20 @@ export default function AdminPanel({ user }: AdminPanelProps) {
         headers: { 'Authorization': `Bearer ${session?.access_token}` }
       });
 
-      if (!res || res.error) throw new Error(res?.error || 'Erro na sincronização');
-      if (Array.isArray(res.catalog)) {
-        setMappedProducts(res.catalog);
+      if (!res || res.error) {
+        // Fallback to fetchCentralProducts directly
+        await fetchCentralProducts(true);
+        return;
       }
-      toast.success(`Sincronização concluída! Catalog atualizado com ${res.catalog?.length || res.migratedCount || 0} produto(s).`);
-      fetchCentralProducts();
+      if (Array.isArray(res.catalog) && res.catalog.length > 0) {
+        setMappedProducts(cleanAndDeduplicateCatalog(res.catalog));
+        toast.success(`Sincronização concluída! Catálogo atualizado com ${res.catalog.length} produto(s).`);
+      } else {
+        await fetchCentralProducts(true);
+      }
     } catch (err: any) {
-      toast.error('Erro ao sincronizar: ' + err.message);
+      console.warn('Error in sync products migration, falling back:', err);
+      await fetchCentralProducts(true);
     } finally {
       setIsSyncingProducts(false);
     }
@@ -1632,6 +1818,112 @@ export default function AdminPanel({ user }: AdminPanelProps) {
     }
   };
 
+  const toggleUserMainAccess = async (targetUser: any) => {
+    if (!targetUser?.id) return;
+    const isCurrentlyBlocked = targetUser.has_access === false;
+    const newHasAccess = isCurrentlyBlocked ? true : false;
+    const userName = targetUser.user_metadata?.full_name || targetUser.email || 'Usuário';
+
+    const executeToggle = async () => {
+      setIsUpdatingUserAccess(true);
+      try {
+        let token = await getAdminTokenSafe();
+        const userEmail = targetUser.email;
+
+        let response = await safeFetch('/api/v1/admin?action=user-access-toggle', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            ...(token ? { 'Authorization': `Bearer ${token}` } : {})
+          },
+          body: JSON.stringify({
+            userId: targetUser.id,
+            userEmail,
+            courseId: 'main_product',
+            hasAccess: newHasAccess,
+            action: newHasAccess ? 'grant' : 'revoke'
+          })
+        });
+
+        if (response?.error && (response.error.includes('Session expired') || response.status === 401)) {
+          const { data: refreshed } = await supabase.auth.refreshSession().catch(() => ({ data: { session: null } }));
+          if (refreshed?.session?.access_token) {
+            response = await safeFetch('/api/v1/admin?action=user-access-toggle', {
+              method: 'POST',
+              headers: {
+                'Content-Type': 'application/json',
+                'Authorization': `Bearer ${refreshed.session.access_token}`
+              },
+              body: JSON.stringify({
+                userId: targetUser.id,
+                userEmail,
+                courseId: 'main_product',
+                hasAccess: newHasAccess,
+                action: newHasAccess ? 'grant' : 'revoke'
+              })
+            });
+          }
+        }
+
+        // Direct profile fallback to Supabase to guarantee instantaneous sync
+        try {
+          await supabase
+            .from('profiles')
+            .update({ has_access: newHasAccess, updated_at: new Date().toISOString() })
+            .eq('id', targetUser.id);
+        } catch (e) {
+          console.warn('Direct profile update note:', e);
+        }
+
+        // Update selected user in view
+        setSelectedUserForCourses((prev: any) => (prev && prev.id === targetUser.id ? { ...prev, has_access: newHasAccess } : prev));
+
+        // Update list of users
+        setAllUsers((prev: any[]) =>
+          prev.map(u => (u.id === targetUser.id || (u.email && userEmail && u.email.toLowerCase() === userEmail.toLowerCase())
+            ? { ...u, has_access: newHasAccess }
+            : u
+          ))
+        );
+
+        if (newHasAccess) {
+          toast.success(`Acesso principal de "${userName}" liberado com sucesso!`);
+        } else {
+          toast.warning(`Acesso principal de "${userName}" bloqueado (Inativo).`);
+        }
+      } catch (err: any) {
+        console.error('Error toggling main access:', err);
+        toast.error('Erro ao alterar status de acesso: ' + (err.message || 'Erro desconhecido'));
+      } finally {
+        setIsUpdatingUserAccess(false);
+      }
+    };
+
+    if (!isCurrentlyBlocked) {
+      setConfirmationModal({
+        isOpen: true,
+        title: 'Bloquear Acesso Principal',
+        message: `Tem certeza que deseja bloquear o acesso de "${userName}"? Ao bloquear, o usuário receberá a tela de "Acesso Principal Inativo" e não conseguirá acessar a plataforma.`,
+        type: 'danger',
+        confirmText: 'Sim, Bloquear Usuário',
+        onConfirm: () => {
+          executeToggle();
+        }
+      });
+    } else {
+      setConfirmationModal({
+        isOpen: true,
+        title: 'Desbloquear Acesso Principal',
+        message: `Deseja reativar o acesso principal de "${userName}" à plataforma? O usuário poderá voltar a acessar seus cursos e conteúdos normalmente.`,
+        type: 'info',
+        confirmText: 'Sim, Desbloquear Usuário',
+        onConfirm: () => {
+          executeToggle();
+        }
+      });
+    }
+  };
+
   const toggleCourseAccess = async (userId: string, courseId: string, isUnlocked: boolean, courseTitle?: string) => {
     const executeToggle = async () => {
       try {
@@ -1888,7 +2180,7 @@ export default function AdminPanel({ user }: AdminPanelProps) {
       setNewUserEmail('');
       setNewUserPassword('');
       setNewUserName('');
-      setNewUserCountryCode('55');
+      setNewUserCountryCode('1');
       setNewUserPhone('');
       fetchData();
     } catch (err: any) {
@@ -2694,121 +2986,272 @@ export default function AdminPanel({ user }: AdminPanelProps) {
                   <div className="space-y-6">
                     {view === 'list' ? (
                       <>
-                        <div className="flex flex-col sm:flex-row justify-between items-center gap-4">
-                          <div className="relative w-full sm:w-96">
-                            <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-500" size={18} />
-                            <input 
-                              type="text" 
-                              placeholder="Buscar usuários..." 
-                              value={searchQuery}
-                              onChange={(e) => setSearchQuery(e.target.value)}
-                              className="w-full bg-white/5 border border-white/10 rounded-xl py-2.5 pl-10 pr-4 text-white focus:border-blue-500 outline-none transition-all"
-                            />
-                          </div>
-                          <button 
-                            onClick={() => setShowUserCreator(true)}
-                            className="w-full sm:w-auto flex items-center justify-center gap-2 bg-blue-600 hover:bg-blue-700 text-white px-6 py-2.5 rounded-xl font-bold transition-all shadow-lg shadow-blue-600/20"
-                          >
-                            <Plus size={20} /> Novo Usuário
-                          </button>
-                        </div>
+                        {(() => {
+                          const blockedCount = allUsers.filter(u => u.has_access === false).length;
+                          const activeCount = allUsers.filter(u => u.has_access !== false).length;
 
-                        <div className="bg-zinc-900/50 rounded-2xl border border-white/10 overflow-hidden">
-                          <div className="overflow-x-auto">
-                            <table className="w-full text-left min-w-[600px]">
-                            <thead className="bg-white/5 text-gray-500 text-[10px] font-black uppercase tracking-widest">
-                              <tr>
-                                <th className="px-6 py-5">Usuário</th>
-                                <th className="px-6 py-5">Telefone / Email</th>
-                                <th className="px-6 py-5">Push status</th>
-                                <th className="px-6 py-5">Último Acesso</th>
-                                <th className="px-6 py-5 pr-8 text-right font-black">Ações</th>
-                              </tr>
-                            </thead>
-                            <tbody className="divide-y divide-white/5">
-                              {allUsers.length === 0 ? (
-                                <tr>
-                                  <td colSpan={4} className="px-6 py-12 text-center text-gray-500 font-medium">
-                                    Nenhum aluno encontrado ou ainda não houveram logins.
-                                  </td>
-                                </tr>
-                              ) : allUsers.filter(u => 
-                                u.email?.toLowerCase().includes(searchQuery.toLowerCase()) ||
-                                u.user_metadata?.full_name?.toLowerCase().includes(searchQuery.toLowerCase()) ||
-                                u.user_metadata?.phone?.toLowerCase().includes(searchQuery.toLowerCase())
-                              ).length === 0 ? (
-                                <tr>
-                                  <td colSpan={5} className="px-6 py-12 text-center text-gray-500 font-medium tracking-widest italic uppercase text-[10px]">
-                                    Nenhum usuário corresponde à sua busca.
-                                  </td>
-                                </tr>
-                              ) : allUsers.filter(u => 
-                                u.email?.toLowerCase().includes(searchQuery.toLowerCase()) ||
-                                u.user_metadata?.full_name?.toLowerCase().includes(searchQuery.toLowerCase()) ||
-                                u.user_metadata?.phone?.toLowerCase().includes(searchQuery.toLowerCase())
-                              ).map((u, i) => (
-                                <tr key={i} className="hover:bg-white/[0.02] transition-colors group">
-                                  <td className="px-6 py-4">
-                                    <div className="flex items-center gap-3">
-                                      <div className="w-8 h-8 rounded-full bg-blue-600/20 text-blue-500 flex items-center justify-center text-[10px] font-black italic">
-                                        {u.email?.[0].toUpperCase()}
-                                      </div>
-                                      <div className="flex flex-col">
-                                        <div className="flex items-center gap-1.5">
-                                          <span className="font-bold text-sm text-white">{u.user_metadata?.full_name || 'Sem nome'}</span>
-                                          {u.has_unlimited_ai && (
-                                            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[9px] font-black bg-gradient-to-r from-amber-500/20 to-pink-500/20 text-amber-300 border border-amber-500/30">
-                                              <Sparkles size={10} className="text-amber-400" /> VIP
-                                            </span>
-                                          )}
-                                        </div>
-                                      </div>
-                                    </div>
-                                  </td>
-                                  <td className="px-6 py-4">
-                                    <div className="flex flex-col">
-                                      <span className="text-sm font-bold text-gray-300 font-mono tracking-tighter">
-                                        {u.user_metadata?.phone || <span className="text-gray-700 italic opacity-50 text-[10px]">Não informado</span>}
+                          const filteredUsers = allUsers.filter(u => {
+                            const q = searchQuery.toLowerCase().trim();
+                            const matchesSearch = !q || (
+                              u.email?.toLowerCase().includes(q) ||
+                              u.user_metadata?.full_name?.toLowerCase().includes(q) ||
+                              u.user_metadata?.phone?.toLowerCase().includes(q)
+                            );
+                            if (!matchesSearch) return false;
+
+                            if (userStatusFilter === 'blocked') return u.has_access === false;
+                            if (userStatusFilter === 'active') return u.has_access !== false;
+                            return true;
+                          });
+
+                          return (
+                            <>
+                              {/* Search & Status Filters */}
+                              <div className="flex flex-col lg:flex-row justify-between items-stretch lg:items-center gap-4">
+                                <div className="relative flex-1 lg:max-w-md">
+                                  <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-500" size={18} />
+                                  <input 
+                                    type="text" 
+                                    placeholder="Buscar por nome, email ou telefone..." 
+                                    value={searchQuery}
+                                    onChange={(e) => setSearchQuery(e.target.value)}
+                                    className="w-full bg-white/5 border border-white/10 rounded-xl py-2.5 pl-10 pr-4 text-white placeholder:text-gray-500 focus:border-blue-500 outline-none transition-all text-sm"
+                                  />
+                                </div>
+
+                                <div className="flex flex-wrap items-center gap-3">
+                                  {/* Filter Tabs by Account Access Status */}
+                                  <div className="flex items-center bg-zinc-900 border border-white/10 p-1 rounded-xl text-xs">
+                                    <button
+                                      type="button"
+                                      onClick={() => setUserStatusFilter('all')}
+                                      className={`px-3 py-1.5 rounded-lg font-bold transition-all flex items-center gap-1.5 ${
+                                        userStatusFilter === 'all'
+                                          ? 'bg-blue-600 text-white shadow-sm'
+                                          : 'text-gray-400 hover:text-white'
+                                      }`}
+                                    >
+                                      <span>Todos</span>
+                                      <span className="px-1.5 py-0.2 rounded-full text-[10px] bg-white/10 font-mono">{allUsers.length}</span>
+                                    </button>
+
+                                    <button
+                                      type="button"
+                                      onClick={() => setUserStatusFilter('active')}
+                                      className={`px-3 py-1.5 rounded-lg font-bold transition-all flex items-center gap-1.5 ${
+                                        userStatusFilter === 'active'
+                                          ? 'bg-emerald-600 text-white shadow-sm'
+                                          : 'text-gray-400 hover:text-white'
+                                      }`}
+                                    >
+                                      <ShieldCheck size={13} className={userStatusFilter === 'active' ? 'text-white' : 'text-emerald-500'} />
+                                      <span>Ativos</span>
+                                      <span className="px-1.5 py-0.2 rounded-full text-[10px] bg-white/10 font-mono">{activeCount}</span>
+                                    </button>
+
+                                    <button
+                                      type="button"
+                                      onClick={() => setUserStatusFilter('blocked')}
+                                      className={`px-3 py-1.5 rounded-lg font-bold transition-all flex items-center gap-1.5 ${
+                                        userStatusFilter === 'blocked'
+                                          ? 'bg-rose-600 text-white shadow-sm'
+                                          : blockedCount > 0
+                                            ? 'text-rose-400 hover:text-rose-300 font-black'
+                                            : 'text-gray-400 hover:text-white'
+                                      }`}
+                                    >
+                                      <ShieldAlert size={13} className={userStatusFilter === 'blocked' ? 'text-white' : 'text-rose-400'} />
+                                      <span>Bloqueados</span>
+                                      <span className={`px-1.5 py-0.2 rounded-full text-[10px] font-mono font-black ${
+                                        blockedCount > 0 ? 'bg-rose-500 text-white animate-pulse' : 'bg-white/10 text-gray-400'
+                                      }`}>
+                                        {blockedCount}
                                       </span>
-                                      <span className="text-[10px] text-gray-500 font-medium truncate max-w-[200px]">{u.email}</span>
-                                    </div>
-                                  </td>
-                                  <td className="px-6 py-4">
-                                    {u.push_enabled ? (
-                                      <div className="flex items-center gap-1.5 text-emerald-500 text-[9px] font-black uppercase tracking-widest bg-emerald-500/10 px-2 py-1 rounded-lg w-fit">
-                                         <div className="w-1.5 h-1.5 rounded-full bg-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.6)] animate-pulse" />
-                                         Ativo
-                                      </div>
-                                    ) : (
-                                      <div className="flex items-center gap-1.5 text-red-500 text-[9px] font-black uppercase tracking-widest bg-red-500/10 px-2 py-1 rounded-lg w-fit">
-                                         <div className="w-1.5 h-1.5 rounded-full bg-red-500 shadow-[0_0_8px_rgba(239,68,68,0.6)]" />
-                                         Inativo
-                                      </div>
-                                    )}
-                                  </td>
-                                  <td className="px-6 py-4 text-xs text-gray-500 font-medium">
-                                    {u.last_sign_in_at ? new Date(u.last_sign_in_at).toLocaleString('pt-BR') : 'Nunca acessou'}
-                                  </td>
-                                  <td className="px-6 py-4 text-right pr-8">
-                                    <div className="flex justify-end gap-2 text-right">
-                                      <button 
-                                         onClick={() => {
-                                           setSelectedUserForCourses(u);
-                                           fetchUserPurchases(u.id);
-                                          setView('user_details');
-                                        }}
-                                        className="p-2.5 bg-blue-600/10 hover:bg-blue-600 rounded-xl text-blue-500 hover:text-white transition-all flex items-center gap-2 text-[10px] font-black uppercase tracking-widest shadow-lg shadow-blue-600/5 hover:shadow-blue-600/20 active:scale-95"
-                                      >
-                                        <Eye size={14} /> Detalhes
-                                      </button>
-                                    </div>
-                                  </td>
-                                </tr>
-                              ))}
-                            </tbody>
-                          </table>
-                        </div>
-                      </div>
+                                    </button>
+                                  </div>
+
+                                  <button 
+                                    onClick={() => setShowUserCreator(true)}
+                                    className="flex items-center justify-center gap-2 bg-blue-600 hover:bg-blue-700 text-white px-5 py-2.5 rounded-xl font-bold transition-all shadow-lg shadow-blue-600/20 text-xs whitespace-nowrap active:scale-95"
+                                  >
+                                    <Plus size={18} /> Novo Usuário
+                                  </button>
+                                </div>
+                              </div>
+
+                              {/* Alert banner if there are blocked users and filter is all or blocked */}
+                              {blockedCount > 0 && userStatusFilter !== 'active' && (
+                                <div className="bg-rose-950/20 border border-rose-500/30 rounded-xl p-3 px-4 flex items-center justify-between gap-3 text-xs">
+                                  <div className="flex items-center gap-2.5 text-rose-300">
+                                    <ShieldAlert size={16} className="text-rose-400 shrink-0" />
+                                    <span>
+                                      <strong>{blockedCount} {blockedCount === 1 ? 'usuário está com o Acesso Principal Inativo' : 'usuários estão com o Acesso Principal Inativo'}</strong> (bloqueados de acessar a plataforma).
+                                    </span>
+                                  </div>
+                                  {userStatusFilter !== 'blocked' && (
+                                    <button
+                                      type="button"
+                                      onClick={() => setUserStatusFilter('blocked')}
+                                      className="text-[11px] font-black uppercase tracking-wider text-rose-400 hover:text-rose-200 underline whitespace-nowrap"
+                                    >
+                                      Ver Bloqueados
+                                    </button>
+                                  )}
+                                </div>
+                              )}
+
+                              <div className="bg-zinc-900/50 rounded-2xl border border-white/10 overflow-hidden">
+                                <div className="overflow-x-auto">
+                                  <table className="w-full text-left min-w-[750px]">
+                                  <thead className="bg-white/5 text-gray-400 text-[10px] font-black uppercase tracking-widest">
+                                    <tr>
+                                      <th className="px-6 py-5">Usuário</th>
+                                      <th className="px-6 py-5">Telefone / Email</th>
+                                      <th className="px-6 py-5">Notificações (Push)</th>
+                                      <th className="px-6 py-5">Último Acesso</th>
+                                      <th className="px-6 py-5">Acesso Principal</th>
+                                      <th className="px-6 py-5 pr-8 text-right font-black">Ações</th>
+                                    </tr>
+                                  </thead>
+                                  <tbody className="divide-y divide-white/5">
+                                    {allUsers.length === 0 ? (
+                                      <tr>
+                                        <td colSpan={6} className="px-6 py-12 text-center text-gray-500 font-medium">
+                                          Nenhum aluno encontrado ou ainda não houveram logins.
+                                        </td>
+                                      </tr>
+                                    ) : filteredUsers.length === 0 ? (
+                                      <tr>
+                                        <td colSpan={6} className="px-6 py-12 text-center text-gray-500 font-medium tracking-widest italic uppercase text-[10px]">
+                                          {userStatusFilter === 'blocked'
+                                            ? 'Nenhum usuário bloqueado no momento.'
+                                            : userStatusFilter === 'active'
+                                              ? 'Nenhum usuário ativo corresponde aos critérios.'
+                                              : 'Nenhum usuário corresponde à sua busca.'}
+                                        </td>
+                                      </tr>
+                                    ) : filteredUsers.map((u, i) => {
+                                      const isBlocked = u.has_access === false;
+
+                                      return (
+                                        <tr 
+                                          key={u.id || i} 
+                                          className={`transition-colors group ${
+                                            isBlocked 
+                                              ? 'bg-rose-950/20 hover:bg-rose-950/30 border-l-4 border-l-rose-500' 
+                                              : 'hover:bg-white/[0.02]'
+                                          }`}
+                                        >
+                                          {/* User Name & Metadata */}
+                                          <td className="px-6 py-4">
+                                            <div className="flex items-center gap-3">
+                                              <div className={`w-8 h-8 rounded-full flex items-center justify-center text-[10px] font-black italic ${
+                                                isBlocked
+                                                  ? 'bg-rose-500/20 text-rose-400 border border-rose-500/30'
+                                                  : 'bg-blue-600/20 text-blue-500'
+                                              }`}>
+                                                {u.email?.[0]?.toUpperCase() || '?'}
+                                              </div>
+                                              <div className="flex flex-col">
+                                                <div className="flex items-center gap-1.5 flex-wrap">
+                                                  <span className={`font-bold text-sm ${isBlocked ? 'text-gray-200' : 'text-white'}`}>
+                                                    {u.user_metadata?.full_name || 'No name'}
+                                                  </span>
+                                                  {isBlocked && (
+                                                    <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[8px] font-black uppercase tracking-wider bg-rose-500/20 text-rose-300 border border-rose-500/40">
+                                                      Inativo
+                                                    </span>
+                                                  )}
+                                                  {u.has_unlimited_ai && (
+                                                    <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[9px] font-black bg-gradient-to-r from-amber-500/20 to-pink-500/20 text-amber-300 border border-amber-500/30">
+                                                      <Sparkles size={10} className="text-amber-400" /> VIP
+                                                    </span>
+                                                  )}
+                                                </div>
+                                              </div>
+                                            </div>
+                                          </td>
+
+                                          {/* Phone / Email */}
+                                          <td className="px-6 py-4">
+                                            <div className="flex flex-col">
+                                              <span className="text-sm font-bold text-gray-300 font-mono tracking-tighter">
+                                                {u.user_metadata?.phone || <span className="text-gray-700 italic opacity-50 text-[10px]">Não informado</span>}
+                                              </span>
+                                              <span className="text-[10px] text-gray-500 font-medium truncate max-w-[200px]">{u.email}</span>
+                                            </div>
+                                          </td>
+
+                                          {/* Push Notification Status */}
+                                          <td className="px-6 py-4">
+                                            {u.push_enabled ? (
+                                              <div className="flex items-center gap-1.5 text-emerald-500 text-[9px] font-black uppercase tracking-widest bg-emerald-500/10 px-2 py-1 rounded-lg w-fit">
+                                                 <div className="w-1.5 h-1.5 rounded-full bg-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.6)] animate-pulse" />
+                                                 Ativo
+                                              </div>
+                                            ) : (
+                                              <div className="flex items-center gap-1.5 text-gray-500 text-[9px] font-black uppercase tracking-widest bg-white/5 px-2 py-1 rounded-lg w-fit">
+                                                 <div className="w-1.5 h-1.5 rounded-full bg-gray-500" />
+                                                 Inativo
+                                              </div>
+                                            )}
+                                          </td>
+
+                                          {/* Last Access */}
+                                          <td className="px-6 py-4 text-xs text-gray-400 font-medium whitespace-nowrap">
+                                            {u.last_sign_in_at ? new Date(u.last_sign_in_at).toLocaleString('pt-BR') : 'Nunca acessou'}
+                                          </td>
+
+                                          {/* Acesso Principal (Account Status) */}
+                                          <td className="px-6 py-4">
+                                            {isBlocked ? (
+                                              <div className="flex flex-col gap-0.5 items-start">
+                                                <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-[10px] font-black uppercase tracking-wider bg-rose-500/20 text-rose-300 border border-rose-500/40 shadow-sm shadow-rose-950/50">
+                                                  <ShieldAlert size={12} className="text-rose-400 shrink-0" />
+                                                  Bloqueado
+                                                </span>
+                                                <span className="text-[9px] font-bold text-rose-400/80 pl-0.5">
+                                                  Acesso Inativo
+                                                </span>
+                                              </div>
+                                            ) : (
+                                              <div className="flex flex-col gap-0.5 items-start">
+                                                <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-[10px] font-black uppercase tracking-wider bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
+                                                  <ShieldCheck size={12} className="text-emerald-400 shrink-0" />
+                                                  Liberado
+                                                </span>
+                                                <span className="text-[9px] font-medium text-emerald-500/60 pl-0.5">
+                                                  Acesso Ativo
+                                                </span>
+                                              </div>
+                                            )}
+                                          </td>
+
+                                          {/* Actions */}
+                                          <td className="px-6 py-4 text-right pr-8">
+                                            <div className="flex justify-end items-center gap-2 text-right">
+                                              <button 
+                                                 onClick={() => {
+                                                   setSelectedUserForCourses(u);
+                                                   fetchUserPurchases(u.id);
+                                                   setView('user_details');
+                                                 }}
+                                                 className="p-2.5 bg-blue-600/10 hover:bg-blue-600 rounded-xl text-blue-500 hover:text-white transition-all flex items-center gap-2 text-[10px] font-black uppercase tracking-widest shadow-lg shadow-blue-600/5 hover:shadow-blue-600/20 active:scale-95"
+                                              >
+                                                <Eye size={14} /> Detalhes
+                                              </button>
+                                            </div>
+                                          </td>
+                                        </tr>
+                                      );
+                                    })}
+                                  </tbody>
+                                </table>
+                              </div>
+                            </div>
+                          </>
+                        );
+                      })()}
                     </>
                     ) : (
                       <div className="space-y-8">
@@ -2856,7 +3299,7 @@ export default function AdminPanel({ user }: AdminPanelProps) {
                               {selectedUserForCourses?.email?.[0].toUpperCase()}
                             </div>
                             <div>
-                              <h3 className="text-2xl font-black text-white uppercase tracking-tighter italic">{selectedUserForCourses?.user_metadata?.full_name || 'Sem nome'}</h3>
+                              <h3 className="text-2xl font-black text-white uppercase tracking-tighter italic">{selectedUserForCourses?.user_metadata?.full_name || 'No name'}</h3>
                               <div className="flex flex-col gap-1 mt-1">
                                 <p className="text-gray-500 font-medium flex items-center gap-2 text-sm"><Mail size={14} className="text-gray-600" /> {selectedUserForCourses?.email}</p>
                                 {selectedUserForCourses?.user_metadata?.phone && (
@@ -2877,11 +3320,90 @@ export default function AdminPanel({ user }: AdminPanelProps) {
                                     <><BellOff size={12} /> Notificações: Inativas</>
                                   )}
                                 </div>
+                                <div className={`flex items-center gap-2 text-[10px] font-black uppercase tracking-widest px-3 py-1 rounded-lg border ${
+                                  selectedUserForCourses?.has_access === false 
+                                    ? 'text-rose-300 bg-rose-500/20 border-rose-500/40 shadow-lg shadow-rose-950/50 animate-pulse' 
+                                    : 'text-emerald-400 bg-emerald-500/10 border-emerald-500/20'
+                                }`}>
+                                  {selectedUserForCourses?.has_access === false ? (
+                                    <><ShieldAlert size={13} className="text-rose-400" /> Acesso Principal: Bloqueado (Inativo)</>
+                                  ) : (
+                                    <><ShieldCheck size={13} className="text-emerald-400" /> Acesso Principal: Ativo (Liberado)</>
+                                  )}
+                                </div>
                               </div>
                             </div>
                           </div>
 
                           <div className="space-y-12">
+                            {/* Controle do Acesso Principal (Bloqueio / Desbloqueio) */}
+                            <div className={`rounded-3xl border p-6 transition-all ${
+                              selectedUserForCourses?.has_access === false
+                                ? 'bg-gradient-to-r from-rose-950/40 via-red-950/20 to-black/60 border-rose-500/40 shadow-xl shadow-rose-950/30'
+                                : 'bg-black/40 border-white/10'
+                            }`}>
+                              <div className="flex flex-col md:flex-row md:items-center justify-between gap-6">
+                                <div className="flex items-start gap-4">
+                                  <div className={`p-3 rounded-2xl border ${
+                                    selectedUserForCourses?.has_access === false
+                                      ? 'bg-rose-500/20 border-rose-500/40 text-rose-400 shadow-inner'
+                                      : 'bg-emerald-500/20 border-emerald-500/30 text-emerald-400'
+                                  }`}>
+                                    {selectedUserForCourses?.has_access === false ? (
+                                      <ShieldAlert size={26} className="animate-pulse" />
+                                    ) : (
+                                      <ShieldCheck size={26} />
+                                    )}
+                                  </div>
+                                  <div className="space-y-1">
+                                    <div className="flex items-center gap-3 flex-wrap">
+                                      <h4 className="font-black text-white text-base">
+                                        Acesso Principal à Plataforma
+                                      </h4>
+                                      {selectedUserForCourses?.has_access === false ? (
+                                        <span className="px-3 py-1 rounded-full text-[10px] font-black uppercase tracking-widest bg-rose-500/20 text-rose-300 border border-rose-500/40 animate-pulse">
+                                          Bloqueado / Inativo
+                                        </span>
+                                      ) : (
+                                        <span className="px-3 py-1 rounded-full text-[10px] font-black uppercase tracking-widest bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
+                                          Acesso Ativo / Liberado
+                                        </span>
+                                      )}
+                                    </div>
+                                    <p className="text-xs text-gray-400 max-w-xl leading-relaxed">
+                                      {selectedUserForCourses?.has_access === false
+                                        ? 'Este usuário está bloqueado e recebe a tela de "Acesso Principal Inativo" ao tentar entrar. Você pode reativar o acesso dele a qualquer momento clicando no botão ao lado.'
+                                        : 'O usuário está com o acesso principal liberado e consegue navegar normalmente pelas aulas e conteúdos autorizados.'}
+                                    </p>
+                                  </div>
+                                </div>
+
+                                <div className="shrink-0 flex items-center">
+                                  <button
+                                    type="button"
+                                    onClick={() => toggleUserMainAccess(selectedUserForCourses)}
+                                    disabled={isUpdatingUserAccess}
+                                    className={`px-6 py-3 rounded-xl font-black text-xs uppercase tracking-widest transition-all active:scale-95 flex items-center justify-center gap-2 shadow-lg ${
+                                      selectedUserForCourses?.has_access === false
+                                        ? 'bg-emerald-600 hover:bg-emerald-500 text-white shadow-emerald-600/20 border border-emerald-400/30'
+                                        : 'bg-rose-500/10 hover:bg-rose-600 text-rose-400 hover:text-white border border-rose-500/30 shadow-rose-500/10'
+                                    }`}
+                                  >
+                                    {isUpdatingUserAccess ? (
+                                      <Loader2 size={16} className="animate-spin" />
+                                    ) : selectedUserForCourses?.has_access === false ? (
+                                      <ShieldCheck size={16} />
+                                    ) : (
+                                      <ShieldAlert size={16} />
+                                    )}
+                                    {selectedUserForCourses?.has_access === false
+                                      ? 'Desbloquear e Reativar Acesso'
+                                      : 'Bloquear Usuário (Suspender Acesso)'}
+                                  </button>
+                                </div>
+                              </div>
+                            </div>
+
                             {/* Password Management */}
                             <div className="bg-black/40 rounded-3xl border border-white/10 p-6 space-y-4">
                               <div className="flex items-center gap-3">
@@ -6010,6 +6532,13 @@ export default function AdminPanel({ user }: AdminPanelProps) {
                           >
                             PWA
                           </button>
+                          <button 
+                            onClick={() => setActivePageTab('access_denied')}
+                            className={`px-4 py-2 rounded-lg text-xs font-bold transition-all shrink-0 flex items-center gap-1.5 ${activePageTab === 'access_denied' ? 'bg-rose-600 text-white' : 'text-gray-500 hover:text-white'}`}
+                          >
+                            <ShieldAlert size={12} className={activePageTab === 'access_denied' ? 'text-white' : 'text-rose-400'} />
+                            Acesso Inativo
+                          </button>
                         </div>
                         <button 
                           onClick={async () => {
@@ -8620,6 +9149,369 @@ export default function AdminPanel({ user }: AdminPanelProps) {
                           </div>
                         </div>
                       )}
+
+                    {activePageTab === 'access_denied' && (
+                      <div className="space-y-8 pb-12">
+                        {(() => {
+                          const defaultBadge = 'Access Temporarily Paused';
+                          const defaultTitle = 'Main Access Inactive';
+                          const defaultMessage = 'Your subscription or main membership has been canceled, refunded, or expired on Hotmart.';
+                          const defaultBenefitsTitle = 'Your account and progress are safe!';
+                          const defaultBenefitsText = 'Once you renew your subscription with your registered email, all your access, lesson progress, and certificates will be instantly reactivated.';
+                          const defaultCta = 'Renew Subscription';
+                          const defaultLogout = 'Log Out';
+
+                          const currentBadge = draftCustomTexts['access_denied_badge'] !== undefined 
+                            ? draftCustomTexts['access_denied_badge'] 
+                            : (settings.custom_texts?.['access_denied_badge'] || defaultBadge);
+
+                          const currentTitle = draftCustomTexts['access_denied_title'] !== undefined 
+                            ? draftCustomTexts['access_denied_title'] 
+                            : (settings.custom_texts?.['access_denied_title'] || defaultTitle);
+
+                          const currentMessage = draftCustomTexts['access_denied_message'] !== undefined 
+                            ? draftCustomTexts['access_denied_message'] 
+                            : (settings.custom_texts?.['access_denied_message'] || defaultMessage);
+
+                          const currentBenefitsTitle = draftCustomTexts['access_denied_benefits_title'] !== undefined 
+                            ? draftCustomTexts['access_denied_benefits_title'] 
+                            : (settings.custom_texts?.['access_denied_benefits_title'] || defaultBenefitsTitle);
+
+                          const currentBenefitsText = draftCustomTexts['access_denied_benefits_text'] !== undefined 
+                            ? draftCustomTexts['access_denied_benefits_text'] 
+                            : (settings.custom_texts?.['access_denied_benefits_text'] || defaultBenefitsText);
+
+                          const currentCta = draftCustomTexts['access_denied_cta'] !== undefined 
+                            ? draftCustomTexts['access_denied_cta'] 
+                            : (settings.custom_texts?.['access_denied_cta'] || defaultCta);
+
+                          const currentLogout = draftCustomTexts['access_denied_logout'] !== undefined 
+                            ? draftCustomTexts['access_denied_logout'] 
+                            : (settings.custom_texts?.['access_denied_logout'] || defaultLogout);
+
+                          const currentCheckoutUrl = draftCustomTexts['access_denied_checkout_url'] !== undefined 
+                            ? draftCustomTexts['access_denied_checkout_url'] 
+                            : (settings.custom_texts?.['access_denied_checkout_url'] || '');
+
+                          const handleResetDefaults = () => {
+                            setDraftCustomTexts(prev => ({
+                              ...prev,
+                              'access_denied_badge': defaultBadge,
+                              'access_denied_title': defaultTitle,
+                              'access_denied_message': defaultMessage,
+                              'access_denied_benefits_title': defaultBenefitsTitle,
+                              'access_denied_benefits_text': defaultBenefitsText,
+                              'access_denied_cta': defaultCta,
+                              'access_denied_logout': defaultLogout,
+                              'access_denied_checkout_url': ''
+                            }));
+                            toast.info('Textos restaurados para o padrão em inglês (link em branco).');
+                          };
+
+                          return (
+                            <div className="grid grid-cols-1 xl:grid-cols-12 gap-8 items-start">
+                              {/* Left Column: Form Editor */}
+                              <div className="xl:col-span-7 space-y-8">
+                                <div className="bg-zinc-900/60 rounded-3xl border border-white/10 p-6 sm:p-8 space-y-8">
+                                  {/* Header inside tab */}
+                                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-white/10 pb-6">
+                                    <div className="flex items-center gap-3">
+                                      <div className="p-3 bg-rose-500/10 border border-rose-500/20 text-rose-400 rounded-2xl">
+                                        <ShieldAlert size={24} />
+                                      </div>
+                                      <div>
+                                        <h4 className="text-xl font-black text-white uppercase tracking-tight">
+                                          Tela de Acesso Inativo
+                                        </h4>
+                                        <p className="text-xs text-gray-400">
+                                          Textos e link de renovação da tela exibida quando a aluna está bloqueada.
+                                        </p>
+                                      </div>
+                                    </div>
+
+                                    <button
+                                      type="button"
+                                      onClick={handleResetDefaults}
+                                      className="px-3.5 py-2 bg-white/5 hover:bg-white/10 border border-white/10 rounded-xl text-[11px] font-bold text-gray-300 hover:text-white transition-all flex items-center gap-1.5 self-start sm:self-auto"
+                                    >
+                                      <RotateCcw size={13} />
+                                      Padrão em Inglês
+                                    </button>
+                                  </div>
+
+                                  {/* Seção 1: Textos */}
+                                  <div className="space-y-6">
+                                    <div className="flex items-center gap-2 text-xs font-black text-rose-400 uppercase tracking-widest">
+                                      <Type size={14} />
+                                      <span>Conteúdo e Textos (Padrão em Inglês)</span>
+                                    </div>
+
+                                    {/* Tag / Badge */}
+                                    <div className="space-y-2">
+                                      <div className="flex justify-between items-center">
+                                        <label className="text-xs font-black text-gray-300 uppercase tracking-wider">
+                                          Tag / Selo Superior
+                                        </label>
+                                        <span className="text-[10px] text-gray-500 font-mono">access_denied_badge</span>
+                                      </div>
+                                      <input
+                                        type="text"
+                                        value={currentBadge}
+                                        onChange={(e) => setDraftCustomTexts({ ...draftCustomTexts, 'access_denied_badge': e.target.value })}
+                                        placeholder="Ex: Access Temporarily Paused"
+                                        className="w-full bg-black/50 border border-white/10 rounded-xl px-4 py-3 text-sm text-white focus:border-rose-500 outline-none transition-all"
+                                      />
+                                    </div>
+
+                                    {/* Título Principal */}
+                                    <div className="space-y-2">
+                                      <div className="flex justify-between items-center">
+                                        <label className="text-xs font-black text-gray-300 uppercase tracking-wider">
+                                          Título Principal
+                                        </label>
+                                        <span className="text-[10px] text-gray-500 font-mono">access_denied_title</span>
+                                      </div>
+                                      <input
+                                        type="text"
+                                        value={currentTitle}
+                                        onChange={(e) => setDraftCustomTexts({ ...draftCustomTexts, 'access_denied_title': e.target.value })}
+                                        placeholder="Ex: Main Access Inactive"
+                                        className="w-full bg-black/50 border border-white/10 rounded-xl px-4 py-3 text-sm text-white focus:border-rose-500 outline-none transition-all font-bold"
+                                      />
+                                    </div>
+
+                                    {/* Mensagem / Descrição */}
+                                    <div className="space-y-2">
+                                      <div className="flex justify-between items-center">
+                                        <label className="text-xs font-black text-gray-300 uppercase tracking-wider">
+                                          Mensagem Explicativa
+                                        </label>
+                                        <span className="text-[10px] text-gray-500 font-mono">access_denied_message</span>
+                                      </div>
+                                      <textarea
+                                        rows={3}
+                                        value={currentMessage}
+                                        onChange={(e) => setDraftCustomTexts({ ...draftCustomTexts, 'access_denied_message': e.target.value })}
+                                        placeholder="Ex: Your subscription or main membership has been canceled, refunded, or expired on Hotmart."
+                                        className="w-full bg-black/50 border border-white/10 rounded-xl px-4 py-3 text-sm text-white focus:border-rose-500 outline-none transition-all resize-y leading-relaxed"
+                                      />
+                                    </div>
+
+                                    {/* Card de Benefícios / Segurança */}
+                                    <div className="p-4 bg-black/30 rounded-2xl border border-white/5 space-y-4">
+                                      <div className="flex items-center gap-2 text-xs font-bold text-amber-300 uppercase tracking-wider">
+                                        <Sparkles size={14} />
+                                        <span>Caixa de Segurança dos Dados da Conta</span>
+                                      </div>
+
+                                      <div className="space-y-2">
+                                        <label className="text-[11px] font-bold text-gray-400">
+                                          Título do Aviso
+                                        </label>
+                                        <input
+                                          type="text"
+                                          value={currentBenefitsTitle}
+                                          onChange={(e) => setDraftCustomTexts({ ...draftCustomTexts, 'access_denied_benefits_title': e.target.value })}
+                                          placeholder="Ex: Your account and progress are safe!"
+                                          className="w-full bg-black border border-white/10 rounded-xl px-4 py-2.5 text-xs text-white focus:border-amber-400 outline-none"
+                                        />
+                                      </div>
+
+                                      <div className="space-y-2">
+                                        <div className="flex justify-between items-center">
+                                          <label className="text-[11px] font-bold text-gray-400">
+                                            Texto Explicativo
+                                          </label>
+                                          <span className="text-[9px] text-gray-500">Dica: use {"{email}"} para inserir o e-mail da aluna</span>
+                                        </div>
+                                        <textarea
+                                          rows={3}
+                                          value={currentBenefitsText}
+                                          onChange={(e) => setDraftCustomTexts({ ...draftCustomTexts, 'access_denied_benefits_text': e.target.value })}
+                                          placeholder="Ex: Once you renew your subscription with your registered email..."
+                                          className="w-full bg-black border border-white/10 rounded-xl px-4 py-2.5 text-xs text-white focus:border-amber-400 outline-none resize-y leading-relaxed"
+                                        />
+                                      </div>
+                                    </div>
+
+                                    {/* Botões: CTA e Logout */}
+                                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                                      <div className="space-y-2">
+                                        <label className="text-xs font-black text-gray-300 uppercase tracking-wider">
+                                          Texto do Botão de Renovar (CTA)
+                                        </label>
+                                        <input
+                                          type="text"
+                                          value={currentCta}
+                                          onChange={(e) => setDraftCustomTexts({ ...draftCustomTexts, 'access_denied_cta': e.target.value })}
+                                          placeholder="Ex: Renew Subscription"
+                                          className="w-full bg-black/50 border border-white/10 rounded-xl px-4 py-3 text-sm text-white focus:border-rose-500 outline-none"
+                                        />
+                                      </div>
+
+                                      <div className="space-y-2">
+                                        <label className="text-xs font-black text-gray-300 uppercase tracking-wider">
+                                          Texto do Botão de Sair (Logout)
+                                        </label>
+                                        <input
+                                          type="text"
+                                          value={currentLogout}
+                                          onChange={(e) => setDraftCustomTexts({ ...draftCustomTexts, 'access_denied_logout': e.target.value })}
+                                          placeholder="Ex: Log Out"
+                                          className="w-full bg-black/50 border border-white/10 rounded-xl px-4 py-3 text-sm text-white focus:border-rose-500 outline-none"
+                                        />
+                                      </div>
+                                    </div>
+                                  </div>
+
+                                  {/* Seção 2: Link de Renovação (Hotmart Checkout) */}
+                                  <div className="space-y-6 pt-6 border-t border-white/10">
+                                    <div className="flex items-center gap-2 text-xs font-black text-rose-400 uppercase tracking-widest">
+                                      <ExternalLink size={14} />
+                                      <span>Link de Renovação da Assinatura (Checkout Hotmart)</span>
+                                    </div>
+
+                                    {/* Opção em branco para colocar o link */}
+                                    <div className="bg-black/40 rounded-2xl border border-white/10 p-5 space-y-4">
+                                      <div className="space-y-2">
+                                        <div className="flex items-center justify-between">
+                                          <label className="text-xs font-bold text-gray-300 flex items-center gap-1.5">
+                                            <ExternalLink size={13} className="text-rose-400" />
+                                            Link de Checkout / Renovação:
+                                          </label>
+                                          <span className="text-[10px] text-gray-500 font-mono">access_denied_checkout_url</span>
+                                        </div>
+                                        <input
+                                          type="url"
+                                          value={currentCheckoutUrl}
+                                          onChange={(e) => setDraftCustomTexts({ ...draftCustomTexts, 'access_denied_checkout_url': e.target.value })}
+                                          placeholder="https://pay.hotmart.com/SEU_CHECKOUT_AQUI"
+                                          className="w-full bg-black/60 border border-white/15 focus:border-rose-500 rounded-xl px-4 py-3 text-sm text-white outline-none font-mono transition-all placeholder:text-gray-600"
+                                        />
+                                        <p className="text-[11px] text-gray-400 leading-relaxed">
+                                          Cole aqui o link do checkout da Hotmart para renovação da assinatura. Caso esteja em branco e o usuário clicar no botão de renovar, aparecerá uma mensagem em inglês solicitando que ele entre em contato com o suporte (<span className="text-amber-400 font-medium">Please contact our support team...</span>).
+                                        </p>
+                                      </div>
+
+                                      {/* Status / Confirmação do Link */}
+                                      <div className="pt-2 border-t border-white/5 flex flex-col sm:flex-row sm:items-center justify-between gap-2 text-[11px]">
+                                        <div className="flex items-center gap-2">
+                                          <span className="font-bold text-gray-400">Status do link:</span>
+                                          {currentCheckoutUrl.trim() ? (
+                                            <span className="font-mono text-emerald-400 truncate max-w-xs">{currentCheckoutUrl.trim()}</span>
+                                          ) : (
+                                            <span className="text-amber-400/90 italic">Em branco (o botão acionará aviso de suporte em inglês)</span>
+                                          )}
+                                        </div>
+                                        {currentCheckoutUrl.trim() && (
+                                          <button
+                                            type="button"
+                                            onClick={() => setDraftCustomTexts({ ...draftCustomTexts, 'access_denied_checkout_url': '' })}
+                                            className="text-gray-500 hover:text-rose-400 font-bold transition-all underline self-start sm:self-auto text-[10px]"
+                                          >
+                                            Limpar link
+                                          </button>
+                                        )}
+                                      </div>
+                                    </div>
+                                  </div>
+                                </div>
+                              </div>
+
+                              {/* Right Column: Live Interactive Preview */}
+                              <div className="xl:col-span-5 space-y-4 xl:sticky xl:top-6">
+                                <div className="flex items-center justify-between">
+                                  <span className="text-xs font-black text-gray-400 uppercase tracking-widest flex items-center gap-1.5">
+                                    <Eye size={14} className="text-rose-400" />
+                                    Pré-visualização em Tempo Real
+                                  </span>
+                                  <span className="text-[10px] text-gray-500 uppercase tracking-wider">
+                                    Modo Aluna
+                                  </span>
+                                </div>
+
+                                {/* Mockup Container */}
+                                <div className="bg-gradient-to-b from-zinc-950 via-black to-zinc-950 border border-white/10 rounded-3xl p-6 sm:p-7 relative overflow-hidden shadow-2xl">
+                                  {/* Ambient Glow */}
+                                  <div className="absolute top-0 left-1/2 -translate-x-1/2 w-64 h-32 bg-rose-500/20 blur-[90px] rounded-full pointer-events-none" />
+
+                                  <div className="relative z-10 text-center space-y-5">
+                                    {/* Icon */}
+                                    <div className="w-16 h-16 bg-rose-500/10 border border-rose-500/30 rounded-2xl flex items-center justify-center mx-auto text-rose-400 shadow-inner">
+                                      <ShieldAlert size={32} />
+                                    </div>
+
+                                    {/* Badge, Title & Message */}
+                                    <div className="space-y-2">
+                                      <span className="inline-block px-3 py-1 bg-rose-500/10 text-rose-300 border border-rose-500/20 rounded-full text-[9px] font-black uppercase tracking-widest">
+                                        {currentBadge}
+                                      </span>
+                                      <h3 className="text-xl sm:text-2xl font-black text-white tracking-tight leading-tight">
+                                        {currentTitle}
+                                      </h3>
+                                      <p className="text-xs text-gray-300 leading-relaxed max-w-sm mx-auto">
+                                        {currentMessage}
+                                      </p>
+                                    </div>
+
+                                    {/* Benefits Box */}
+                                    <div className="bg-black/60 border border-white/10 rounded-2xl p-4 text-left space-y-1.5 text-xs">
+                                      <div className="flex items-center gap-2 text-amber-300 font-bold text-[11px]">
+                                        <Sparkles size={14} />
+                                        <span>{currentBenefitsTitle}</span>
+                                      </div>
+                                      <p className="text-gray-400 text-[10px] leading-relaxed">
+                                        {currentBenefitsText.replace('{email}', 'aluna@exemplo.com')}
+                                      </p>
+                                    </div>
+
+                                    {/* Buttons Mockup */}
+                                    <div className="space-y-2.5 pt-2">
+                                      {currentCheckoutUrl.trim() ? (
+                                        <a
+                                          href={currentCheckoutUrl.trim()}
+                                          target="_blank"
+                                          rel="noopener noreferrer"
+                                          onClick={(e) => {
+                                            if (!currentCheckoutUrl.trim().startsWith('http')) {
+                                              e.preventDefault();
+                                              toast.info('Configure um link válido começando com https://');
+                                            }
+                                          }}
+                                          className="w-full py-3.5 bg-gradient-to-r from-rose-600 via-pink-600 to-amber-500 hover:from-rose-500 hover:to-amber-400 text-white font-black text-xs uppercase tracking-wider rounded-xl transition-all shadow-lg shadow-rose-500/20 flex items-center justify-center gap-2"
+                                        >
+                                          <span>{currentCta}</span>
+                                          <ExternalLink size={14} />
+                                        </a>
+                                      ) : (
+                                        <button
+                                          type="button"
+                                          onClick={() => {
+                                            toast.info('Please contact our support team to renew your subscription.', {
+                                              description: `Support contact: ${settings?.support_email || 'atendimento@suporte.com'}`,
+                                              duration: 6000
+                                            });
+                                          }}
+                                          className="w-full py-3.5 bg-gradient-to-r from-rose-600 via-pink-600 to-amber-500 hover:from-rose-500 hover:to-amber-400 text-white font-black text-xs uppercase tracking-wider rounded-xl transition-all shadow-lg shadow-rose-500/20 flex items-center justify-center gap-2 cursor-pointer"
+                                        >
+                                          <span>{currentCta}</span>
+                                          <ExternalLink size={14} />
+                                        </button>
+                                      )}
+
+                                      <div className="w-full py-2.5 bg-white/5 text-gray-400 font-bold text-[11px] uppercase tracking-wider rounded-xl flex items-center justify-center gap-2">
+                                        <LogOut size={12} />
+                                        <span>{currentLogout} (aluna@exemplo.com)</span>
+                                      </div>
+                                    </div>
+                                  </div>
+                                </div>
+                              </div>
+                            </div>
+                          );
+                        })()}
+                      </div>
+                    )}
                     </div>
                 )}
 

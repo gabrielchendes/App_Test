@@ -456,6 +456,8 @@ async function handleUsersList(req: VercelRequest, res: VercelResponse) {
         (profile as any)?.updated_at ||
         null;
 
+      const resolvedHasAccess = profile?.has_access === false ? false : true;
+
       return { 
         ...u, 
         ...profile, 
@@ -468,9 +470,11 @@ async function handleUsersList(req: VercelRequest, res: VercelResponse) {
           ...(u.user_metadata || {}),
           full_name: resolvedFullName,
           phone: resolvedPhone,
-          has_unlimited_ai: hasUnlimitedAi
+          has_unlimited_ai: hasUnlimitedAi,
+          has_access: resolvedHasAccess
         },
         has_unlimited_ai: hasUnlimitedAi,
+        has_access: resolvedHasAccess,
         push_enabled: !!hasPush 
       };
     });
@@ -914,18 +918,38 @@ async function handleAccessToggle(req: VercelRequest, res: VercelResponse) {
 
       if (isMainProd) {
         const shouldGrant = action === 'grant';
-        const { error: pErr } = await client
-          .from('profiles')
-          .update({ 
-            has_access: shouldGrant, 
-            updated_at: new Date().toISOString() 
-          })
-          .eq('id', userId);
+        let pErr = null;
+        try {
+          const { error } = await client
+            .from('profiles')
+            .update({ 
+              has_access: shouldGrant, 
+              updated_at: new Date().toISOString() 
+            })
+            .eq('id', userId);
+          pErr = error;
+        } catch (e: any) {
+          pErr = e;
+        }
 
-        if (pErr) throw pErr;
+        if (pErr) {
+          try {
+            const { error: adminErr } = await supabaseAdmin
+              .from('profiles')
+              .update({ 
+                has_access: shouldGrant, 
+                updated_at: new Date().toISOString() 
+              })
+              .eq('id', userId);
+            if (adminErr && adminErr.code !== '42703') throw adminErr;
+          } catch (e2: any) {
+            console.warn('[Admin API] supabaseAdmin fallback update error:', e2);
+          }
+        }
 
         return res.status(200).json({ 
           success: true, 
+          hasAccess: shouldGrant,
           message: shouldGrant ? 'Acesso Principal à Plataforma liberado!' : 'Acesso Principal revogado.' 
         });
       }
@@ -1215,15 +1239,25 @@ async function handleAccessToggle(req: VercelRequest, res: VercelResponse) {
     }
 
     // Default to profile global access toggle if course params are missing
-    const { error: updateError } = await client.from('profiles').update({ has_access: hasAccess }).eq('id', userId);
-    if (updateError) {
-      // If column doesn't exist, we don't want to crash the whole admin panel
-      if (updateError.code === '42703') {
-        return res.status(200).json({ success: true, warning: 'Coluna has_access não existe no banco de dados.' });
-      }
-      throw updateError;
+    const targetHasAccess = hasAccess !== undefined ? !!hasAccess : action === 'grant';
+    let updateError = null;
+    try {
+      const { error } = await client.from('profiles').update({ has_access: targetHasAccess, updated_at: new Date().toISOString() }).eq('id', userId);
+      updateError = error;
+    } catch (e: any) {
+      updateError = e;
     }
-    return res.status(200).json({ success: true });
+    if (updateError) {
+      try {
+        const { error: adminErr } = await supabaseAdmin.from('profiles').update({ has_access: targetHasAccess, updated_at: new Date().toISOString() }).eq('id', userId);
+        if (adminErr && adminErr.code !== '42703') throw adminErr;
+      } catch (e2: any) {
+        if (updateError.code !== '42703') {
+          console.warn('[Admin API] update fallback error:', e2);
+        }
+      }
+    }
+    return res.status(200).json({ success: true, hasAccess: targetHasAccess });
   } catch (err: any) {
     console.error('[Admin API] Toggle access unexpected error:', {
       message: err.message,
@@ -1748,8 +1782,26 @@ async function handleProductsList(req: VercelRequest, res: VercelResponse) {
   try {
     const client = getScopedClient(req);
     const syncResult = await autoDiscoverProducts(client);
+
+    // Safety check: if catalog is empty, recover from app_settings fallback
+    if (!syncResult.catalog || syncResult.catalog.length === 0) {
+      const settings = await getAppSettingsSafe();
+      const fbCatalog = await getFallbackCatalog(settings);
+      if (fbCatalog && fbCatalog.length > 0) {
+        return res.status(200).json(fbCatalog);
+      }
+    }
+
     return res.status(200).json(syncResult.catalog);
   } catch (err: any) {
+    console.warn('[Admin API] Error in handleProductsList, serving fallback catalog:', err?.message || err);
+    try {
+      const settings = await getAppSettingsSafe();
+      const fbCatalog = await getFallbackCatalog(settings);
+      if (fbCatalog && fbCatalog.length > 0) {
+        return res.status(200).json(fbCatalog);
+      }
+    } catch (_) {}
     return res.status(500).json({ error: err.message });
   }
 }
@@ -1758,37 +1810,51 @@ async function autoDiscoverProducts(client?: any): Promise<{ catalog: any[], mig
   let migratedCount = 0;
   let catalog: any[] = [];
   const db = client || supabaseAdmin;
+  const anonClient = createClient(supabaseUrl || 'https://placeholder.supabase.co', supabaseAnonKey || 'placeholder-key');
 
-  // Parallelize initial queries
+  // Parallelize initial queries with resilient fallbacks
   const [productsRes, coursesRes, packagesRes, settingsRes] = await Promise.all([
     (async () => {
       try {
         const { data, error } = await db.from('hotmart_products').select('*');
-        if (!error && data) return data;
-        const { data: adminData } = await supabaseAdmin.from('hotmart_products').select('*');
-        return adminData;
+        if (!error && Array.isArray(data) && data.length > 0) {
+          return data.map((p: any) => ({ ...p, name: p.product_name || p.name }));
+        }
+        const { data: adminData, error: aErr } = await supabaseAdmin.from('hotmart_products').select('*');
+        if (!aErr && Array.isArray(adminData) && adminData.length > 0) {
+          return adminData.map((p: any) => ({ ...p, name: p.product_name || p.name }));
+        }
+        const { data: aAnon, error: anErr } = await anonClient.from('hotmart_products').select('*');
+        if (!anErr && Array.isArray(aAnon) && aAnon.length > 0) {
+          return aAnon.map((p: any) => ({ ...p, name: p.product_name || p.name }));
+        }
+        return null;
       } catch { return null; }
     })(),
     (async () => {
       try {
         const { data, error } = await db.from('courses').select('id, title, hotmart_product_id, is_free, is_bonus, is_package_exclusive_bonus, checkout_url');
-        if (!error && data) return data;
+        if (!error && Array.isArray(data) && data.length > 0) return data;
         const { data: adminData } = await supabaseAdmin.from('courses').select('id, title, hotmart_product_id, is_free, is_bonus, is_package_exclusive_bonus, checkout_url');
-        return adminData;
-      } catch { return null; }
+        if (Array.isArray(adminData) && adminData.length > 0) return adminData;
+        const { data: anonData } = await anonClient.from('courses').select('id, title, hotmart_product_id, is_free, is_bonus, is_package_exclusive_bonus, checkout_url');
+        return anonData || [];
+      } catch { return []; }
     })(),
     (async () => {
       try {
         const { data, error } = await db.from('course_packages').select('id, title, hotmart_product_id, hotmart_checkout_url, description');
-        if (!error && data) return data;
+        if (!error && Array.isArray(data) && data.length > 0) return data;
         const { data: adminData } = await supabaseAdmin.from('course_packages').select('id, title, hotmart_product_id, hotmart_checkout_url, description');
-        return adminData;
-      } catch { return null; }
+        if (Array.isArray(adminData) && adminData.length > 0) return adminData;
+        const { data: anonData } = await anonClient.from('course_packages').select('id, title, hotmart_product_id, hotmart_checkout_url, description');
+        return anonData || [];
+      } catch { return []; }
     })(),
     (async () => {
       try {
         const { data, error } = await db.from('app_settings').select('custom_texts').eq('id', 1).maybeSingle();
-        if (!error && data) return data;
+        if (!error && data?.custom_texts) return data;
         return await getAppSettingsSafe();
       } catch {
         return await getAppSettingsSafe();
@@ -1816,59 +1882,67 @@ async function autoDiscoverProducts(client?: any): Promise<{ catalog: any[], mig
   const removedProductIds: string[] = [];
   const seenPackageTargetIds = new Set<string>();
 
-  // Clean catalog: remove course items that are now free, bonus, package-exclusive, or deleted; and remove deleted packages
-  catalog = catalog.filter(item => {
-    if (item.product_type === 'course' && item.internal_target_id) {
-      const c = courseMap.get(item.internal_target_id);
-      if (!c) {
-        removedProductIds.push(item.id);
-        return false; // Course deleted
+  // Clean catalog: ONLY filter courses if courses were successfully loaded (prevents wiping catalog on query errors)
+  if (courses.length > 0) {
+    catalog = catalog.filter(item => {
+      if (item.product_type === 'course' && item.internal_target_id) {
+        const c = courseMap.get(item.internal_target_id);
+        if (!c) {
+          removedProductIds.push(item.id);
+          return false; // Course deleted
+        }
+        if (c.is_free === true || c.is_bonus === true || c.is_package_exclusive_bonus === true) {
+          removedProductIds.push(item.id);
+          return false;
+        }
+        if (item.hotmart_product_id?.startsWith('CURSO_') && (!c.hotmart_product_id || c.hotmart_product_id.trim() === '')) {
+          item.hotmart_product_id = '';
+        } else if (c.hotmart_product_id && c.hotmart_product_id.trim() !== '') {
+          item.hotmart_product_id = c.hotmart_product_id.trim();
+        }
       }
-      if (c.is_free === true || c.is_bonus === true || c.is_package_exclusive_bonus === true) {
-        removedProductIds.push(item.id);
-        return false;
-      }
-      if (item.hotmart_product_id?.startsWith('CURSO_') && (!c.hotmart_product_id || c.hotmart_product_id.trim() === '')) {
-        item.hotmart_product_id = '';
-      } else if (c.hotmart_product_id && c.hotmart_product_id.trim() !== '') {
-        item.hotmart_product_id = c.hotmart_product_id.trim();
-      }
-    }
+      return true;
+    });
+  }
 
-    if (item.product_type === 'package') {
-      const targetPkgId = item.internal_target_id || packages.find((p: any) => 
-        (p.title && item.name && item.name.toLowerCase().includes(p.title.toLowerCase())) ||
-        (p.hotmart_product_id && item.hotmart_product_id && String(p.hotmart_product_id).trim() === String(item.hotmart_product_id).trim())
-      )?.id;
+  // Clean catalog: ONLY filter packages if packages were successfully loaded (prevents wiping catalog on query errors)
+  if (packages.length > 0) {
+    catalog = catalog.filter(item => {
+      if (item.product_type === 'package') {
+        const targetPkgId = item.internal_target_id || packages.find((p: any) => 
+          (p.title && item.name && item.name.toLowerCase().includes(p.title.toLowerCase())) ||
+          (p.hotmart_product_id && item.hotmart_product_id && String(p.hotmart_product_id).trim() === String(item.hotmart_product_id).trim())
+        )?.id;
 
-      if (!targetPkgId || !packageMap.has(targetPkgId)) {
-        removedProductIds.push(item.id);
-        return false; // Package was deleted from course_packages!
-      }
+        if (!targetPkgId || !packageMap.has(targetPkgId)) {
+          removedProductIds.push(item.id);
+          return false; // Package was deleted from course_packages!
+        }
 
-      // Deduplicate: if we already have an entry for this package, remove the duplicate
-      if (seenPackageTargetIds.has(targetPkgId)) {
-        removedProductIds.push(item.id);
-        return false;
-      }
-      seenPackageTargetIds.add(targetPkgId);
+        // Deduplicate: if we already have an entry for this package, remove the duplicate
+        if (seenPackageTargetIds.has(targetPkgId)) {
+          removedProductIds.push(item.id);
+          return false;
+        }
+        seenPackageTargetIds.add(targetPkgId);
 
-      // Keep package reference and metadata aligned with course_packages
-      item.internal_target_id = targetPkgId;
-      const p = packageMap.get(targetPkgId);
-      item.name = `Pacote: ${p.title}`;
-      if (p.hotmart_product_id && p.hotmart_product_id.trim() !== '') {
-        item.hotmart_product_id = p.hotmart_product_id.trim();
+        // Keep package reference and metadata aligned with course_packages
+        item.internal_target_id = targetPkgId;
+        const p = packageMap.get(targetPkgId);
+        item.name = `Pacote: ${p.title}`;
+        if (p.hotmart_product_id && p.hotmart_product_id.trim() !== '') {
+          item.hotmart_product_id = p.hotmart_product_id.trim();
+        }
+        if (p.hotmart_checkout_url) {
+          item.checkout_url = p.hotmart_checkout_url;
+        }
+        if (p.description) {
+          item.description = p.description;
+        }
       }
-      if (p.hotmart_checkout_url) {
-        item.checkout_url = p.hotmart_checkout_url;
-      }
-      if (p.description) {
-        item.description = p.description;
-      }
-    }
-    return true;
-  });
+      return true;
+    });
+  }
 
   // If any products were removed (such as deleted packages/courses), clean from database and update fallback catalog immediately
   if (removedProductIds.length > 0 || catalog.length !== initialCatalogCount) {
@@ -2022,12 +2096,11 @@ async function autoDiscoverProducts(client?: any): Promise<{ catalog: any[], mig
       try {
         await db.from('hotmart_products').upsert({
           hotmart_product_id: item.hotmart_product_id,
-          name: item.name,
+          product_name: item.name,
           product_type: item.product_type,
           internal_target_id: item.internal_target_id || null,
-          checkout_url: item.checkout_url || null,
           is_active: item.is_active !== false,
-          description: item.description || null
+          updated_at: new Date().toISOString()
         }, { onConflict: 'hotmart_product_id' });
       } catch (e) {}
     }
@@ -2488,7 +2561,7 @@ async function handleWebhookSimulate(req: VercelRequest, res: VercelResponse) {
     // Process simulation directly in local database first
     let localResult: any = null;
     try {
-      const isAppr = (event_type || '').includes('APPROVED');
+      const isAppr = (event_type || '').includes('APPROVED') || (event_type || '').includes('COMPLETE');
       if (isAppr) {
         const { data: existingProfile } = await supabaseAdmin
           .from('profiles')
@@ -2505,6 +2578,26 @@ async function handleWebhookSimulate(req: VercelRequest, res: VercelResponse) {
               updated_at: new Date().toISOString() 
             })
             .eq('id', existingProfile.id);
+
+          // Inserir compra na tabela purchases com fallback resiliente
+          if (resolvedHotmartId) {
+            try {
+              const { error: purErr } = await supabaseAdmin.from('purchases').upsert({
+                user_id: existingProfile.id,
+                product_id: resolvedHotmartId,
+                transaction_id: mockPayload.data.purchase.transaction,
+                created_at: new Date().toISOString()
+              }, { onConflict: 'user_id,product_id' as any });
+
+              if (purErr) {
+                // Tentativa fallback com campos mínimos
+                await supabaseAdmin.from('purchases').insert({
+                  user_id: existingProfile.id,
+                  product_id: resolvedHotmartId
+                });
+              }
+            } catch (_) {}
+          }
         }
       }
       localResult = { success: true, message: `Status de simulação atualizado para ${buyer_email}` };
@@ -2570,6 +2663,12 @@ async function handleWebhookSimulate(req: VercelRequest, res: VercelResponse) {
         edgeJson = { raw: edgeText };
       }
 
+      const isPurchasesSchemaError = typeof edgeText === 'string' && (
+        edgeText.includes("column of 'purchases'") ||
+        edgeText.includes("column of \\\"purchases\\\"") ||
+        (edgeText.includes("purchases") && edgeText.includes("status"))
+      );
+
       return res.status(200).json({
         success: edgeRes.ok,
         http_status: edgeRes.status,
@@ -2578,8 +2677,10 @@ async function handleWebhookSimulate(req: VercelRequest, res: VercelResponse) {
         sent_hottok: configuredToken,
         sent_payload: mockPayload,
         result: edgeJson,
+        is_purchases_schema_error: isPurchasesSchemaError,
+        schema_fix_sql: isPurchasesSchemaError ? "ALTER TABLE public.purchases ADD COLUMN IF NOT EXISTS status TEXT DEFAULT 'approved';" : undefined,
         ...(!edgeRes.ok ? {
-          error: `O Endpoint respondeu com código HTTP ${edgeRes.status}. Por favor, verifique a URL do Endpoint do Webhook (Hotmart).`
+          error: edgeJson.details || edgeJson.error || `O Endpoint respondeu com código HTTP ${edgeRes.status}. Por favor, verifique a URL do Endpoint do Webhook (Hotmart).`
         } : {})
       });
     } catch (edgeErr: any) {
@@ -2592,11 +2693,11 @@ async function handleWebhookSimulate(req: VercelRequest, res: VercelResponse) {
         target_url: targetWebhookUrl,
         sent_hottok: configuredToken,
         sent_payload: mockPayload,
-        error: 'Failed to connect to URL: NetworkError when attempting to fetch resource. Please check the "Webhook Endpoint URL (Hotmart)".',
+        error: `Falha ao conectar no endpoint do Webhook: ${edgeFetchError}`,
         result: {
-          error: 'Failed to connect to URL: NetworkError when attempting to fetch resource. Please check the "Webhook Endpoint URL (Hotmart)".',
+          error: `Falha ao conectar no endpoint do Webhook: ${edgeFetchError}`,
           details: edgeFetchError,
-          tip: 'Attention: Please ensure the "Webhook Endpoint URL (Hotmart)" entered in the settings is correct, active, and reachable.'
+          tip: 'Certifique-se de que a URL do Endpoint do Webhook configurada esteja ativa e acessível.'
         }
       });
     }
