@@ -41,11 +41,17 @@ self.addEventListener('activate', (event) => {
 
 self.addEventListener('fetch', (event) => {
   const request = event.request;
-  // Ignore non-GET, chrome-extension, or analytics requests
+  // Ignore non-GET, chrome-extension, analytics, or Vite dev / module requests
   if (
     request.method !== 'GET' ||
     !request.url.startsWith('http') ||
     request.url.includes('/api/') ||
+    request.url.includes('/@vite') ||
+    request.url.includes('/@fs') ||
+    request.url.includes('/@id') ||
+    request.url.includes('/src/') ||
+    request.url.includes('node_modules') ||
+    request.url.includes('hot-update') ||
     request.url.includes('google-analytics') ||
     request.url.includes('googletagmanager')
   ) {

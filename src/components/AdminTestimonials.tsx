@@ -28,7 +28,7 @@ import {
 } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 import { Testimonial } from '../types/lms';
-import { toast } from 'sonner';
+import { toast } from '../lib/customToast';
 import { applyTestimonialOrder } from '../lib/utils';
 
 interface AdminTestimonialsProps {

@@ -104,7 +104,7 @@ Apply the user's instruction precisely, keeping the overall structure cohesive, 
     const errMsg = error?.message || '';
     if (errMsg.includes('503') || errMsg.includes('UNAVAILABLE') || errMsg.includes('high demand')) {
       return res.status(503).json({
-        error: 'Os servidores de IA estão com alta demanda temporária. Aguarde alguns segundos e tente novamente.'
+        error: 'The service is currently experiencing temporary high demand. Please wait a few seconds and try again.'
       });
     }
 

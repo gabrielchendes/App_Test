@@ -30,8 +30,7 @@ import {
 } from 'lucide-react';
 import { LessonBlock, LessonBlockItem } from '../types/lms';
 import { supabase } from '../lib/supabase';
-import { toast } from 'sonner';
-import { showToast } from '../lib/customToast';
+import { toast, showToast } from '../lib/customToast';
 import { getCloudflareStreamEmbedUrl, isCloudflareStreamUrl, isDirectVideoUrl } from '../utils/videoUtils';
 import CustomDirectVideoPlayer from './CustomDirectVideoPlayer';
 

@@ -3,7 +3,7 @@ import { User, Lock, Mail, Save, Loader2, Camera, Bell, LogOut, Download, Smartp
 import { GlowingSpinner } from './GlowingSpinner';
 import { supabase } from '../lib/supabase';
 import { User as SupabaseUser } from '@supabase/supabase-js';
-import { toast } from 'sonner';
+import { toast } from '../lib/customToast';
 import imageCompression from 'browser-image-compression';
 import { useSettings } from '../contexts/SettingsContext';
 import { useI18n } from '../contexts/I18nContext';

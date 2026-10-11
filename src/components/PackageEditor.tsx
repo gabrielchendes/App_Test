@@ -11,7 +11,7 @@ import {
   Check,
   Lock
 } from 'lucide-react';
-import { toast } from 'sonner';
+import { toast } from '../lib/customToast';
 
 interface PackageEditorProps {
   packageId: string | null;

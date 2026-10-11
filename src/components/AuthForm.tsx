@@ -3,7 +3,7 @@ import { Mail, Lock, ArrowRight, Key, ShieldAlert, MessageSquare, Smartphone, Do
 import { GlowingSpinner } from './GlowingSpinner';
 import WhatsAppIcon from './WhatsAppIcon';
 import { supabase } from '../lib/supabase';
-import { toast } from 'sonner';
+import { toast } from '../lib/customToast';
 import { useSettings } from '../contexts/SettingsContext';
 import { useI18n } from '../contexts/I18nContext';
 import { safeParse, safeFetch } from '../lib/utils';

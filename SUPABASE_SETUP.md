@@ -890,6 +890,9 @@ ALTER TABLE public.chapters ADD COLUMN IF NOT EXISTS button_link_color TEXT DEFA
 ALTER TABLE public.profiles ADD COLUMN IF NOT EXISTS has_access BOOLEAN DEFAULT true;
 ALTER TABLE public.profiles ADD COLUMN IF NOT EXISTS has_unlimited_ai BOOLEAN DEFAULT false;
 
+-- Garantir coluna status na tabela purchases (evita erro de coluna ausente no webhook Hotmart)
+ALTER TABLE public.purchases ADD COLUMN IF NOT EXISTS status TEXT DEFAULT 'approved';
+
 -- Tabela para Mapeamento Dinâmico de Produtos da Hotmart
 -- Associa um produto da Hotmart (pelo ID) a um comportamento interno:
 -- Tipos: 'main_product' (Acesso Geral), 'course' (Curso), 'package' (Pacote de Cursos), 'ai_subscription' (IA Victoria VIP)

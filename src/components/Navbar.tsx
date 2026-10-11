@@ -2,7 +2,7 @@ import { memo, useState, useEffect } from 'react';
 import { LogOut, User as UserIcon, Bell, Shield, Download, GraduationCap } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 import { User } from '@supabase/supabase-js';
-import { toast } from 'sonner';
+import { toast } from '../lib/customToast';
 import NotificationBell from './NotificationBell';
 import { useSettings } from '../contexts/SettingsContext';
 import { useI18n } from '../contexts/I18nContext';

@@ -13,7 +13,7 @@ import {
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { supabase } from '../lib/supabase';
-import { toast } from 'sonner';
+import { toast } from '../lib/customToast';
 
 const getCorsSafeUrl = (url: string | null): string | null => {
   if (!url) return null;

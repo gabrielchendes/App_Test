@@ -44,7 +44,7 @@ import {
 import { motion, AnimatePresence } from 'motion/react';
 import { Course, Module, Chapter, Checklist } from '../types/lms';
 import { supabase } from '../lib/supabase';
-import { toast } from 'sonner';
+import { toast } from '../lib/customToast';
 import CoursePreviewViewer from './CoursePreviewViewer';
 import { AdminChecklistEditor } from './AdminChecklistEditor';
 import { AdminHtmlAppEditor } from './AdminHtmlAppEditor';

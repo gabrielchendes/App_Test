@@ -27,12 +27,16 @@ export function TenantProvider({ children }: { children: ReactNode }) {
         // const hostname = window.location.hostname;
         // const subdomain = hostname.split('.')[0];
         
-        // For this demo, we'll use a default tenant or fetch the first one
-        const { data, error } = await supabase
+        // For this demo, we'll use a default tenant or fetch the first one with fast timeout
+        const queryPromise = supabase
           .from('tenants')
           .select('*')
           .limit(1)
           .single();
+        const timeoutPromise = new Promise<{ data: any; error: any }>((resolve) =>
+          setTimeout(() => resolve({ data: null, error: new Error('Timeout') }), 1000)
+        );
+        const { data, error } = await Promise.race([queryPromise, timeoutPromise]);
 
         if (error) {
           // If it's an auth error, it might be a stale token

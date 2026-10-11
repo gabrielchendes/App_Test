@@ -187,13 +187,13 @@ Generate the complete high-converting copy in valid JSON. All text must be in Am
 
     if (isQuotaError) {
       return res.status(429).json({
-        error: 'O limite temporário de requisições da IA foi atingido. Por favor, aguarde alguns segundos e tente novamente.'
+        error: 'Temporary request limit reached. Please wait a few seconds and try again.'
       });
     }
 
     if (errMsg.includes('503') || errMsg.includes('UNAVAILABLE') || errMsg.includes('high demand')) {
       return res.status(503).json({
-        error: 'Os servidores de IA estão com alta demanda temporária. Aguarde alguns segundos e tente novamente.'
+        error: 'The service is currently experiencing temporary high demand. Please wait a few seconds and try again.'
       });
     }
 

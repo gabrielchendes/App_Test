@@ -9,7 +9,7 @@ import {
   ShieldCheck,
   Globe
 } from 'lucide-react';
-import { toast } from 'sonner';
+import { toast } from '../lib/customToast';
 import HtmlAppViewer, { SAMPLE_HTML_APP } from './HtmlAppViewer';
 
 interface AdminHtmlAppEditorProps {

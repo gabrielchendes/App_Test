@@ -5,7 +5,7 @@ import { useI18n } from '../contexts/I18nContext';
 import { useSettings } from '../contexts/SettingsContext';
 import { Send, User as UserIcon, Loader2, MessageSquare, ShieldCheck, CheckCircle2 } from 'lucide-react';
 import { GlowingSpinner } from './GlowingSpinner';
-import { toast } from 'sonner';
+import { toast } from '../lib/customToast';
 import { motion, AnimatePresence } from 'motion/react';
 import { format } from 'date-fns';
 import { ptBR, enUS, es } from 'date-fns/locale';

@@ -8,6 +8,7 @@ import { format } from 'date-fns';
 import { enUS } from 'date-fns/locale';
 import { useI18n } from '../contexts/I18nContext';
 import { safeFetch } from '../lib/utils';
+import { showToast } from '../lib/customToast';
 
 interface NotificationBellProps {
   user: User;
@@ -164,7 +165,18 @@ export default function NotificationBell({ user }: NotificationBellProps) {
           table: 'notifications',
           filter: `user_id=eq.${user.id}`
         },
-        () => fetchNotifications()
+        (payload: any) => {
+          fetchNotifications();
+          if (payload.eventType === 'INSERT' && payload.new) {
+            const notif = payload.new;
+            const title = notif.title || 'New Notice';
+            const body = notif.body || notif.message || '';
+            showToast.info(title, {
+              description: body,
+              duration: 5000,
+            });
+          }
+        }
       )
       .subscribe();
 

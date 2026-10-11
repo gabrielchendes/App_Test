@@ -2,7 +2,7 @@ import React, { useState, useRef, useEffect } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { Send, X, User as UserIcon, RefreshCw, Copy, Check, AlertCircle, Loader2, GraduationCap, ArrowLeft, Clock, Lock, ExternalLink, ShoppingBag, Sparkles, Infinity as InfinityIcon, Info, HelpCircle } from 'lucide-react';
 import { GlowingSpinner } from './GlowingSpinner';
-import { toast } from 'sonner';
+import { toast } from '../lib/customToast';
 import { useSettings } from '../contexts/SettingsContext';
 import { supabase, isSupabaseConfigured } from '../lib/supabase';
 import HtmlAppViewer from './HtmlAppViewer';
@@ -13,6 +13,8 @@ interface Message {
   role: 'user' | 'assistant';
   content: string;
   timestamp: string;
+  isError?: boolean;
+  retryQuery?: string;
 }
 
 interface AiAssistantModalProps {
@@ -51,7 +53,7 @@ export default function AiAssistantModal({ userId, userEmail, userName, userAvat
   const buyMoreUrl = settings?.custom_texts?.['ai_expert.buy_more_url'] || '';
   const benefit1 = settings?.custom_texts?.['ai_expert.benefit_1'] || 'Unlimited messages 24 hours a day, 7 days a week';
   const benefit2 = settings?.custom_texts?.['ai_expert.benefit_2'] || 'Instant access with zero commitments';
-  const errorMessage = settings?.custom_texts?.['ai_expert.error_message'] || 'Sorry, I am unable to connect right now. Please try again shortly.';
+  const errorMessage = settings?.custom_texts?.['ai_expert.error_message'] || `${settings?.custom_texts?.['ai_expert.name'] || 'Victoria'} is currently assisting other students and cannot reply right now. Please ask again in just a moment!`;
   const limitToast = settings?.custom_texts?.['ai_expert.limit_reached_toast'] || 'You have reached your message limit for this period.';
   const copiedToast = settings?.custom_texts?.['ai_expert.copied_toast'] || 'Response copied!';
   const inputDisabledPlaceholder = settings?.custom_texts?.['ai_expert.input_disabled_placeholder'] || 'Message limit reached for this period.';
@@ -101,6 +103,14 @@ export default function AiAssistantModal({ userId, userEmail, userName, userAvat
     : `Hello${userName ? `, ${userName}` : ''}! ❤️ I’m Victoria Hayes, your Relationship Expert.\n\nWhatever is happening between you and him, you don’t have to figure it out alone.\n\nTell me what’s going on — what he said, what he did, how things have changed, or what you’re hoping will happen.\n\nI’m here to help with whatever you need, and together, we’ll figure out what’s happening and what to do next. 💕`;
 
   const resetChatWelcome = settings?.custom_texts?.['ai_expert.reset_chat_welcome'] || `Chat reset! ❤️ I'm ${expertName}, how can I help you now?`;
+
+  // Admin-configurable response timing settings:
+  // Checkbox: responder o mais rápido possível (instantâneo)
+  const isFastResponseMode = (settings?.custom_texts?.['ai_expert.fast_response_mode'] ?? 'false') === 'true';
+  // Target response times in seconds (Defaults: short=9s, medium=16s, long=30s)
+  const targetSecShort = Math.max(1, parseInt(settings?.custom_texts?.['ai_expert.typing_speed_short'] || '9', 10) || 9);
+  const targetSecMedium = Math.max(1, parseInt(settings?.custom_texts?.['ai_expert.typing_speed_medium'] || '16', 10) || 16);
+  const targetSecLong = Math.max(1, parseInt(settings?.custom_texts?.['ai_expert.typing_speed_long'] || '30', 10) || 30);
 
   // Message Limit Storage and Checks per User (Synced with Supabase + LocalStorage fallback)
   const getStorageKey = (): string => {
@@ -396,8 +406,16 @@ export default function AiAssistantModal({ userId, userEmail, userName, userAvat
 
   const [input, setInput] = useState('');
   const [loading, setLoading] = useState(false);
+  const [statusText, setStatusText] = useState<string>('');
   const [copiedId, setCopiedId] = useState<string | null>(null);
+  const typingAbortRef = useRef<boolean>(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    return () => {
+      typingAbortRef.current = true;
+    };
+  }, []);
 
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -407,16 +425,72 @@ export default function AiAssistantModal({ userId, userEmail, userName, userAvat
     if (isOpen) {
       scrollToBottom();
     }
-  }, [messages, isOpen]);
+  }, [messages, loading, statusText, isOpen]);
+
+  // Simulates a genuine human typing and reflection delay that scales realistically with response length
+  const simulateHumanTypingDelay = async (delayMs: number, name: string) => {
+    if (delayMs <= 0) return;
+
+    // Build realistic stages of human contemplation & typing in English
+    const stages: { at: number; text: string }[] = [];
+    if (delayMs > 20000) {
+      stages.push({ at: 0, text: `${name} is reading your situation...` });
+      stages.push({ at: Math.floor(delayMs * 0.15), text: `${name} is thinking carefully about your question...` });
+      stages.push({ at: Math.floor(delayMs * 0.35), text: `${name} is typing...` });
+      stages.push({ at: Math.floor(delayMs * 0.65), text: `${name} is writing your detailed guidance...` });
+      stages.push({ at: Math.floor(delayMs * 0.88), text: `Almost ready, ${name} is finalizing her advice...` });
+    } else if (delayMs > 10000) {
+      stages.push({ at: 0, text: `${name} is reading your message...` });
+      stages.push({ at: Math.floor(delayMs * 0.25), text: `${name} is typing...` });
+      stages.push({ at: Math.floor(delayMs * 0.70), text: `${name} is writing personal advice for you...` });
+      stages.push({ at: Math.floor(delayMs * 0.90), text: `${name} is reviewing her message...` });
+    } else if (delayMs > 5000) {
+      stages.push({ at: 0, text: `${name} is reading your message...` });
+      stages.push({ at: Math.floor(delayMs * 0.35), text: `${name} is typing...` });
+      stages.push({ at: Math.floor(delayMs * 0.85), text: `${name} is finishing her reply...` });
+    } else {
+      stages.push({ at: 0, text: `${name} is typing...` });
+      stages.push({ at: Math.floor(delayMs * 0.65), text: `${name} is finishing her reply...` });
+    }
+
+    const startTime = Date.now();
+    for (let i = 0; i < stages.length; i++) {
+      if (typingAbortRef.current) break;
+      const stage = stages[i];
+      const nextTime = i < stages.length - 1 ? stages[i + 1].at : delayMs;
+      setStatusText(stage.text);
+      scrollToBottom();
+
+      const timeToWait = Math.max(0, nextTime - (Date.now() - startTime));
+      if (timeToWait > 0) {
+        const sliceEndTime = Date.now() + timeToWait;
+        while (Date.now() < sliceEndTime) {
+          if (typingAbortRef.current) break;
+          await new Promise(r => setTimeout(r, Math.min(200, sliceEndTime - Date.now())));
+        }
+      }
+    }
+  };
 
   const handleSend = async (textToSend?: string) => {
     const query = (textToSend || input).trim();
     if (!query || loading) return;
 
+    typingAbortRef.current = false;
+    const requestStartTime = Date.now();
+
     if (isLimitReached) {
       toast.error(limitToast);
       return;
     }
+
+    // If retrying from a previous error card, clean up the trailing error card
+    setMessages(prev => {
+      if (prev.length > 0 && prev[prev.length - 1].isError && prev[prev.length - 1].retryQuery === query) {
+        return prev.slice(0, -1);
+      }
+      return prev;
+    });
 
     const userMsg: Message = {
       id: Date.now().toString(),
@@ -425,113 +499,197 @@ export default function AiAssistantModal({ userId, userEmail, userName, userAvat
       timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
     };
 
-    const newMessages = [...messages, userMsg];
-    setMessages(newMessages);
-    setInput('');
-    setLoading(true);
-
-    try {
-      const historyForApi = newMessages.map(m => ({
-        role: m.role,
-        content: m.content
-      }));
-
-      const res = await fetch('/api/v1/ai-chat', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Accept': 'application/json',
-        },
-        body: JSON.stringify({
-          action: 'ai-chat',
-          messages: historyForApi,
-          userContext: { userName, userId, email: userEmail },
-          customSystemPrompt: systemPromptContext || undefined,
-          expertName: expertName || undefined,
-          userId: userId || undefined,
-          messagesSentCount
-        })
-      });
-
-      const responseText = await res.text();
-      let data: any = {};
-      try {
-        data = responseText ? JSON.parse(responseText) : {};
-      } catch (parseErr) {
-        console.error('Non-JSON response from AI chat:', responseText.substring(0, 200));
-        let friendlyMsg = res.ok
-          ? 'Invalid response from server.'
-          : `Server error (${res.status}). Please try again.`;
-        if (responseText.includes('FUNCTION_INVOCATION_FAILED') || responseText.includes('A server error has occurred')) {
-          friendlyMsg = 'Server execution error. Please try again shortly.';
-        }
-        throw new Error(friendlyMsg);
+    // If retrying, check if user message was already rendered
+    setMessages(prev => {
+      const lastUserMsg = [...prev].reverse().find(m => m.role === 'user');
+      if (textToSend && lastUserMsg && lastUserMsg.content === query) {
+        return prev;
       }
+      return [...prev, userMsg];
+    });
 
-      if (!res.ok) {
-        if (data.error === 'VIP_REQUIRED' || data.isLimitReached || (data.error && data.error.code === 'VIP_REQUIRED')) {
+    if (!textToSend) {
+      setInput('');
+    }
+    setLoading(true);
+    setStatusText(typingText);
+
+    // Optimized history for lightning-fast generation under Vercel serverless budget
+    const validHistory = messages.filter(m => !m.isError);
+    const updatedHistory = [...validHistory, userMsg];
+    const historyForApi = updatedHistory.slice(-10).map(m => ({
+      role: m.role,
+      content: m.content
+    }));
+
+    const MAX_CLIENT_ATTEMPTS = 5;
+    let finalSuccessReply: string | null = null;
+    let finalErrorMessage: string = errorMessage;
+
+    for (let attempt = 1; attempt <= MAX_CLIENT_ATTEMPTS; attempt++) {
+      try {
+        if (attempt === 1) {
+          setStatusText(`${expertName} is reading your message and writing...`);
+        } else if (attempt === 2) {
+          setStatusText(`${expertName} is preparing detailed, thoughtful guidance for you...`);
+        } else if (attempt === 3) {
+          setStatusText(`${expertName} is giving your situation her full attention...`);
+        } else if (attempt === 4) {
+          setStatusText(`${expertName} is reviewing every detail of your question...`);
+        } else if (attempt === 5) {
+          setStatusText(`Almost ready, ${expertName} is finalizing your personal advice...`);
+        }
+
+        const controller = new AbortController();
+        // Client timeout of 9600ms per attempt to safely accommodate comprehensive answers within Vercel Free Plan ceiling
+        const timeoutId = setTimeout(() => controller.abort(), 9600);
+
+        const res = await fetch('/api/v1/ai-chat', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Accept': 'application/json',
+          },
+          signal: controller.signal,
+          body: JSON.stringify({
+            action: 'ai-chat',
+            messages: historyForApi,
+            userContext: { userName, userId, email: userEmail },
+            customSystemPrompt: systemPromptContext || undefined,
+            expertName: expertName || undefined,
+            userId: userId || undefined,
+            messagesSentCount,
+            clientAttempt: attempt,
+          })
+        });
+
+        clearTimeout(timeoutId);
+
+        const responseText = await res.text();
+        let data: any = {};
+        try {
+          data = responseText ? JSON.parse(responseText) : {};
+        } catch {
+          data = {};
+        }
+
+        // Limit reached check
+        if (res.status === 403 || data.error === 'VIP_REQUIRED' || data.isLimitReached || (data.error && data.error.code === 'VIP_REQUIRED')) {
           setIsUserUnlimited(false);
           const limitMsg = typeof data.message === 'string' ? data.message : (data.error?.message || limitToast);
           toast.error(limitMsg);
+          setLoading(false);
           return;
         }
 
-        let extractedError = errorMessage;
-        if (typeof data.error === 'string' && data.error.trim()) {
-          extractedError = data.error;
-        } else if (data.error && typeof data.error === 'object') {
-          extractedError = (typeof data.error.message === 'string' && data.error.message) ||
-                           (typeof data.error.error === 'string' && data.error.error) ||
-                           JSON.stringify(data.error);
-        } else if (typeof data.message === 'string' && data.message.trim()) {
-          extractedError = data.message;
-        } else if (data.message && typeof data.message === 'object') {
-          extractedError = (typeof data.message.message === 'string' && data.message.message) || JSON.stringify(data.message);
-        } else if (typeof data.details === 'string' && data.details.trim()) {
-          extractedError = data.details;
+        if (res.ok && data.success !== false && data.reply) {
+          finalSuccessReply = data.reply;
+          break; // Succeeded! Exit retry loop
         }
 
-        throw new Error(extractedError || errorMessage);
+        const isRetryableStatus = res.status === 503 || res.status === 504 || res.status === 502 || res.status === 500 || res.status === 429;
+        const isExplicitRetryable = data.retryable === true || data.isHighDemand === true;
+        const rawMsg = (typeof data.error === 'string' ? data.error : data.message) || responseText || '';
+        const isBusySignal = rawMsg.toLowerCase().includes('busy') || 
+                             rawMsg.toLowerCase().includes('demand') || 
+                             rawMsg.toLowerCase().includes('conversation') || 
+                             rawMsg.toLowerCase().includes('consultation') ||
+                             rawMsg.toLowerCase().includes('student') ||
+                             rawMsg.toLowerCase().includes('timeout') || 
+                             rawMsg.toLowerCase().includes('timed out') ||
+                             rawMsg.toLowerCase().includes('rate limit');
+
+        if (isRetryableStatus || isExplicitRetryable || isBusySignal) {
+          finalErrorMessage = `${expertName} is currently helping other students. Please try again in a few moments.`;
+          if (attempt < MAX_CLIENT_ATTEMPTS) {
+            // Adaptive jittered backoff: attempt 1 -> ~1400ms, attempt 2 -> ~2700ms, attempt 3 -> ~4000ms
+            const delayMs = 1200 * attempt + Math.floor(Math.random() * 500);
+            console.warn(`[Ask Victoria] Attempt ${attempt}/${MAX_CLIENT_ATTEMPTS} busy in consultation. Retrying in ${delayMs}ms...`);
+            await new Promise(r => setTimeout(r, delayMs));
+            continue;
+          }
+        } else {
+          // Non-retryable
+          finalErrorMessage = `${expertName} is currently assisting other students. Please try asking again shortly.`;
+          break;
+        }
+      } catch (netErr: any) {
+        console.warn(`[Ask Victoria] Attempt ${attempt}/${MAX_CLIENT_ATTEMPTS} timeout/retry:`, netErr?.name || netErr?.message);
+        finalErrorMessage = `${expertName} is currently assisting other students. Please try asking again shortly.`;
+
+        if (attempt < MAX_CLIENT_ATTEMPTS) {
+          const delayMs = 1500 * attempt + Math.floor(Math.random() * 500);
+          await new Promise(r => setTimeout(r, delayMs));
+          continue;
+        }
+      }
+    }
+
+    if (finalSuccessReply) {
+      const cleanReply = finalSuccessReply.replace(/\*\*/g, '');
+      const totalChars = cleanReply.length;
+      const networkDuration = Date.now() - requestStartTime;
+
+      if (!isFastResponseMode) {
+        // Calculate target duration using admin-configured values:
+        // - Respostas curtas (~250 caracteres): targetSecShort (padrão: 9s)
+        // - Respostas médias (~700 caracteres): targetSecMedium (padrão: 16s)
+        // - Respostas longas (~1500-2000 caracteres): targetSecLong (padrão: 30s)
+        let targetTotalSec = targetSecMedium;
+        if (totalChars <= 250) {
+          targetTotalSec = targetSecShort;
+        } else if (totalChars <= 700) {
+          const ratio = (totalChars - 250) / (700 - 250);
+          targetTotalSec = targetSecShort + ratio * (targetSecMedium - targetSecShort);
+        } else if (totalChars <= 1800) {
+          const ratio = (totalChars - 700) / (1800 - 700);
+          targetTotalSec = targetSecMedium + ratio * (targetSecLong - targetSecMedium);
+        } else {
+          // Para respostas ultra-longas (> 1800 chars), escala suavemente até no máximo +15%
+          const extraRatio = Math.min(1, (totalChars - 1800) / 700);
+          targetTotalSec = targetSecLong + extraRatio * (targetSecLong * 0.15);
+        }
+
+        // Adiciona sutil variação humana natural (+- 350ms)
+        const varianceMs = Math.floor(Math.random() * 700) - 350;
+        const targetHumanMs = Math.max(1000, Math.round(targetTotalSec * 1000) + varianceMs);
+
+        // Tempo restante de simulação descontando o tempo que a requisição de rede já levou
+        const remainingDelayMs = Math.max(300, targetHumanMs - networkDuration);
+
+        // Simula o tempo de digitação humana com avisos dinâmicos em inglês
+        await simulateHumanTypingDelay(remainingDelayMs, expertName);
+
+        if (typingAbortRef.current) return;
       }
 
-      // ONLY record message usage count when the AI generation was successful
+      setLoading(false);
+
+      // ONLY record message usage count when AI generation was successful
       recordSentTimestamp();
       setSentTimestamps(getSentMessageTimestamps());
 
+      // Add completed message all at once (no typewriter streaming, no skip)
       const botMsg: Message = {
         id: (Date.now() + 1).toString(),
         role: 'assistant',
-        content: data.reply,
+        content: cleanReply,
         timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
       };
-
       setMessages(prev => [...prev, botMsg]);
-    } catch (err: any) {
-      console.error('AI Chat Error:', err);
-
-      let displayMsg = errorMessage;
-      if (err) {
-        if (typeof err.message === 'string' && err.message !== '[object Object]' && err.message.trim()) {
-          displayMsg = err.message;
-        } else if (typeof err === 'string' && err !== '[object Object]' && err.trim()) {
-          displayMsg = err;
-        } else if (err.error) {
-          displayMsg = typeof err.error === 'string' ? err.error : (err.error.message || JSON.stringify(err.error));
-        }
-      }
-
-      toast.error(displayMsg || errorMessage);
-      setMessages(prev => [
-        ...prev,
-        {
-          id: (Date.now() + 1).toString(),
-          role: 'assistant',
-          content: errorMessage,
-          timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-        }
-      ]);
-    } finally {
+      scrollToBottom();
+    } else {
       setLoading(false);
+      toast.error(`${expertName} is currently assisting other students. Please try again in a moment.`);
+      const errBotMsg: Message = {
+        id: (Date.now() + 1).toString(),
+        role: 'assistant',
+        content: `I'm so sorry, I cannot respond at the moment because I'm currently helping other students in consultation. Don't worry, your message is saved! Whenever you're ready, tap the button below and I'll give you my full attention. 💕`,
+        timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+        isError: true,
+        retryQuery: query,
+      };
+      setMessages(prev => [...prev, errBotMsg]);
     }
   };
 
@@ -667,15 +825,31 @@ export default function AiAssistantModal({ userId, userEmail, userName, userAvat
                 <div className={`group relative max-w-[88%] sm:max-w-[80%] rounded-2xl p-4 sm:p-5 text-sm sm:text-base leading-relaxed ${
                   msg.role === 'user'
                     ? 'bg-rose-600 text-white rounded-tr-none'
+                    : msg.isError
+                    ? 'bg-zinc-900 border border-rose-500/30 text-rose-100 rounded-tl-none shadow-lg shadow-rose-950/20'
                     : 'bg-zinc-900 border border-white/10 text-gray-100 rounded-tl-none shadow-lg'
                 }`}>
                   <div className="whitespace-pre-wrap font-normal">{msg.content.replace(/\*\*/g, '')}</div>
+
+                  {msg.isError && msg.retryQuery && (
+                    <div className="mt-3.5 pt-2.5 border-t border-rose-500/20 flex flex-wrap items-center justify-between gap-2">
+                      <span className="text-[11px] text-rose-300/80 font-medium">{expertName} is assisting other students</span>
+                      <button
+                        onClick={() => handleSend(msg.retryQuery)}
+                        disabled={loading}
+                        className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-rose-500/20 hover:bg-rose-500/30 text-rose-200 border border-rose-500/40 rounded-xl text-xs font-semibold transition-all active:scale-95 cursor-pointer disabled:opacity-50"
+                      >
+                        <RefreshCw size={12} className={loading ? 'animate-spin' : ''} />
+                        Ask {expertName} again
+                      </button>
+                    </div>
+                  )}
 
                   <div className={`flex items-center justify-between mt-3 pt-2 border-t text-[11px] ${
                     msg.role === 'user' ? 'border-white/20 text-rose-200' : 'border-white/10 text-gray-400'
                   }`}>
                     <span>{msg.timestamp}</span>
-                    {msg.role === 'assistant' && (
+                    {msg.role === 'assistant' && !msg.isError && (
                       <button
                         onClick={() => handleCopy(msg.content.replace(/\*\*/g, ''), msg.id)}
                         className="hover:text-white transition-colors flex items-center gap-1 opacity-60 group-hover:opacity-100"
@@ -704,9 +878,15 @@ export default function AiAssistantModal({ userId, userEmail, userName, userAvat
                     (e.target as HTMLImageElement).src = DEFAULT_AVATAR;
                   }}
                 />
-                <div className="bg-zinc-900 border border-white/10 rounded-2xl p-4 text-sm text-gray-300 rounded-tl-none flex items-center gap-2.5">
-                  <GlowingSpinner size="xs" color="primary" />
-                  <span>{typingText}</span>
+                <div className="bg-zinc-900 border border-white/10 rounded-2xl p-4 text-sm text-gray-300 rounded-tl-none flex items-center gap-3 shadow-lg">
+                  <div className="flex items-center gap-1 px-1">
+                    <span className="w-1.5 h-1.5 rounded-full bg-pink-400 animate-bounce" style={{ animationDelay: '0ms', animationDuration: '0.9s' }} />
+                    <span className="w-1.5 h-1.5 rounded-full bg-pink-400 animate-bounce" style={{ animationDelay: '180ms', animationDuration: '0.9s' }} />
+                    <span className="w-1.5 h-1.5 rounded-full bg-pink-400 animate-bounce" style={{ animationDelay: '360ms', animationDuration: '0.9s' }} />
+                  </div>
+                  <span className="animate-pulse font-medium text-pink-200/90 text-xs sm:text-sm">
+                    {statusText || `${expertName} is writing...`}
+                  </span>
                 </div>
               </motion.div>
             )}

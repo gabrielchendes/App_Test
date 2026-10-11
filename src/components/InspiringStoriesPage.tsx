@@ -20,7 +20,7 @@ import {
 import { supabase } from '../lib/supabase';
 import { Testimonial } from '../types/lms';
 import { AppSettings } from '../contexts/SettingsContext';
-import { toast } from 'sonner';
+import { toast } from '../lib/customToast';
 import { applyTestimonialOrder } from '../lib/utils';
 
 interface InspiringStoriesPageProps {

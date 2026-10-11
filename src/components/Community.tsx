@@ -4,7 +4,7 @@ import { User } from '@supabase/supabase-js';
 import { supabase, CommunityPost, PostComment } from '../lib/supabase';
 import { Send, User as UserIcon, Trash2, Loader2, Heart, MessageCircle, Image as ImageIcon, X, CornerUpRight, Edit3, ShieldCheck, Check } from 'lucide-react';
 import { GlowingSpinner } from './GlowingSpinner';
-import { toast } from 'sonner';
+import { toast } from '../lib/customToast';
 import { motion, AnimatePresence } from 'motion/react';
 import { format, formatDistanceToNow, subDays, isAfter, formatRelative } from 'date-fns';
 import { ptBR, enUS, es } from 'date-fns/locale';

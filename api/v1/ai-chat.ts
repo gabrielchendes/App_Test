@@ -1,7 +1,10 @@
 import { GoogleGenAI } from '@google/genai';
-import type { GenerateContentParameters, GenerateContentResponse } from '@google/genai';
 import { VercelRequest, VercelResponse } from '@vercel/node';
 import { createClient } from '@supabase/supabase-js';
+import { generateContentWithRetry, isRetryableGeminiError } from '../_utils/geminiCallWithRetry';
+
+// Vercel Free (Hobby) tier maximum execution limit is 10 seconds
+export const maxDuration = 10;
 
 const supabaseUrl = 
   process.env.SUPABASE_URL || 
@@ -72,117 +75,6 @@ function getAiClient(): GoogleGenAI {
     });
   }
   return aiInstance;
-}
-
-function isRetryableGeminiError(error: any): boolean {
-  if (!error) return false;
-  const rawStr = typeof error === 'string' ? error : (JSON.stringify(error) || String(error));
-  const msg = (error.message || error.error?.message || rawStr).toLowerCase();
-  const status = error.status || error.code || error.statusCode || error.error?.code || error.error?.status;
-
-  if (
-    status === 503 ||
-    status === 429 ||
-    status === 500 ||
-    status === 502 ||
-    status === 504 ||
-    status === 'UNAVAILABLE' ||
-    status === 'RESOURCE_EXHAUSTED'
-  ) {
-    return true;
-  }
-
-  if (
-    msg.includes('high demand') ||
-    msg.includes('spikes in demand') ||
-    msg.includes('unavailable') ||
-    msg.includes('resource_exhausted') ||
-    msg.includes('rate limit') ||
-    msg.includes('quota exceeded') ||
-    msg.includes('overloaded') ||
-    msg.includes('try again later') ||
-    msg.includes('econnreset') ||
-    msg.includes('etimedout')
-  ) {
-    return true;
-  }
-
-  return false;
-}
-
-async function generateContentWithRetry(options: {
-  ai: GoogleGenAI;
-  candidateModels?: string[];
-  contents: GenerateContentParameters['contents'];
-  config?: GenerateContentParameters['config'];
-  maxAttemptsPerModel?: number;
-  baseDelayMs?: number;
-  logPrefix?: string;
-}): Promise<{ text: string; modelUsed: string; response: GenerateContentResponse }> {
-  const {
-    ai,
-    candidateModels = ['gemini-3.1-flash-lite', 'gemini-3.8-flash', 'gemini-flash-latest'],
-    contents,
-    config,
-    maxAttemptsPerModel = 2,
-    baseDelayMs = 800,
-    logPrefix = '[Gemini Call]'
-  } = options;
-
-  let lastError: any = null;
-
-  for (const modelName of candidateModels) {
-    for (let attempt = 1; attempt <= maxAttemptsPerModel; attempt++) {
-      try {
-        const response = await ai.models.generateContent({
-          model: modelName,
-          contents,
-          config,
-        });
-
-        if (response.text) {
-          return {
-            text: response.text,
-            modelUsed: modelName,
-            response,
-          };
-        }
-      } catch (err: any) {
-        lastError = err;
-        const isRetryable = isRetryableGeminiError(err);
-        const rawErrStr = typeof err === 'string' ? err : (err?.message || JSON.stringify(err) || String(err));
-
-        console.warn(
-          `${logPrefix} Model ${modelName} (attempt ${attempt}/${maxAttemptsPerModel}) error:`,
-          rawErrStr
-        );
-
-        const isHighDemand =
-          rawErrStr.toLowerCase().includes('high demand') ||
-          rawErrStr.toLowerCase().includes('unavailable') ||
-          err?.status === 503 ||
-          err?.code === 503 ||
-          err?.error?.code === 503;
-
-        if (isHighDemand) {
-          console.info(`${logPrefix} Model ${modelName} experiencing high demand; falling over immediately to next candidate model.`);
-          break;
-        }
-
-        if (!isRetryable && attempt === 1) {
-          break;
-        }
-
-        const delay = Math.round(
-          baseDelayMs * Math.pow(1.5, attempt - 1) + Math.random() * 300
-        );
-
-        await new Promise((resolve) => setTimeout(resolve, delay));
-      }
-    }
-  }
-
-  throw lastError || new Error('All candidate models failed to generate content');
 }
 
 function parseRequestBody(req: VercelRequest): Record<string, any> {
@@ -329,28 +221,33 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
     const ai = getAiClient();
 
+    // Optimize conversation context by taking the last 12 messages to keep response fast and under Vercel execution limits
+    const trimmedMessages = messages.slice(-12);
+
     // Map message roles to Gemini expected format: user | model
-    const contents = messages.map((m: { role: string; content: string }) => ({
+    const contents = trimmedMessages.map((m: { role: string; content: string }) => ({
       role: m.role === 'assistant' ? 'model' : 'user',
       parts: [{ text: m.content }],
     }));
 
     const name = expertName || 'Victoria';
-    const defaultSystemInstruction = `You are ${name} ("Ask ${name}"), an empathetic, wise, insightful, and supportive AI relationship expert and psychologist/coach specializing in romantic relationships, dating, effective communication, emotional intimacy, rebuilding trust, conflict resolution, breakup recovery, and establishing healthy personal boundaries.
+    const defaultSystemInstruction = `You are ${name} ("Ask ${name}"), an empathetic, wise, insightful, and supportive relationship expert and coach specializing in romantic relationships, dating, effective communication, emotional intimacy, rebuilding trust, conflict resolution, breakup recovery, and establishing healthy personal boundaries.
 
 Core Consultation Guidelines:
 1. Respond in clear, warm, engaging, and constructive Portuguese (or match the language if the user writes in another language).
 2. Introduce yourself naturally as ${name} when appropriate, providing thoughtful, actionable, and compassionate advice tailored to couples, partners, and individuals seeking relationship growth.
 3. Use well-structured paragraphs, bullet points when appropriate, and an encouraging, non-judgmental tone.
 4. CRITICAL FORMATTING RULE: Do NOT use markdown bold stars (like **text**) or asterisks (*text*) in your output. Write in natural plain text without asterisks so responses feel completely natural and human.
-5. Gently remind users that while you provide expert relationship guidance and communication strategies, you are an AI coach and not a substitute for clinical emergency therapy.
+5. Provide thorough, empathetic, insightful, and practical advice. Adapt the depth and length of your guidance naturally to the user's situation: when users ask complex, emotional, or detailed questions, provide rich, elaborate, step-by-step guidance with actionable communication scripts and psychological perspective, without rushing or cutting thoughts short. When questions are simple or conversational, provide clear and direct guidance.
+6. Gently remind users that while you provide expert relationship guidance and communication strategies, you are a coach and not a substitute for clinical emergency therapy.
 ${userContext?.userName ? `User's Name: ${userContext.userName}` : ''}`;
 
     const systemInstruction = customSystemPrompt && customSystemPrompt.trim() !== ''
       ? `${customSystemPrompt.trim()}\n\nIMPORTANT FORMATTING RULE: Do NOT use markdown bold stars (**text**) or asterisks in output. Write in natural plain text.\n\n${userContext?.userName ? `User's Name: ${userContext.userName}` : ''}`
       : defaultSystemInstruction;
 
-    const candidateModels = ['gemini-3.1-flash-lite', 'gemini-3.8-flash', 'gemini-flash-latest'];
+    // Ordered candidate models: high-speed flash-lite first, latest alias, flash, pro preview fallback
+    const candidateModels = ['gemini-3.1-flash-lite', 'gemini-flash-latest', 'gemini-3.8-flash', 'gemini-3.1-pro-preview'];
 
     const result = await generateContentWithRetry({
       ai,
@@ -359,10 +256,13 @@ ${userContext?.userName ? `User's Name: ${userContext.userName}` : ''}`;
       config: {
         systemInstruction,
         temperature: 0.7,
+        maxOutputTokens: 2500,
       },
-      maxAttemptsPerModel: 2,
-      baseDelayMs: 600,
-      logPrefix: '[AI Chat]'
+      maxAttemptsPerModel: 1,
+      baseDelayMs: 400,
+      perCallTimeoutMs: 7200,
+      totalBudgetMs: 8800, // Safe execution budget well within Vercel's 10s ceiling
+      logPrefix: '[Ask Victoria Chat]'
     });
 
     const responseText = result.text;
@@ -386,6 +286,7 @@ ${userContext?.userName ? `User's Name: ${userContext.userName}` : ''}`;
     return res.status(200).json({
       success: true,
       reply,
+      modelUsed: result.modelUsed,
     });
   } catch (err: any) {
     console.error('[AI Chat API Error]:', err);
@@ -399,22 +300,44 @@ ${userContext?.userName ? `User's Name: ${userContext.userName}` : ''}`;
       });
     }
 
-    const isQuotaError =
+    const isQuotaOrRateLimit =
       err?.status === 'RESOURCE_EXHAUSTED' || 
       err?.status === 429 || 
       errMsg.includes('429') || 
       errMsg.includes('quota') || 
       errMsg.includes('RESOURCE_EXHAUSTED');
 
-    if (isQuotaError) {
+    if (isQuotaOrRateLimit) {
       return res.status(429).json({
-        error: 'Temporary conversation limit reached. Please wait a moment and try again.'
+        success: false,
+        retryable: true,
+        isHighDemand: true,
+        error: 'Victoria is currently in consultation assisting other students. Please try again in a few moments.',
+        details: 'High consultation demand'
       });
     }
 
-    if (errMsg.includes('503') || errMsg.includes('UNAVAILABLE') || errMsg.includes('high demand') || errMsg.includes('spikes in demand') || errMsg.includes('overloaded')) {
+    const isHighDemandOrTimeout =
+      err?.status === 503 ||
+      err?.status === 504 ||
+      err?.status === 'UNAVAILABLE' ||
+      errMsg.includes('503') ||
+      errMsg.includes('504') ||
+      errMsg.includes('UNAVAILABLE') ||
+      errMsg.includes('high demand') ||
+      errMsg.includes('spikes in demand') ||
+      errMsg.includes('overloaded') ||
+      errMsg.includes('timed out') ||
+      errMsg.includes('timeout') ||
+      errMsg.includes('budget');
+
+    if (isHighDemandOrTimeout) {
       return res.status(503).json({
-        error: 'Victoria is currently in another conversation. Please wait a moment and try again.'
+        success: false,
+        retryable: true,
+        isHighDemand: true,
+        error: 'Victoria is currently dedicated to answering other students. Please try again in a few moments.',
+        details: errMsg
       });
     }
 
@@ -432,7 +355,10 @@ ${userContext?.userName ? `User's Name: ${userContext.userName}` : ''}`;
     } catch (_) {}
 
     return res.status(500).json({
-      error: 'Connection error with Expert: ' + (cleanError || 'Service temporarily unavailable. Please try again later.')
+      success: false,
+      retryable: isRetryableGeminiError(err),
+      error: 'Victoria is taking a moment between consultations. Please try asking again shortly.',
+      details: cleanError
     });
   }
 }

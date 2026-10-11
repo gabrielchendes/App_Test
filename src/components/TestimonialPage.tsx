@@ -14,7 +14,7 @@ import { notifyAdmin } from '../lib/notifications';
 import { safeFetch } from '../lib/utils';
 import { Course } from '../types/lms';
 import { AppSettings } from '../contexts/SettingsContext';
-import { toast } from 'sonner';
+import { toast } from '../lib/customToast';
 
 interface TestimonialPageProps {
   user: User;

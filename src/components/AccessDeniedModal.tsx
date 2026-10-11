@@ -2,7 +2,7 @@ import React, { useState } from 'react';
 import { Lock, Sparkles, RefreshCw, LogOut, ExternalLink, ShieldAlert, Mail, MessageSquare, AlertCircle } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 import { useSettings } from '../contexts/SettingsContext';
-import { toast } from 'sonner';
+import { toast } from '../lib/customToast';
 
 interface AccessDeniedModalProps {
   userEmail: string;

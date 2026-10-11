@@ -8,6 +8,8 @@ export interface GeminiRetryOptions {
   config?: GenerateContentParameters['config'];
   maxAttemptsPerModel?: number;
   baseDelayMs?: number;
+  perCallTimeoutMs?: number;
+  totalBudgetMs?: number;
   logPrefix?: string;
 }
 
@@ -43,7 +45,9 @@ export function isRetryableGeminiError(error: any): boolean {
     msg.includes('overloaded') ||
     msg.includes('try again later') ||
     msg.includes('econnreset') ||
-    msg.includes('etimedout')
+    msg.includes('etimedout') ||
+    msg.includes('timed out') ||
+    msg.includes('timeout')
   ) {
     return true;
   }
@@ -52,33 +56,63 @@ export function isRetryableGeminiError(error: any): boolean {
 }
 
 /**
- * Executes a Gemini content generation with intelligent multi-model fallback and exponential backoff.
+ * Executes a Gemini content generation with intelligent multi-model fallback,
+ * individual call timeouts, and overall execution time budget adhering to Vercel Free Plan.
  */
 export async function generateContentWithRetry(
   options: GeminiRetryOptions
 ): Promise<{ text: string; modelUsed: string; response: GenerateContentResponse }> {
   const {
     ai,
-    candidateModels = ['gemini-3.1-flash-lite', 'gemini-3.8-flash', 'gemini-flash-latest'],
+    candidateModels = ['gemini-3.1-flash-lite', 'gemini-flash-latest', 'gemini-3.8-flash', 'gemini-3.1-pro-preview'],
     contents,
     config,
-    maxAttemptsPerModel = 2,
-    baseDelayMs = 800,
+    maxAttemptsPerModel = 1,
+    baseDelayMs = 400,
+    perCallTimeoutMs = 6500,
+    totalBudgetMs = 8800,
     logPrefix = '[Gemini Call]'
   } = options;
 
+  const startTime = Date.now();
   let lastError: any = null;
 
   for (const modelName of candidateModels) {
+    // If approaching serverless budget, break early to respond cleanly before Vercel kills the function
+    const timeElapsed = Date.now() - startTime;
+    if (timeElapsed >= totalBudgetMs - 1200) {
+      console.info(`${logPrefix} Approaching execution time budget (${timeElapsed}ms / ${totalBudgetMs}ms). Halting further model attempts.`);
+      break;
+    }
+
     for (let attempt = 1; attempt <= maxAttemptsPerModel; attempt++) {
+      const remainingTime = totalBudgetMs - (Date.now() - startTime);
+      if (remainingTime < 1200) {
+        console.info(`${logPrefix} Not enough time remaining (${remainingTime}ms) for attempt ${attempt} on ${modelName}.`);
+        break;
+      }
+
+      const effectiveCallTimeout = Math.min(perCallTimeoutMs, remainingTime - 300);
+
       try {
-        const response = await ai.models.generateContent({
+        let timer: NodeJS.Timeout | null = null;
+        const timeoutPromise = new Promise<never>((_, reject) => {
+          timer = setTimeout(() => {
+            reject(new Error(`Call to model ${modelName} reached deadline after ${effectiveCallTimeout}ms`));
+          }, effectiveCallTimeout);
+        });
+
+        const callPromise = ai.models.generateContent({
           model: modelName,
           contents,
           config,
         });
 
-        if (response.text) {
+        const response = await Promise.race([callPromise, timeoutPromise]).finally(() => {
+          if (timer) clearTimeout(timer);
+        });
+
+        if (response && response.text) {
           return {
             text: response.text,
             modelUsed: modelName,
@@ -90,40 +124,40 @@ export async function generateContentWithRetry(
         const isRetryable = isRetryableGeminiError(err);
         const rawErrStr = typeof err === 'string' ? err : (err?.message || JSON.stringify(err) || String(err));
 
-        console.warn(
-          `${logPrefix} Model ${modelName} (attempt ${attempt}/${maxAttemptsPerModel}) error:`,
-          rawErrStr
+        console.info(
+          `${logPrefix} Model ${modelName} note: ${rawErrStr}. Trying fallback...`
         );
 
-        // If high demand 503 error, immediately fall through to next candidate model
-        const isHighDemand = rawErrStr.toLowerCase().includes('high demand') ||
-                             rawErrStr.toLowerCase().includes('unavailable') ||
-                             err?.status === 503 ||
-                             err?.code === 503 ||
-                             err?.error?.code === 503;
+        const isHighDemand =
+          rawErrStr.toLowerCase().includes('high demand') ||
+          rawErrStr.toLowerCase().includes('spikes in demand') ||
+          rawErrStr.toLowerCase().includes('unavailable') ||
+          rawErrStr.toLowerCase().includes('overloaded') ||
+          rawErrStr.toLowerCase().includes('timed out') ||
+          rawErrStr.toLowerCase().includes('deadline') ||
+          err?.status === 503 ||
+          err?.code === 503 ||
+          err?.error?.code === 503;
 
         if (isHighDemand) {
-          console.info(`${logPrefix} Model ${modelName} experiencing high demand; falling over immediately to next model.`);
+          console.info(`${logPrefix} Model ${modelName} busy/timed out; falling over immediately to next model.`);
           break;
         }
 
         if (!isRetryable && attempt === 1) {
-          // If not a retryable transient network/demand error, move directly to next candidate model
           break;
         }
 
-        // Calculate exponential backoff with randomized jitter
         const delay = Math.round(
-          baseDelayMs * Math.pow(1.5, attempt - 1) + Math.random() * 300
+          baseDelayMs * Math.pow(1.3, attempt - 1) + Math.random() * 150
         );
 
-        if (attempt < maxAttemptsPerModel || modelName !== candidateModels[candidateModels.length - 1]) {
-          console.info(`${logPrefix} Waiting ${delay}ms before retrying or switching models...`);
+        if (attempt < maxAttemptsPerModel && (Date.now() - startTime + delay) < totalBudgetMs - 1500) {
           await new Promise((resolve) => setTimeout(resolve, delay));
         }
       }
     }
   }
 
-  throw lastError || new Error(`${logPrefix} All candidate models failed to generate content.`);
+  throw lastError || new Error(`${logPrefix} All candidate models failed or were busy.`);
 }

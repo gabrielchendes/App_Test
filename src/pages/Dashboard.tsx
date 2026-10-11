@@ -15,7 +15,7 @@ import PullToRefresh from '../components/PullToRefresh';
 import WhatsAppIcon from '../components/WhatsAppIcon';
 import SmartHomeHeader from '../components/SmartHomeHeader';
 import { getDeviceType, isPWAInstalled, getDeferredPrompt, promptPWAInstall, installOnAndroidDirectly, subscribeToPrompt } from '../lib/pwa';
-import { toast } from 'sonner';
+import { toast, showToast } from '../lib/customToast';
 import { X, ShoppingBag, Loader2, Play, BookOpen, Star, Sparkles, Mail as MailIcon, MessageCircle, Book, Bell, Smartphone, ChevronRight } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { createNotification } from '../lib/notifications';
@@ -80,6 +80,14 @@ export default function Dashboard({ user }: DashboardProps) {
   const fetchInProgressRef = useRef(false);
   const hasFetchedOnceRef = useRef(false);
   const prevViewingCourseIdRef = useRef<string | null>(null);
+
+  // Fast safety ceiling to prevent permanent loading spinner if initial fetch takes too long
+  useEffect(() => {
+    const safetyTimer = setTimeout(() => {
+      setLoading(false);
+    }, 1500);
+    return () => clearTimeout(safetyTimer);
+  }, []);
 
   useEffect(() => {
     if (isAiModalOpen && user?.id) {
@@ -788,10 +796,9 @@ export default function Dashboard({ user }: DashboardProps) {
         100: settings.custom_texts?.['celebration.100'] || t('celebration.100') || "🏆 LEGENDARY! 100% COMPLETE! You've mastered all the content! Congratulations!"
       };
 
-      toast.success(messages[currentMilestone as keyof typeof messages] || `Amazing! You've reached ${currentMilestone}% progress!`, {
+      toast.achievement(messages[currentMilestone as keyof typeof messages] || `Amazing! You've reached ${currentMilestone}% progress!`, {
         duration: 5000,
         icon: currentMilestone === 100 ? '🏆' : '✨',
-        position: 'top-center'
       });
     }
   }, [globalStats.totalProgress, user.id]);
@@ -883,7 +890,7 @@ export default function Dashboard({ user }: DashboardProps) {
                         const { requestNotificationPermission } = await import('../lib/pushNotifications');
                         const granted = await requestNotificationPermission(user.id);
                         if (granted) {
-                          toast.success(settings.custom_texts?.['push.success'] || t('push.success') || 'Notificações ativadas com sucesso!');
+                          toast.success(settings.custom_texts?.['push.success'] || t('push.success') || 'Notifications enabled successfully!');
                         }
                       } catch (err) {
                         console.warn('Notification activation error:', err);
@@ -900,7 +907,7 @@ export default function Dashboard({ user }: DashboardProps) {
                     }}
                     className="w-full py-3 text-[10px] text-gray-600 font-bold uppercase tracking-[0.3em] hover:text-white transition-colors"
                   >
-                    {settings.custom_texts?.['push.deny'] || t('push.deny') || 'Agora não'}
+                    {settings.custom_texts?.['push.deny'] || t('push.deny') || 'Not now'}
                   </button>
                 </div>
               </div>

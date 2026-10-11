@@ -3,7 +3,7 @@ import { motion, useMotionValue, useTransform } from 'motion/react';
 import { CheckCircle2, AlertCircle, AlertTriangle, Info, Bell, X, ChevronUp, Trophy } from 'lucide-react';
 import { toast } from 'sonner';
 
-export type ToastVariant = 'success' | 'error' | 'warning' | 'info' | 'achievement' | 'default';
+export type ToastVariant = 'success' | 'error' | 'warning' | 'info' | 'achievement' | 'loading' | 'default';
 
 export interface ModernTopToastProps {
   id: string | number;
@@ -87,6 +87,17 @@ const variantConfigs: Record<ToastVariant, VariantConfig> = {
     ambientGlow: 'shadow-[0_18px_50px_-10px_rgba(251,191,36,0.4),0_0_30px_rgba(245,158,11,0.25)]',
     topGleam: 'from-yellow-400/0 via-amber-200 to-yellow-400/0',
   },
+  loading: {
+    badgeLabel: 'LOADING',
+    badgeText: 'text-amber-300',
+    badgeBg: 'bg-amber-500/15 border-amber-500/30',
+    iconBg: 'bg-gradient-to-br from-amber-500/25 via-amber-950/30 to-black',
+    iconRing: 'ring-1 ring-amber-400/40 border border-amber-400/40',
+    iconGlow: 'shadow-[0_0_15px_rgba(245,158,11,0.3)]',
+    iconNode: <div className="w-4 h-4 border-2 border-amber-300 border-t-transparent rounded-full animate-spin" />,
+    ambientGlow: 'shadow-[0_16px_45px_-10px_rgba(245,158,11,0.25)]',
+    topGleam: 'from-amber-400/0 via-amber-300/90 to-amber-400/0',
+  },
   default: {
     badgeLabel: 'NOTIFICATION',
     badgeText: 'text-amber-300',
@@ -110,32 +121,109 @@ export const ModernTopToast: React.FC<ModernTopToastProps> = ({
   action,
 }) => {
   const y = useMotionValue(0);
-  const opacity = useTransform(y, [-80, -20, 0], [0, 0.7, 1]);
-  const scale = useTransform(y, [-80, 0], [0.9, 1]);
+  const opacity = useTransform(y, [-140, -40, 0, 40], [0, 0.6, 1, 0.95]);
+  const scale = useTransform(y, [-140, 0, 40], [0.82, 1, 1.02]);
+  const rotateX = useTransform(y, [-140, 0], [18, 0]); // Natural iOS card fold effect when flicked upward
+  const [isDismissing, setIsDismissing] = React.useState(false);
 
   const cfg = variantConfigs[variant] || variantConfigs.default;
 
-  const handleDismiss = () => {
-    toast.dismiss(id);
+  const handleDismiss = React.useCallback(() => {
+    if (isDismissing) return;
+    setIsDismissing(true);
+    // Haptic feedback if supported on device for satisfying tactile feel
+    try {
+      if (typeof window !== 'undefined' && 'vibrate' in navigator) {
+        navigator.vibrate([15]);
+      }
+    } catch {
+      // Ignore vibration errors
+    }
+    // Smooth exit delay before sonner unmounts to ensure the luxurious flight-up animation plays
+    setTimeout(() => {
+      try {
+        toast.dismiss(id);
+      } catch {
+        // Fallback
+      }
+    }, 280);
+  }, [id, isDismissing]);
+
+  // Touch start tracker with velocity tracking for ultra-fluid natural mobile flick
+  const touchStartY = React.useRef<number | null>(null);
+  const touchStartTime = React.useRef<number>(0);
+
+  const onTouchStart = (e: React.TouchEvent) => {
+    touchStartY.current = e.touches[0].clientY;
+    touchStartTime.current = Date.now();
+  };
+
+  const onTouchMove = (e: React.TouchEvent) => {
+    if (touchStartY.current === null) return;
+    const currentY = e.touches[0].clientY;
+    const diff = currentY - touchStartY.current;
+    // Interactive feedback: if dragging upward, visually respond directly
+    if (diff < 0) {
+      y.set(diff);
+    }
+    // High-speed flick or distance threshold
+    const elapsed = Math.max(1, Date.now() - touchStartTime.current);
+    const speed = Math.abs(diff) / elapsed; // px per ms
+    if (diff < -24 || (diff < -10 && speed > 0.45)) {
+      touchStartY.current = null;
+      handleDismiss();
+    }
+  };
+
+  const onTouchEnd = () => {
+    touchStartY.current = null;
+    if (!isDismissing) {
+      // Soft spring back if not dismissed
+      y.set(0);
+    }
   };
 
   return (
     <motion.div
-      style={{ y, opacity, scale }}
+      style={{ y, opacity, scale, rotateX, transformPerspective: 1000 }}
       drag="y"
       dragConstraints={{ top: 0, bottom: 0 }}
-      dragElastic={{ top: 0.85, bottom: 0.08 }}
+      dragElastic={{ top: 0.95, bottom: 0.05 }}
       onDragEnd={(_, info) => {
-        // If dragged upwards by more than 12px or with upward velocity, dismiss smoothly
-        if (info.offset.y < -12 || info.velocity.y < -120) {
+        // If dragged upwards by more than 12px or with upward velocity flick (> 60px/s), dismiss
+        if (info.offset.y < -12 || info.velocity.y < -60) {
           handleDismiss();
         }
       }}
-      initial={{ opacity: 0, y: -30, scale: 0.93 }}
-      animate={{ opacity: 1, y: 0, scale: 1 }}
-      exit={{ opacity: 0, y: -40, scale: 0.9 }}
-      transition={{ type: 'spring', damping: 25, stiffness: 380 }}
-      className="group relative w-full max-w-[94vw] sm:max-w-md mx-auto select-none cursor-grab active:cursor-grabbing"
+      onTouchStart={onTouchStart}
+      onTouchMove={onTouchMove}
+      onTouchEnd={onTouchEnd}
+      initial={{ opacity: 0, y: -40, scale: 0.9, filter: 'blur(6px)' }}
+      animate={
+        isDismissing
+          ? {
+              opacity: 0,
+              y: -110,
+              scale: 0.82,
+              filter: 'blur(5px)',
+              transition: { duration: 0.28, ease: [0.32, 0, 0.67, 0] }
+            }
+          : {
+              opacity: 1,
+              y: 0,
+              scale: 1,
+              filter: 'blur(0px)',
+              transition: { type: 'spring', damping: 26, stiffness: 420 }
+            }
+      }
+      exit={{
+        opacity: 0,
+        y: -110,
+        scale: 0.82,
+        filter: 'blur(5px)',
+        transition: { duration: 0.25, ease: [0.32, 0, 0.67, 0] }
+      }}
+      className="group relative w-full max-w-[94vw] sm:max-w-md mx-auto select-none cursor-grab active:cursor-grabbing pointer-events-auto will-change-transform"
     >
       {/* Outer 24K Gold Radiant Chassis with Ambient Shimmer */}
       <div className={`relative rounded-[24px] p-[1.8px] bg-gradient-to-b from-amber-300 via-amber-500/60 to-amber-900/60 shadow-[0_18px_50px_-10px_rgba(245,158,11,0.32),0_0_28px_rgba(251,191,36,0.18)] hover:shadow-[0_20px_55px_-8px_rgba(245,158,11,0.45),0_0_35px_rgba(251,191,36,0.28)] transition-all duration-300 overflow-hidden ${cfg.ambientGlow}`}>
@@ -186,11 +274,13 @@ export const ModernTopToast: React.FC<ModernTopToastProps> = ({
                   <button
                     type="button"
                     onClick={(e) => {
+                      e.preventDefault();
                       e.stopPropagation();
                       action.onClick();
                       handleDismiss();
                     }}
-                    className="px-3.5 py-1.5 bg-gradient-to-r from-amber-500/25 via-amber-400/35 to-amber-500/25 hover:from-amber-400/40 hover:to-amber-300/50 border border-amber-300/60 text-amber-100 font-black text-xs uppercase tracking-wider rounded-xl transition-all shadow-md shadow-amber-500/20 active:scale-95 cursor-pointer"
+                    onPointerDown={(e) => e.stopPropagation()}
+                    className="px-3.5 py-1.5 bg-gradient-to-r from-amber-500/25 via-amber-400/35 to-amber-500/25 hover:from-amber-400/40 hover:to-amber-300/50 border border-amber-300/60 text-amber-100 font-black text-xs uppercase tracking-wider rounded-xl transition-all shadow-md shadow-amber-500/20 active:scale-95 cursor-pointer relative z-20"
                   >
                     {action.label}
                   </button>
@@ -202,32 +292,41 @@ export const ModernTopToast: React.FC<ModernTopToastProps> = ({
             <button
               type="button"
               onClick={(e) => {
+                e.preventDefault();
                 e.stopPropagation();
                 handleDismiss();
               }}
-              className="shrink-0 p-1.5 text-zinc-400 hover:text-amber-200 rounded-xl hover:bg-amber-400/15 border border-transparent hover:border-amber-400/30 transition-all cursor-pointer"
+              onPointerDown={(e) => {
+                e.stopPropagation();
+              }}
+              className="shrink-0 p-2 -mr-1 -mt-1 text-zinc-400 hover:text-amber-200 rounded-xl hover:bg-amber-400/15 border border-transparent hover:border-amber-400/30 transition-all cursor-pointer relative z-30 touch-manipulation"
               title="Close notification"
+              aria-label="Close notification"
             >
-              <X size={14} />
+              <X size={16} />
             </button>
           </div>
 
           {/* Ergonomic Luxury Bottom Pull-Tab with Animated Upward Arrow */}
           <div 
             onClick={(e) => {
+              e.preventDefault();
               e.stopPropagation();
               handleDismiss();
             }}
-            className="mt-3 pt-1.5 border-t border-amber-400/15 flex items-center justify-between cursor-pointer group/handle select-none"
-            title="Swipe up or tap to dismiss"
+            onPointerDown={(e) => {
+              e.stopPropagation();
+            }}
+            className="mt-3 pt-1.5 border-t border-amber-400/15 flex items-center justify-between cursor-pointer group/handle select-none relative z-20 touch-manipulation hover:bg-white/[0.03] rounded-b-xl px-1 transition-colors"
+            title="SWIPE UP - TAP TO DISMISS"
           >
-            <div className="flex items-center gap-1.5">
+            <div className="flex items-center gap-2">
               {/* Glowing Upward Arrow Capsule */}
               <div className="flex items-center justify-center w-6 h-5 rounded-lg bg-gradient-to-t from-amber-500/25 to-amber-300/30 border border-amber-400/40 shadow-[0_0_10px_rgba(251,191,36,0.35)] group-hover/handle:bg-amber-400/40 group-hover/handle:border-amber-300 transition-all">
                 <ChevronUp size={14} className="text-amber-200 animate-float-up stroke-[2.5]" />
               </div>
-              <span className="text-[10px] font-bold text-amber-300/80 group-hover/handle:text-amber-200 transition-colors tracking-wide flex items-center gap-1">
-                Swipe up <span className="text-amber-400/50 text-[9px]">• Tap to dismiss</span>
+              <span className="text-[10px] font-black text-amber-300/90 group-hover/handle:text-amber-200 transition-colors tracking-wider uppercase flex items-center gap-1.5">
+                SWIPE UP <span className="text-amber-400/60 text-[9px] font-extrabold">• TAP TO DISMISS</span>
               </span>
             </div>
           </div>

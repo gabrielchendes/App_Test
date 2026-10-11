@@ -226,6 +226,7 @@ body {
 /* Modern Sonner Toast styling */
 [data-sonner-toaster] {
   top: 16px !important;
+  z-index: 999999 !important;
   pointer-events: none;
 }
 
@@ -238,6 +239,8 @@ body {
   border: none !important;
   box-shadow: none !important;
   padding: 0 !important;
+  pointer-events: auto !important;
+  touch-action: pan-x pan-y !important;
 }
 
 [data-sonner-toast]:not(:has(.group)) {

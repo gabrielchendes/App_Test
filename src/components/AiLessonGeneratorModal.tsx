@@ -25,7 +25,7 @@ import {
 } from 'lucide-react';
 import { Course, Module, LessonBlock, LessonBlockType, LessonBlockItem } from '../types/lms';
 import { BlockLessonViewer } from './BlockLessonViewer';
-import { toast } from 'sonner';
+import { toast } from '../lib/customToast';
 
 interface AiLessonGeneratorModalProps {
   isOpen: boolean;
@@ -172,11 +172,11 @@ export const AiLessonGeneratorModal: React.FC<AiLessonGeneratorModalProps> = ({
       try {
         data = JSON.parse(rawText);
       } catch {
-        throw new Error(rawText?.trim() || `Falha de comunicação com o servidor de IA (HTTP ${response.status})`);
+        throw new Error(rawText?.trim() || `Communication error with AI service (HTTP ${response.status})`);
       }
 
       if (!response.ok || !data?.success || !data?.lesson) {
-        throw new Error(data?.error || 'Falha ao gerar aula com IA');
+        throw new Error(data?.error || 'Failed to generate lesson with AI');
       }
 
       setGeneratedLesson(data.lesson);

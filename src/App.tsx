@@ -4,7 +4,7 @@ import { User } from '@supabase/supabase-js';
 import { useSettings } from './contexts/SettingsContext';
 import { lazyWithRetry } from './lib/lazyWithRetry';
 import { safeFetch } from './lib/utils';
-import { toast } from 'sonner';
+import { toast } from './lib/customToast';
 import LoginPage from './pages/LoginPage';
 import Dashboard from './pages/Dashboard';
 import { GlowingSpinner } from './components/GlowingSpinner';
@@ -120,10 +120,14 @@ export default function App() {
       return;
     }
 
-    // Check current session
+    // Check current session with fast ceiling
     const checkInitialSession = async () => {
       try {
-        const { data: { session }, error } = await supabase.auth.getSession();
+        const sessionPromise = supabase.auth.getSession();
+        const timeoutPromise = new Promise<{ data: { session: any }; error: any }>((resolve) =>
+          setTimeout(() => resolve({ data: { session: null }, error: null }), 1200)
+        );
+        const { data: { session }, error } = await Promise.race([sessionPromise, timeoutPromise]);
         
         if (error) {
           console.warn('Session check note:', error.message);
@@ -154,14 +158,7 @@ export default function App() {
           setUser(session.user);
           setAuthLoading(false);
         } else {
-          // If no session, only stop loading if we are NOT in the middle of a hash login
-          if (!window.location.hash.includes('access_token=')) {
-            setAuthLoading(false);
-          } else {
-            console.log('Detected hash fragment, keeping loading state for processing...');
-            // Safety timeout: if after 5 seconds nothing happened, stop loading
-            setTimeout(() => setAuthLoading(false), 5000);
-          }
+          setAuthLoading(false);
         }
       } catch (error: any) {
         console.warn('Initial session check note:', error?.message || error);
@@ -191,7 +188,7 @@ export default function App() {
           });
 
           if (!data || data.error) {
-            toast.error(data?.error || 'Erro ao processar MagicLink');
+            toast.error(data?.error || 'Error processing MagicLink');
             setAuthLoading(false);
             return;
           }
@@ -203,14 +200,14 @@ export default function App() {
             });
             if (signInError) {
               console.warn('[Magic Link] Sign in failed:', signInError);
-              toast.error('Ocorreu um erro no login via MagicLink.');
+              toast.error('An error occurred logging in via MagicLink.');
               setAuthLoading(false);
             } else {
-              toast.success('Login realizado com sucesso via MagicLink!');
+              toast.success('Successfully logged in via MagicLink!');
             }
           } else {
             // It's the master admin (no tempPassword returned)
-            toast.info('MagicLink do Administrador. Insira sua senha para continuar.');
+            toast.info('Administrator MagicLink. Enter your password to continue.');
             localStorage.setItem('prefilled_email', targetEmail);
             setAuthLoading(false);
           }
@@ -227,10 +224,10 @@ export default function App() {
 
     checkMagicLink();
 
-    // Absolute fallback to ensure we don't get stuck on loading screen
+    // Fast safety fallback ceiling to ensure we never get stuck on loading screen
     const forceStopLoading = setTimeout(() => {
       setAuthLoading(false);
-    }, 10000);
+    }, 1500);
 
     // Listen for auth changes
     const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, session) => {

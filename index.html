@@ -214,10 +214,17 @@
         window.dispatchEvent(new CustomEvent('pwa-prompt-available', { detail: e }));
       });
 
-      // Immediate service worker registration for Samsung Internet and Chromium PWA criteria
-      if ('serviceWorker' in navigator && !window.frameElement) {
+      // Service worker registration - only in top-level standalone PWA, never in dev preview iframe
+      var isIframeEnv = typeof window !== 'undefined' && window.self !== window.top;
+      if ('serviceWorker' in navigator && !isIframeEnv && window.location.protocol === 'https:') {
         try {
           navigator.serviceWorker.register('/sw.js', { scope: '/' }).catch(function() {});
+        } catch (e) {}
+      } else if ('serviceWorker' in navigator && isIframeEnv) {
+        try {
+          navigator.serviceWorker.getRegistrations().then(function(regs) {
+            regs.forEach(function(r) { r.unregister(); });
+          });
         } catch (e) {}
       }
     </script>

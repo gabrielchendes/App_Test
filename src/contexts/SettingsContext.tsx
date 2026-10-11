@@ -182,17 +182,17 @@ export function SettingsProvider({ children }: { children: React.ReactNode }) {
   });
 
   const fetchSettings = async () => {
-    // Safety timeout to prevent hanging on poor mobile connections
+    // Fast safety timeout to prevent hanging on poor mobile connections
     const timeoutId = setTimeout(() => {
       setLoading(false);
-    }, 2000);
+    }, 1200);
 
     try {
       let data: any = null;
 
       // 1. Try fetching server-merged settings with local persistent overrides
       try {
-        const resp = await fetch('/api/v1/settings', { signal: AbortSignal.timeout(2000) });
+        const resp = await fetch('/api/v1/settings', { signal: AbortSignal.timeout(1200) });
         if (resp.ok) {
           const json = await resp.json();
           if (json && (json.app_name || json.favicon_url || json.custom_texts)) {

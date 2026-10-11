@@ -89,7 +89,7 @@ import {
   FileCode
 } from 'lucide-react';
 import WhatsAppIcon from './WhatsAppIcon';
-import { toast } from 'sonner';
+import { toast } from '../lib/customToast';
 import { useSettings } from '../contexts/SettingsContext';
 import { useI18n } from '../contexts/I18nContext';
 import { AdminTestimonials } from './AdminTestimonials';
@@ -816,10 +816,11 @@ export default function AdminPanel({ user }: AdminPanelProps) {
       setDraftCustomTexts(settings.custom_texts);
     }
 
-    if (Array.isArray(settings?.custom_texts?.hotmart_products_catalog) && settings.custom_texts.hotmart_products_catalog.length > 0) {
+    const rawCatalog = (settings?.custom_texts as any)?.hotmart_products_catalog;
+    if (Array.isArray(rawCatalog) && rawCatalog.length > 0) {
       setMappedProducts(prev => {
         if (prev.length === 0) {
-          return settings.custom_texts.hotmart_products_catalog.map((p: any) => ({
+          return rawCatalog.map((p: any) => ({
             ...p,
             name: p.product_name || p.name || ''
           }));
@@ -1520,12 +1521,15 @@ export default function AdminPanel({ user }: AdminPanelProps) {
         toast.error('Aviso de Autenticação Hottok (HTTP 401): O token configurado na Edge Function difere do enviado.');
       } else if (res.success) {
         toast.success('Simulação de webhook executada com sucesso!');
+      } else if (res.is_purchases_schema_error || (res.result?.details && String(res.result.details).includes("column of 'purchases'"))) {
+        toast.error('Erro de coluna no Supabase: A tabela purchases precisa da coluna status. Veja o comando SQL de correção abaixo.');
       } else {
-        toast.error('Falha ao conectar na URL: NetworkError when attempting to fetch resource. Por favor, verifique a "URL do Endpoint do Webhook (Hotmart)".');
+        const errorMsg = res.result?.details || res.result?.error || res.error || 'Falha ao processar simulação do webhook.';
+        toast.error(errorMsg);
       }
       fetchCentralProducts();
     } catch (err: any) {
-      toast.error('Falha ao conectar na URL: NetworkError when attempting to fetch resource. Por favor, verifique a "URL do Endpoint do Webhook (Hotmart)".');
+      toast.error(err?.message || 'Falha ao conectar na URL do Webhook.');
     } finally {
       setSimulatingWebhook(false);
     }
@@ -4996,19 +5000,57 @@ export default function AdminPanel({ user }: AdminPanelProps) {
                             </div>
                           )}
 
-                          {(!simResult.success || (simResult.http_status && simResult.http_status >= 400)) && simResult.http_status !== 401 && (
+                          {/* Erro de coluna status na tabela purchases */}
+                          {(!simResult.success || (simResult.http_status && simResult.http_status >= 400)) && (simResult.is_purchases_schema_error || String(simResult.result?.details || '').includes("column of 'purchases'") || (String(simResult.result?.details || '').includes("purchases") && String(simResult.result?.details || '').includes("status"))) && (
+                            <div className="bg-amber-950/40 border border-amber-500/50 rounded-2xl p-5 space-y-3 text-xs text-amber-200">
+                              <div className="flex items-center gap-2 font-bold text-amber-400 text-sm">
+                                <AlertTriangle size={18} />
+                                <span>Ação Necessária no Supabase: Coluna 'status' ausente na tabela 'purchases'</span>
+                              </div>
+                              <p className="text-[11px] leading-relaxed text-gray-300">
+                                O Supabase retornou o erro <code className="bg-black/60 px-1 py-0.5 rounded text-amber-300 font-mono">PGRST204: Could not find the 'status' column of 'purchases' in the schema cache</code>. A tabela <code className="bg-black/60 px-1 py-0.5 rounded text-amber-300 font-mono">purchases</code> no seu banco de dados precisa ter a coluna <code className="bg-black/60 px-1 py-0.5 rounded text-amber-300 font-mono">status</code> para registrar as compras aprovadas.
+                              </p>
+                              <div className="bg-black/70 border border-amber-500/30 rounded-xl p-3.5 space-y-2">
+                                <div className="flex items-center justify-between gap-2">
+                                  <span className="text-[11px] font-bold text-amber-300">Execute este comando no SQL Editor do Supabase:</span>
+                                  <button
+                                    onClick={() => {
+                                      navigator.clipboard.writeText("ALTER TABLE public.purchases ADD COLUMN IF NOT EXISTS status TEXT DEFAULT 'approved';");
+                                      toast.success("Comando SQL copiado com sucesso!");
+                                    }}
+                                    className="flex items-center gap-1.5 px-3 py-1.5 bg-amber-500 hover:bg-amber-400 text-black font-black text-[11px] rounded-lg transition-all"
+                                  >
+                                    <Copy size={12} /> Copiar SQL
+                                  </button>
+                                </div>
+                                <code className="text-emerald-400 font-mono text-xs block select-all p-2 bg-black/60 rounded border border-white/5">
+                                  ALTER TABLE public.purchases ADD COLUMN IF NOT EXISTS status TEXT DEFAULT 'approved';
+                                </code>
+                              </div>
+                              <div className="text-[11px] text-gray-400 font-sans space-y-1 bg-black/30 p-3 rounded-xl border border-white/5">
+                                <p className="font-bold text-white">Como aplicar a correção em 30 segundos:</p>
+                                <p>1. Acesse o painel do Supabase do seu projeto &gt; <b>SQL Editor</b>.</p>
+                                <p>2. Cole o comando <code className="text-amber-300 font-mono">ALTER TABLE public.purchases ADD COLUMN IF NOT EXISTS status TEXT DEFAULT 'approved';</code>.</p>
+                                <p>3. Clique no botão <b>RUN</b>. Em seguida, clique novamente em <b>Executar Simulação</b> aqui no painel.</p>
+                              </div>
+                            </div>
+                          )}
+
+                          {(!simResult.success || (simResult.http_status && simResult.http_status >= 400)) && simResult.http_status !== 401 && !simResult.is_purchases_schema_error && !String(simResult.result?.details || '').includes("column of 'purchases'") && !(String(simResult.result?.details || '').includes("purchases") && String(simResult.result?.details || '').includes("status")) && (
                             <div className="bg-red-950/50 border border-red-500/40 rounded-xl p-4 space-y-2 text-xs text-red-200">
                               <div className="flex items-center gap-2 font-bold text-red-400">
                                 <AlertTriangle size={16} />
-                                <span>Falha ao conectar na URL: NetworkError when attempting to fetch resource. Por favor, verifique a "URL do Endpoint do Webhook (Hotmart)".</span>
+                                <span>{simResult.error || simResult.result?.error || 'Falha ao processar simulação do webhook'}</span>
                               </div>
-                              <p className="text-[11px] leading-relaxed text-red-300 font-mono">
-                                Falha ao conectar na URL: NetworkError when attempting to fetch resource. Por favor, verifique a "URL do Endpoint do Webhook (Hotmart)".
-                              </p>
+                              {simResult.result?.details && (
+                                <p className="text-[11px] leading-relaxed text-red-300 font-mono bg-black/40 p-2.5 rounded-lg border border-red-500/20">
+                                  {simResult.result.details}
+                                </p>
+                              )}
                               <div className="text-[11px] font-sans bg-black/40 p-2.5 rounded-lg border border-red-500/20 space-y-1">
                                 <span className="font-bold text-amber-300">Ação Recomendada:</span>
-                                <p>• <b>Por favor, verifique a "URL do Endpoint do Webhook (Hotmart)"</b> configurada no painel abaixo do Catálogo de Produtos Mapeados.</p>
-                                <p>• Certifique-se de que a URL esteja correta e funcional.</p>
+                                <p>• Verifique a "URL do Endpoint do Webhook (Hotmart)" configurada.</p>
+                                <p>• Certifique-se de que a Edge Function do Supabase foi implantada e possui as variáveis de ambiente necessárias configuradas.</p>
                               </div>
                             </div>
                           )}
@@ -5470,7 +5512,172 @@ export default function AdminPanel({ user }: AdminPanelProps) {
                       </div>
                     </div>
 
-                    {/* Section 4: Limite de Mensagens */}
+                    {/* Section 4: Tempo de Resposta e Ritmo Humano */}
+                    <div className="bg-zinc-900/60 rounded-3xl border border-white/10 p-6 md:p-8 space-y-6">
+                      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-4 border-b border-white/10">
+                        <div className="flex items-center gap-3">
+                          <div className="p-2.5 bg-amber-500/20 rounded-xl text-amber-400 border border-amber-500/30">
+                            <Clock size={22} />
+                          </div>
+                          <div>
+                            <h4 className="font-bold text-white text-base">Tempo de Resposta & Ritmo de Digitação Humana</h4>
+                            <p className="text-xs text-gray-500">Configure o tempo que a IA leva para responder de acordo com o tamanho da resposta, ou ative a resposta imediata.</p>
+                          </div>
+                        </div>
+
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setDraftCustomTexts({
+                              ...draftCustomTexts,
+                              'ai_expert.typing_speed_short': '9',
+                              'ai_expert.typing_speed_medium': '16',
+                              'ai_expert.typing_speed_long': '30',
+                              'ai_expert.fast_response_mode': 'false',
+                            });
+                            toast.success('Padrões restaurados (9s, 16s, 30s)! Clique em Salvar Alterações.');
+                          }}
+                          className="flex items-center gap-1.5 px-3 py-2 bg-white/5 hover:bg-white/10 text-amber-400 border border-amber-500/30 rounded-xl text-xs font-bold transition-all cursor-pointer self-start sm:self-auto"
+                          title="Restaurar Tempos Padrão"
+                        >
+                          <RotateCcw size={14} />
+                          <span>Restaurar Padrões</span>
+                        </button>
+                      </div>
+
+                      {/* Checkbox: Responder o mais rápido possível */}
+                      <div className="flex items-center justify-between gap-4 p-4 sm:p-5 bg-gradient-to-r from-amber-500/10 via-black/40 to-black/40 rounded-2xl border border-amber-500/20">
+                        <div className="flex items-start gap-3">
+                          <div className="p-2 bg-amber-500/20 rounded-lg text-amber-400 shrink-0 mt-0.5">
+                            <Zap size={18} />
+                          </div>
+                          <div>
+                            <label className="text-sm font-bold text-white block cursor-pointer">
+                              Responder o mais rápido possível (Modo Instantâneo)
+                            </label>
+                            <p className="text-xs text-gray-400 mt-0.5">
+                              Ao marcar esta opção, a IA responde imediatamente assim que o texto for gerado, sem simular o tempo de digitação humana.
+                            </p>
+                            <span className="inline-block mt-2 text-[11px] font-semibold px-2 py-0.5 rounded-md bg-white/5 text-amber-300 border border-amber-500/20">
+                              {(draftCustomTexts['ai_expert.fast_response_mode'] ?? settings.custom_texts?.['ai_expert.fast_response_mode']) === 'true'
+                                ? '⚡ Modo Rápido Ativo (Entrega Imediata)'
+                                : '🕒 Simulação Humana Ativa (Respeita os segundos abaixo)'}
+                            </span>
+                          </div>
+                        </div>
+
+                        <label className="relative inline-flex items-center cursor-pointer shrink-0">
+                          <input
+                            type="checkbox"
+                            checked={(draftCustomTexts['ai_expert.fast_response_mode'] ?? settings.custom_texts?.['ai_expert.fast_response_mode']) === 'true'}
+                            onChange={(e) => setDraftCustomTexts({
+                              ...draftCustomTexts,
+                              'ai_expert.fast_response_mode': e.target.checked ? 'true' : 'false'
+                            })}
+                            className="sr-only peer"
+                          />
+                          <div className="w-12 h-6.5 bg-zinc-800 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[3px] after:left-[3px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-amber-500"></div>
+                        </label>
+                      </div>
+
+                      {/* Configuração dos Tempos por Extensão de Resposta */}
+                      <div className={`space-y-4 transition-opacity duration-200 ${(draftCustomTexts['ai_expert.fast_response_mode'] ?? settings.custom_texts?.['ai_expert.fast_response_mode']) === 'true' ? 'opacity-50 pointer-events-none' : ''}`}>
+                        <div className="grid grid-cols-1 md:grid-cols-3 gap-5">
+                          {/* Respostas Curtas */}
+                          <div className="p-4 bg-black/40 rounded-2xl border border-white/10 space-y-2">
+                            <div className="flex items-center justify-between">
+                              <label className="text-xs font-black text-gray-300 uppercase tracking-wider block">
+                                Respostas Curtas
+                              </label>
+                              <span className="text-[10px] text-pink-400 font-semibold bg-pink-500/10 px-2 py-0.5 rounded-full border border-pink-500/20">
+                                ~250 caracteres
+                              </span>
+                            </div>
+                            <div className="relative">
+                              <input
+                                type="number"
+                                min={1}
+                                max={120}
+                                value={draftCustomTexts['ai_expert.typing_speed_short'] ?? settings.custom_texts?.['ai_expert.typing_speed_short'] ?? '9'}
+                                onChange={(e) => setDraftCustomTexts({ ...draftCustomTexts, 'ai_expert.typing_speed_short': e.target.value })}
+                                className="w-full bg-black border border-white/10 rounded-xl px-4 py-3 text-white text-sm focus:border-amber-500 outline-none pr-12 font-semibold"
+                                placeholder="9"
+                              />
+                              <span className="absolute right-3.5 top-1/2 -translate-y-1/2 text-xs font-bold text-gray-400">
+                                seg
+                              </span>
+                            </div>
+                            <p className="text-[11px] text-gray-500 leading-tight">
+                              Padrão: <strong>9 segundos totais</strong>. Para perguntas simples e respostas breves.
+                            </p>
+                          </div>
+
+                          {/* Respostas Médias */}
+                          <div className="p-4 bg-black/40 rounded-2xl border border-white/10 space-y-2">
+                            <div className="flex items-center justify-between">
+                              <label className="text-xs font-black text-gray-300 uppercase tracking-wider block">
+                                Respostas Médias
+                              </label>
+                              <span className="text-[10px] text-amber-400 font-semibold bg-amber-500/10 px-2 py-0.5 rounded-full border border-amber-500/20">
+                                ~700 caracteres
+                              </span>
+                            </div>
+                            <div className="relative">
+                              <input
+                                type="number"
+                                min={1}
+                                max={180}
+                                value={draftCustomTexts['ai_expert.typing_speed_medium'] ?? settings.custom_texts?.['ai_expert.typing_speed_medium'] ?? '16'}
+                                onChange={(e) => setDraftCustomTexts({ ...draftCustomTexts, 'ai_expert.typing_speed_medium': e.target.value })}
+                                className="w-full bg-black border border-white/10 rounded-xl px-4 py-3 text-white text-sm focus:border-amber-500 outline-none pr-12 font-semibold"
+                                placeholder="16"
+                              />
+                              <span className="absolute right-3.5 top-1/2 -translate-y-1/2 text-xs font-bold text-gray-400">
+                                seg
+                              </span>
+                            </div>
+                            <p className="text-[11px] text-gray-500 leading-tight">
+                              Padrão: <strong>16 segundos totais</strong>. Para orientações de 1 a 2 parágrafos.
+                            </p>
+                          </div>
+
+                          {/* Respostas Longas */}
+                          <div className="p-4 bg-black/40 rounded-2xl border border-white/10 space-y-2">
+                            <div className="flex items-center justify-between">
+                              <label className="text-xs font-black text-gray-300 uppercase tracking-wider block">
+                                Respostas Longas
+                              </label>
+                              <span className="text-[10px] text-purple-400 font-semibold bg-purple-500/10 px-2 py-0.5 rounded-full border border-purple-500/20">
+                                ~1.500 a 2.000 chars
+                              </span>
+                            </div>
+                            <div className="relative">
+                              <input
+                                type="number"
+                                min={1}
+                                max={240}
+                                value={draftCustomTexts['ai_expert.typing_speed_long'] ?? settings.custom_texts?.['ai_expert.typing_speed_long'] ?? '30'}
+                                onChange={(e) => setDraftCustomTexts({ ...draftCustomTexts, 'ai_expert.typing_speed_long': e.target.value })}
+                                className="w-full bg-black border border-white/10 rounded-xl px-4 py-3 text-white text-sm focus:border-amber-500 outline-none pr-12 font-semibold"
+                                placeholder="30"
+                              />
+                              <span className="absolute right-3.5 top-1/2 -translate-y-1/2 text-xs font-bold text-gray-400">
+                                seg
+                              </span>
+                            </div>
+                            <p className="text-[11px] text-gray-500 leading-tight">
+                              Padrão: <strong>30 segundos totais</strong>. Para análises completas e aconselhamento aprofundado.
+                            </p>
+                          </div>
+                        </div>
+
+                        <div className="p-3 bg-amber-500/5 border border-amber-500/15 rounded-xl text-xs text-amber-200/80 leading-relaxed">
+                          💡 <strong>Como funciona:</strong> A contagem de tempo ocorre exclusivamente no navegador da aluna. O processamento na Vercel termina em 2 a 4 segundos, garantindo 100% de segurança contra limites e custos extras.
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Section 5: Limite de Mensagens */}
                     <div className="bg-zinc-900/60 rounded-3xl border border-white/10 p-6 md:p-8 space-y-6">
                       <div className="flex items-center gap-3 pb-4 border-b border-white/10">
                         <div className="p-2.5 bg-rose-500/20 rounded-xl text-rose-400 border border-rose-500/30">
