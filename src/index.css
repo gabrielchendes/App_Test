@@ -241,6 +241,14 @@ body {
   padding: 0 !important;
   pointer-events: auto !important;
   touch-action: pan-x pan-y !important;
+  overflow: visible !important;
+}
+
+/* Ensure Sonner's internal fade/slide on removed doesn't cut off or create a ghost box */
+[data-sonner-toast][data-removed="true"] {
+  opacity: 0 !important;
+  pointer-events: none !important;
+  transition: opacity 0.25s ease !important;
 }
 
 [data-sonner-toast]:not(:has(.group)) {

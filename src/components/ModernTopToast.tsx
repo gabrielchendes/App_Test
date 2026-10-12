@@ -1,5 +1,5 @@
 import React from 'react';
-import { motion, useMotionValue, useTransform } from 'motion/react';
+import { motion, useMotionValue, useTransform, animate as animateMotion } from 'motion/react';
 import { CheckCircle2, AlertCircle, AlertTriangle, Info, Bell, X, ChevronUp, Trophy } from 'lucide-react';
 import { toast } from 'sonner';
 
@@ -121,9 +121,10 @@ export const ModernTopToast: React.FC<ModernTopToastProps> = ({
   action,
 }) => {
   const y = useMotionValue(0);
-  const opacity = useTransform(y, [-140, -40, 0, 40], [0, 0.6, 1, 0.95]);
-  const scale = useTransform(y, [-140, 0, 40], [0.82, 1, 1.02]);
-  const rotateX = useTransform(y, [-140, 0], [18, 0]); // Natural iOS card fold effect when flicked upward
+  // Keep opacity visible (1 -> 0.8) while dragging/moving up, only fading out at the very end when it's already offscreen
+  const opacity = useTransform(y, [-180, -120, -20, 0, 40], [0, 0.4, 0.95, 1, 0.95]);
+  const scale = useTransform(y, [-180, -80, 0, 40], [0.88, 0.95, 1, 1.02]);
+  const rotateX = useTransform(y, [-180, 0], [15, 0]); // Subtle 3D tilt
   const [isDismissing, setIsDismissing] = React.useState(false);
 
   const cfg = variantConfigs[variant] || variantConfigs.default;
@@ -139,90 +140,111 @@ export const ModernTopToast: React.FC<ModernTopToastProps> = ({
     } catch {
       // Ignore vibration errors
     }
-    // Smooth exit delay before sonner unmounts to ensure the luxurious flight-up animation plays
+
+    // Launch upward animation by setting y with a strong velocity/motion
+    animateMotion(y, -260, {
+      type: 'spring',
+      stiffness: 400,
+      damping: 26,
+      mass: 0.75,
+    });
+
+    // Dismiss from Sonner after the upward flight is complete
     setTimeout(() => {
       try {
         toast.dismiss(id);
       } catch {
         // Fallback
       }
-    }, 280);
-  }, [id, isDismissing]);
+    }, 300);
+  }, [id, isDismissing, y]);
 
   // Touch start tracker with velocity tracking for ultra-fluid natural mobile flick
   const touchStartY = React.useRef<number | null>(null);
-  const touchStartTime = React.useRef<number>(0);
+  const touchCurrentDiff = React.useRef<number>(0);
 
   const onTouchStart = (e: React.TouchEvent) => {
     touchStartY.current = e.touches[0].clientY;
-    touchStartTime.current = Date.now();
+    touchCurrentDiff.current = 0;
   };
 
   const onTouchMove = (e: React.TouchEvent) => {
-    if (touchStartY.current === null) return;
+    if (touchStartY.current === null || isDismissing) return;
     const currentY = e.touches[0].clientY;
     const diff = currentY - touchStartY.current;
-    // Interactive feedback: if dragging upward, visually respond directly
+    touchCurrentDiff.current = diff;
+
+    // Follow the finger upward with 1:1 direct tracking
     if (diff < 0) {
       y.set(diff);
-    }
-    // High-speed flick or distance threshold
-    const elapsed = Math.max(1, Date.now() - touchStartTime.current);
-    const speed = Math.abs(diff) / elapsed; // px per ms
-    if (diff < -24 || (diff < -10 && speed > 0.45)) {
-      touchStartY.current = null;
-      handleDismiss();
+      // As soon as the user gestures upward by even a small bit (-8px), engage dismiss!
+      if (diff < -8) {
+        touchStartY.current = null;
+        handleDismiss();
+      }
     }
   };
 
   const onTouchEnd = () => {
+    if (touchStartY.current === null || isDismissing) return;
+    const diff = touchCurrentDiff.current;
     touchStartY.current = null;
-    if (!isDismissing) {
-      // Soft spring back if not dismissed
-      y.set(0);
+
+    // If there was ANY upward intent (diff < -2px), slide up and dismiss immediately
+    if (diff < -2) {
+      handleDismiss();
+    } else {
+      // Only spring back if there was no upward movement at all
+      animateMotion(y, 0, {
+        type: 'spring',
+        stiffness: 450,
+        damping: 30,
+      });
     }
   };
 
   return (
     <motion.div
       style={{ y, opacity, scale, rotateX, transformPerspective: 1000 }}
-      drag="y"
+      drag={isDismissing ? false : "y"}
       dragConstraints={{ top: 0, bottom: 0 }}
-      dragElastic={{ top: 0.95, bottom: 0.05 }}
+      dragElastic={{ top: 0.9, bottom: 0.05 }}
       onDragEnd={(_, info) => {
-        // If dragged upwards by more than 12px or with upward velocity flick (> 60px/s), dismiss
-        if (info.offset.y < -12 || info.velocity.y < -60) {
+        if (isDismissing) return;
+        // Any upward motion whatsoever dismisses up immediately
+        if (info.offset.y < -3 || info.velocity.y < -10) {
           handleDismiss();
+        } else {
+          animateMotion(y, 0, {
+            type: 'spring',
+            stiffness: 450,
+            damping: 30,
+          });
         }
       }}
       onTouchStart={onTouchStart}
       onTouchMove={onTouchMove}
       onTouchEnd={onTouchEnd}
-      initial={{ opacity: 0, y: -40, scale: 0.9, filter: 'blur(6px)' }}
+      initial={{ opacity: 0, y: -60, scale: 0.92, filter: 'blur(6px)' }}
       animate={
         isDismissing
           ? {
-              opacity: 0,
-              y: -110,
-              scale: 0.82,
-              filter: 'blur(5px)',
-              transition: { duration: 0.28, ease: [0.32, 0, 0.67, 0] }
+              y: -220,
+              opacity: [1, 0.9, 0],
+              scale: 0.88,
+              transition: {
+                y: { type: 'spring', stiffness: 360, damping: 28 },
+                opacity: { duration: 0.3, ease: 'easeIn' },
+                scale: { duration: 0.3 },
+              }
             }
           : {
               opacity: 1,
-              y: 0,
               scale: 1,
               filter: 'blur(0px)',
               transition: { type: 'spring', damping: 26, stiffness: 420 }
             }
       }
-      exit={{
-        opacity: 0,
-        y: -110,
-        scale: 0.82,
-        filter: 'blur(5px)',
-        transition: { duration: 0.25, ease: [0.32, 0, 0.67, 0] }
-      }}
       className="group relative w-full max-w-[94vw] sm:max-w-md mx-auto select-none cursor-grab active:cursor-grabbing pointer-events-auto will-change-transform"
     >
       {/* Outer 24K Gold Radiant Chassis with Ambient Shimmer */}
