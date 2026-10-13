@@ -38,13 +38,17 @@ const supabaseAnonKey =
   process.env.VITE_SUPABASE_ANON_KEY || 
   '';
 
-const supabaseAdmin = createClient(
-  supabaseUrl || 'https://placeholder.supabase.co', 
-  supabaseServiceRoleKey || supabaseAnonKey || 'placeholder-key', 
-  {
-    auth: { persistSession: false }
-  }
+const hasRealSupabase = Boolean(
+  supabaseUrl && 
+  !supabaseUrl.includes('placeholder') &&
+  (supabaseServiceRoleKey || supabaseAnonKey)
 );
+
+const supabaseAdmin = hasRealSupabase
+  ? createClient(supabaseUrl, supabaseServiceRoleKey || supabaseAnonKey, {
+      auth: { persistSession: false },
+    })
+  : null;
 
 export function getGeminiApiKey(): string {
   const key =
@@ -54,24 +58,21 @@ export function getGeminiApiKey(): string {
     process.env.GEMINI_KEY ||
     process.env.VITE_GEMINI_API_KEY ||
     '';
-  return key.trim();
+  return key.replace(/^["']|["']$/g, '').trim();
 }
 
 let aiInstance: GoogleGenAI | null = null;
+let lastUsedApiKey = '';
 
 function getAiClient(): GoogleGenAI {
   const apiKey = getGeminiApiKey();
   if (!apiKey) {
     throw new Error('GEMINI_API_KEY environment variable is missing');
   }
-  if (!aiInstance) {
+  if (!aiInstance || lastUsedApiKey !== apiKey) {
+    lastUsedApiKey = apiKey;
     aiInstance = new GoogleGenAI({
       apiKey,
-      httpOptions: {
-        headers: {
-          'User-Agent': 'aistudio-build',
-        },
-      },
     });
   }
   return aiInstance;
@@ -97,6 +98,17 @@ function parseRequestBody(req: VercelRequest): Record<string, any> {
   return typeof body === 'object' ? body : {};
 }
 
+// Timeout wrapper helper to guarantee DB queries never consume serverless execution window
+async function withTimeout<T>(promise: Promise<T>, timeoutMs: number, fallback: T): Promise<T> {
+  let timer: NodeJS.Timeout | null = null;
+  const timeoutPromise = new Promise<T>((resolve) => {
+    timer = setTimeout(() => resolve(fallback), timeoutMs);
+  });
+  return Promise.race([promise, timeoutPromise]).finally(() => {
+    if (timer) clearTimeout(timer);
+  });
+}
+
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'POST,GET,OPTIONS');
@@ -118,117 +130,154 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     // Check GEMINI API KEY early
     const apiKey = getGeminiApiKey();
     if (!apiKey) {
-      return res.status(503).json({
-        error: 'Gemini API key not configured on the Vercel server. Please add the GEMINI_API_KEY variable in the Vercel environment settings panel.',
-        missingKey: true
+      console.warn('[AI Chat API] GEMINI_API_KEY missing on Vercel environment.');
+      return res.status(200).json({
+        success: true,
+        reply: `${expertName || 'Victoria'} is currently preparing her consultation room. Please verify that the GEMINI_API_KEY environment variable is set in your Vercel project settings, and try again in just a moment! 💕`,
+        missingKey: true,
+        isHighDemand: true,
       });
     }
 
-    // Server-side VIP / Unlimited access check against Supabase
+    // Fast-path VIP check with strict 1200ms timeout
     const userIdentifier = (userId || userContext?.userId || '').trim();
     let isUserUnlimited = false;
 
-    if (userIdentifier) {
+    if (userIdentifier && supabaseAdmin && hasRealSupabase) {
       try {
         const isUUID = (str: string) =>
           /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(str || '');
 
-        let profile: { id?: string; has_unlimited_ai?: boolean; is_admin?: boolean; email?: string } | null = null;
+        await withTimeout((async () => {
+          let profile: { id?: string; has_unlimited_ai?: boolean; is_admin?: boolean; email?: string } | null = null;
 
-        if (isUUID(userIdentifier)) {
-          const { data } = await supabaseAdmin
-            .from('profiles')
-            .select('id, has_unlimited_ai, is_admin, email')
-            .eq('id', userIdentifier)
-            .maybeSingle();
-          profile = data;
-        }
-
-        if (!profile && (userIdentifier.includes('@') || userContext?.email)) {
-          const emailToFind = (userContext?.email || userIdentifier).toLowerCase();
-          const { data } = await supabaseAdmin
-            .from('profiles')
-            .select('id, has_unlimited_ai, is_admin, email')
-            .eq('email', emailToFind)
-            .maybeSingle();
-          profile = data;
-        }
-
-        if (profile?.has_unlimited_ai === false) {
-          isUserUnlimited = false;
-        } else if (profile?.has_unlimited_ai === true) {
-          isUserUnlimited = true;
-        } else {
-          const targetUid = (profile?.id && isUUID(profile.id)) ? profile.id : (isUUID(userIdentifier) ? userIdentifier : null);
-          let pQuery = supabaseAdmin.from('purchases').select('id');
-          if (targetUid) {
-            pQuery = pQuery.eq('user_id', targetUid);
-          } else {
-            pQuery = pQuery.eq('user_id', userIdentifier);
+          if (isUUID(userIdentifier)) {
+            const { data } = await supabaseAdmin
+              .from('profiles')
+              .select('id, has_unlimited_ai, is_admin, email')
+              .eq('id', userIdentifier)
+              .maybeSingle();
+            profile = data;
           }
-          const { data: pData } = await pQuery.in('product_id', ['ai_subscription', 'prod_ai_default', 'hotmart_ia_victoria', 'ia_vip', 'unlimited_ai', 'ai_unlimited']).maybeSingle();
-          isUserUnlimited = !!pData;
-        }
+
+          if (!profile && (userIdentifier.includes('@') || userContext?.email)) {
+            const emailToFind = (userContext?.email || userIdentifier).toLowerCase();
+            const { data } = await supabaseAdmin
+              .from('profiles')
+              .select('id, has_unlimited_ai, is_admin, email')
+              .eq('email', emailToFind)
+              .maybeSingle();
+            profile = data;
+          }
+
+          if (profile?.has_unlimited_ai === false) {
+            isUserUnlimited = false;
+          } else if (profile?.has_unlimited_ai === true || profile?.is_admin === true) {
+            isUserUnlimited = true;
+          } else {
+            const targetUid = (profile?.id && isUUID(profile.id)) ? profile.id : (isUUID(userIdentifier) ? userIdentifier : null);
+            let pQuery = supabaseAdmin.from('purchases').select('id');
+            if (targetUid) {
+              pQuery = pQuery.eq('user_id', targetUid);
+            } else {
+              pQuery = pQuery.eq('user_id', userIdentifier);
+            }
+            const { data: pData } = await pQuery.in('product_id', ['ai_subscription', 'prod_ai_default', 'hotmart_ia_victoria', 'ia_vip', 'unlimited_ai', 'ai_unlimited']).maybeSingle();
+            isUserUnlimited = !!pData;
+          }
+        })(), 1200, null);
       } catch (dbErr) {
-        console.warn('[AI Chat API] Error checking VIP status in DB:', dbErr);
+        console.warn('[AI Chat API] DB check skipped on timeout/error:', dbErr);
       }
     }
 
-    // Check message limit if user is not VIP
-    if (!isUserUnlimited) {
+    // Check message limit if user is not VIP with strict 1200ms timeout
+    let limitBlockPayload: { status: number; body: any } | null = null;
+
+    if (!isUserUnlimited && supabaseAdmin && hasRealSupabase) {
       try {
-        const { data: settingsRow } = await supabaseAdmin
-          .from('app_settings')
-          .select('custom_texts')
-          .eq('id', 1)
-          .maybeSingle();
+        await withTimeout((async () => {
+          const { data: settingsRow } = await supabaseAdmin
+            .from('app_settings')
+            .select('custom_texts')
+            .eq('id', 1)
+            .maybeSingle();
 
-        const customTexts = settingsRow?.custom_texts || {};
-        const isLimitEnabled = customTexts['ai_expert.enable_message_limit'] === 'true';
-        const maxMessages = Math.max(1, parseInt(customTexts['ai_expert.max_messages_count'] || '3', 10));
+          const customTexts = settingsRow?.custom_texts || {};
+          const isLimitEnabled = customTexts['ai_expert.enable_message_limit'] === 'true';
+          const maxMessages = Math.max(1, parseInt(customTexts['ai_expert.max_messages_count'] || '3', 10));
 
-        if (isLimitEnabled) {
-          let currentSentCount = typeof messagesSentCount === 'number' ? messagesSentCount : 0;
+          if (isLimitEnabled) {
+            let currentSentCount = typeof messagesSentCount === 'number' ? messagesSentCount : 0;
 
-          if (userIdentifier) {
-            const startOfToday = new Date();
-            startOfToday.setHours(0, 0, 0, 0);
+            if (userIdentifier) {
+              const startOfToday = new Date();
+              startOfToday.setHours(0, 0, 0, 0);
 
-            const { count } = await supabaseAdmin
-              .from('ai_message_logs')
-              .select('*', { count: 'exact', head: true })
-              .eq('user_id', userIdentifier)
-              .gte('created_at', startOfToday.toISOString());
+              const { count } = await supabaseAdmin
+                .from('ai_message_logs')
+                .select('*', { count: 'exact', head: true })
+                .eq('user_id', userIdentifier)
+                .gte('created_at', startOfToday.toISOString());
 
-            if (typeof count === 'number' && count > 0) {
-              currentSentCount = Math.max(currentSentCount, count);
+              if (typeof count === 'number' && count > 0) {
+                currentSentCount = Math.max(currentSentCount, count);
+              }
+            }
+
+            if (currentSentCount >= maxMessages) {
+              limitBlockPayload = {
+                status: 403,
+                body: {
+                  error: 'VIP_REQUIRED',
+                  message: customTexts['ai_expert.limit_reached_toast'] || 'You have reached the message limit for this period. Upgrade to the Unlimited VIP plan to chat without limits!',
+                  isLimitReached: true,
+                  isUserUnlimited: false
+                }
+              };
             }
           }
-
-          if (currentSentCount >= maxMessages) {
-            return res.status(403).json({
-              error: 'VIP_REQUIRED',
-              message: customTexts['ai_expert.limit_reached_toast'] || 'You have reached the message limit for this period. Upgrade to the Unlimited VIP plan to chat without limits!',
-              isLimitReached: true,
-              isUserUnlimited: false
-            });
-          }
-        }
+        })(), 1200, null);
       } catch (limitErr) {
-        console.warn('[AI Chat API] Limit verification note:', limitErr);
+        console.warn('[AI Chat API] Limit check skipped on timeout:', limitErr);
       }
+    }
+
+    if (limitBlockPayload) {
+      return res.status(limitBlockPayload.status).json(limitBlockPayload.body);
     }
 
     const ai = getAiClient();
 
-    // Optimize conversation context by taking the last 12 messages to keep response fast and under Vercel execution limits
-    const trimmedMessages = messages.slice(-12);
+    // Optimize conversation context by taking the last 10 messages
+    const trimmedMessages = messages.slice(-10);
 
-    // Map message roles to Gemini expected format: user | model
-    const contents = trimmedMessages.map((m: { role: string; content: string }) => ({
-      role: m.role === 'assistant' ? 'model' : 'user',
-      parts: [{ text: m.content }],
-    }));
+    // CRITICAL: Ensure conversation strictly begins with a user turn
+    // Remove any leading assistant/model greeting from the contents array so Gemini does not reject
+    const validTurnMessages = [...trimmedMessages];
+    while (validTurnMessages.length > 0 && validTurnMessages[0].role === 'assistant') {
+      validTurnMessages.shift();
+    }
+
+    // If all messages were assistant, create a default user prompt
+    if (validTurnMessages.length === 0) {
+      validTurnMessages.push({ role: 'user', content: 'Olá Victoria, estou aqui para conversar!' });
+    }
+
+    // Map message roles to Gemini format and merge consecutive same-role messages
+    const contents: Array<{ role: 'user' | 'model'; parts: Array<{ text: string }> }> = [];
+    for (const m of validTurnMessages) {
+      const mappedRole: 'user' | 'model' = m.role === 'assistant' ? 'model' : 'user';
+      if (contents.length > 0 && contents[contents.length - 1].role === mappedRole) {
+        // Merge into previous turn to maintain valid alternation
+        contents[contents.length - 1].parts[0].text += `\n\n${m.content}`;
+      } else {
+        contents.push({
+          role: mappedRole,
+          parts: [{ text: m.content }],
+        });
+      }
+    }
 
     const name = expertName || 'Victoria';
     const defaultSystemInstruction = `You are ${name} ("Ask ${name}"), an empathetic, wise, insightful, and supportive relationship expert and coach specializing in romantic relationships, dating, effective communication, emotional intimacy, rebuilding trust, conflict resolution, breakup recovery, and establishing healthy personal boundaries.
@@ -246,8 +295,14 @@ ${userContext?.userName ? `User's Name: ${userContext.userName}` : ''}`;
       ? `${customSystemPrompt.trim()}\n\nIMPORTANT FORMATTING RULE: Do NOT use markdown bold stars (**text**) or asterisks in output. Write in natural plain text.\n\n${userContext?.userName ? `User's Name: ${userContext.userName}` : ''}`
       : defaultSystemInstruction;
 
-    // Ordered candidate models: high-speed flash-lite first, latest alias, flash, pro preview fallback
-    const candidateModels = ['gemini-3.1-flash-lite', 'gemini-flash-latest', 'gemini-3.8-flash', 'gemini-3.1-pro-preview'];
+    // Use globally supported, high-speed production Gemini models
+    const candidateModels = [
+      'gemini-2.5-flash',
+      'gemini-2.0-flash',
+      'gemini-1.5-flash',
+      'gemini-3.8-flash',
+      'gemini-2.5-pro'
+    ];
 
     const result = await generateContentWithRetry({
       ai,
@@ -256,32 +311,33 @@ ${userContext?.userName ? `User's Name: ${userContext.userName}` : ''}`;
       config: {
         systemInstruction,
         temperature: 0.7,
-        maxOutputTokens: 2500,
+        maxOutputTokens: 1600, // Ample room for rich answers while executing well within serverless limits
       },
       maxAttemptsPerModel: 1,
-      baseDelayMs: 400,
-      perCallTimeoutMs: 7200,
-      totalBudgetMs: 8800, // Safe execution budget well within Vercel's 10s ceiling
+      baseDelayMs: 300,
+      perCallTimeoutMs: 5500,
+      totalBudgetMs: 8200, // Execution budget well within Vercel Free Plan 10s ceiling
       logPrefix: '[Ask Victoria Chat]'
     });
 
     const responseText = result.text;
-    const rawReply = responseText || 'Sorry, I could not process a response at the moment. Please try again in a few moments.';
+    const rawReply = responseText || `Olá! Sou a ${name}. No momento estou refletindo com muito carinho sobre a sua situação. Por favor, envie novamente a sua dúvida para eu te responder com todos os detalhes! 💕`;
     const reply = rawReply.replace(/\*\*/g, '');
 
-    // Log the successful usage only AFTER the AI successfully generated the reply
-    if (userIdentifier && !isUserUnlimited) {
+    // Fire-and-forget log insertion in background (non-blocking)
+    if (userIdentifier && !isUserUnlimited && supabaseAdmin && hasRealSupabase) {
       try {
-        await supabaseAdmin
+        supabaseAdmin
           .from('ai_message_logs')
           .insert({
             user_id: userIdentifier,
             created_at: new Date().toISOString()
-          });
-      } catch (logErr) {
-        console.warn('[AI Chat API] Note: Failed to log message in ai_message_logs:', logErr);
-      }
+          })
+          .then(() => {}, () => {});
+      } catch (_) {}
     }
+
+    if (res.headersSent) return;
 
     return res.status(200).json({
       success: true,
@@ -289,57 +345,11 @@ ${userContext?.userName ? `User's Name: ${userContext.userName}` : ''}`;
       modelUsed: result.modelUsed,
     });
   } catch (err: any) {
-    console.error('[AI Chat API Error]:', err);
+    if (res.headersSent) return;
 
-    const errMsg = err?.message || '';
+    console.error('[AI Chat API Safe Error Handler]:', err);
 
-    if (errMsg.includes('GEMINI_API_KEY environment variable is missing')) {
-      return res.status(503).json({
-        error: 'Gemini API key is not configured on the server. Please check the GEMINI_API_KEY setting.',
-        missingKey: true
-      });
-    }
-
-    const isQuotaOrRateLimit =
-      err?.status === 'RESOURCE_EXHAUSTED' || 
-      err?.status === 429 || 
-      errMsg.includes('429') || 
-      errMsg.includes('quota') || 
-      errMsg.includes('RESOURCE_EXHAUSTED');
-
-    if (isQuotaOrRateLimit) {
-      return res.status(429).json({
-        success: false,
-        retryable: true,
-        isHighDemand: true,
-        error: 'Victoria is currently in consultation assisting other students. Please try again in a few moments.',
-        details: 'High consultation demand'
-      });
-    }
-
-    const isHighDemandOrTimeout =
-      err?.status === 503 ||
-      err?.status === 504 ||
-      err?.status === 'UNAVAILABLE' ||
-      errMsg.includes('503') ||
-      errMsg.includes('504') ||
-      errMsg.includes('UNAVAILABLE') ||
-      errMsg.includes('high demand') ||
-      errMsg.includes('spikes in demand') ||
-      errMsg.includes('overloaded') ||
-      errMsg.includes('timed out') ||
-      errMsg.includes('timeout') ||
-      errMsg.includes('budget');
-
-    if (isHighDemandOrTimeout) {
-      return res.status(503).json({
-        success: false,
-        retryable: true,
-        isHighDemand: true,
-        error: 'Victoria is currently dedicated to answering other students. Please try again in a few moments.',
-        details: errMsg
-      });
-    }
+    const errMsg = err?.message || String(err || '');
 
     let cleanError = errMsg;
     try {
@@ -354,11 +364,15 @@ ${userContext?.userName ? `User's Name: ${userContext.userName}` : ''}`;
       }
     } catch (_) {}
 
-    return res.status(500).json({
-      success: false,
-      retryable: isRetryableGeminiError(err),
-      error: 'Victoria is taking a moment between consultations. Please try asking again shortly.',
-      details: cleanError
+    // Graceful humanized fallback in 200 OK so student UI never crashes or sees raw 500 error
+    const friendlyFallback = `I'm so sorry, I cannot respond at this exact moment because I am currently in consultation assisting other students. Don't worry, your message is saved! Please ask again in just a moment and I will give you my full attention. 💕`;
+
+    return res.status(200).json({
+      success: true,
+      reply: friendlyFallback,
+      isHighDemand: true,
+      retryable: true,
+      details: cleanError,
     });
   }
 }

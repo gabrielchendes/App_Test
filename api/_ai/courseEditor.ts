@@ -43,7 +43,7 @@ export async function handleAiCourseEditor(req: VercelRequest, res: VercelRespon
     }
 
     const ai = getAiClient();
-    const candidateModels = ['gemini-3.8-flash', 'gemini-flash-latest', 'gemini-3.1-flash-lite'];
+    const candidateModels = ['gemini-2.5-flash', 'gemini-2.0-flash', 'gemini-1.5-flash', 'gemini-3.8-flash'];
 
     const systemInstruction = `You are a World-Class Precision Course Editor, Curriculum Refiner, and Direct Response Copywriting Specialist.
 Your task is to modify the provided course element according to the user's explicit instruction.

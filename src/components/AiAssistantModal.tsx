@@ -373,14 +373,6 @@ export default function AiAssistantModal({ userId, userEmail, userName, userAvat
     }
   };
 
-  const handleClose = () => {
-    if (externalOnClose) {
-      externalOnClose();
-    } else {
-      setInternalIsOpen(false);
-    }
-  };
-
   const [messages, setMessages] = useState<Message[]>([
     {
       id: 'welcome',
@@ -408,8 +400,26 @@ export default function AiAssistantModal({ userId, userEmail, userName, userAvat
   const [loading, setLoading] = useState(false);
   const [statusText, setStatusText] = useState<string>('');
   const [copiedId, setCopiedId] = useState<string | null>(null);
+
   const typingAbortRef = useRef<boolean>(false);
+  const activeFetchAbortRef = useRef<AbortController | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
+
+  const handleClose = React.useCallback(() => {
+    typingAbortRef.current = true;
+    if (activeFetchAbortRef.current) {
+      try {
+        activeFetchAbortRef.current.abort();
+      } catch (_) {}
+      activeFetchAbortRef.current = null;
+    }
+    setLoading(false);
+    setStatusText('');
+    if (externalOnClose) {
+      externalOnClose();
+    }
+    setInternalIsOpen(false);
+  }, [externalOnClose]);
 
   useEffect(() => {
     return () => {
@@ -522,48 +532,58 @@ export default function AiAssistantModal({ userId, userEmail, userName, userAvat
       content: m.content
     }));
 
-    const MAX_CLIENT_ATTEMPTS = 5;
+    const MAX_CLIENT_ATTEMPTS = 3;
     let finalSuccessReply: string | null = null;
     let finalErrorMessage: string = errorMessage;
 
     for (let attempt = 1; attempt <= MAX_CLIENT_ATTEMPTS; attempt++) {
+      if (typingAbortRef.current) {
+        setLoading(false);
+        return;
+      }
+
       try {
         if (attempt === 1) {
           setStatusText(`${expertName} is reading your message and writing...`);
         } else if (attempt === 2) {
-          setStatusText(`${expertName} is preparing detailed, thoughtful guidance for you...`);
+          setStatusText(`${expertName} is preparing detailed guidance for you...`);
         } else if (attempt === 3) {
-          setStatusText(`${expertName} is giving your situation her full attention...`);
-        } else if (attempt === 4) {
-          setStatusText(`${expertName} is reviewing every detail of your question...`);
-        } else if (attempt === 5) {
-          setStatusText(`Almost ready, ${expertName} is finalizing your personal advice...`);
+          setStatusText(`${expertName} is finalizing your personal advice...`);
         }
 
         const controller = new AbortController();
-        // Client timeout of 9600ms per attempt to safely accommodate comprehensive answers within Vercel Free Plan ceiling
-        const timeoutId = setTimeout(() => controller.abort(), 9600);
+        activeFetchAbortRef.current = controller;
+        const timeoutId = setTimeout(() => controller.abort(), 9500);
 
-        const res = await fetch('/api/v1/ai-chat', {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'Accept': 'application/json',
-          },
-          signal: controller.signal,
-          body: JSON.stringify({
-            action: 'ai-chat',
-            messages: historyForApi,
-            userContext: { userName, userId, email: userEmail },
-            customSystemPrompt: systemPromptContext || undefined,
-            expertName: expertName || undefined,
-            userId: userId || undefined,
-            messagesSentCount,
-            clientAttempt: attempt,
-          })
-        });
+        let res: Response;
+        try {
+          res = await fetch('/api/v1/ai-chat', {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'Accept': 'application/json',
+            },
+            signal: controller.signal,
+            body: JSON.stringify({
+              action: 'ai-chat',
+              messages: historyForApi,
+              userContext: { userName, userId, email: userEmail },
+              customSystemPrompt: systemPromptContext || undefined,
+              expertName: expertName || undefined,
+              userId: userId || undefined,
+              messagesSentCount,
+              clientAttempt: attempt,
+            })
+          });
+        } finally {
+          clearTimeout(timeoutId);
+          activeFetchAbortRef.current = null;
+        }
 
-        clearTimeout(timeoutId);
+        if (typingAbortRef.current) {
+          setLoading(false);
+          return;
+        }
 
         const responseText = await res.text();
         let data: any = {};
@@ -602,27 +622,47 @@ export default function AiAssistantModal({ userId, userEmail, userName, userAvat
         if (isRetryableStatus || isExplicitRetryable || isBusySignal) {
           finalErrorMessage = `${expertName} is currently helping other students. Please try again in a few moments.`;
           if (attempt < MAX_CLIENT_ATTEMPTS) {
-            // Adaptive jittered backoff: attempt 1 -> ~1400ms, attempt 2 -> ~2700ms, attempt 3 -> ~4000ms
-            const delayMs = 1200 * attempt + Math.floor(Math.random() * 500);
+            const delayMs = 1200 * attempt + Math.floor(Math.random() * 400);
             console.warn(`[Ask Victoria] Attempt ${attempt}/${MAX_CLIENT_ATTEMPTS} busy in consultation. Retrying in ${delayMs}ms...`);
             await new Promise(r => setTimeout(r, delayMs));
+            if (typingAbortRef.current) {
+              setLoading(false);
+              return;
+            }
             continue;
           }
         } else {
-          // Non-retryable
+          // If response has a fallback reply from the server, use it
+          if (data.reply) {
+            finalSuccessReply = data.reply;
+            break;
+          }
           finalErrorMessage = `${expertName} is currently assisting other students. Please try asking again shortly.`;
           break;
         }
       } catch (netErr: any) {
+        if (typingAbortRef.current) {
+          setLoading(false);
+          return;
+        }
         console.warn(`[Ask Victoria] Attempt ${attempt}/${MAX_CLIENT_ATTEMPTS} timeout/retry:`, netErr?.name || netErr?.message);
         finalErrorMessage = `${expertName} is currently assisting other students. Please try asking again shortly.`;
 
         if (attempt < MAX_CLIENT_ATTEMPTS) {
-          const delayMs = 1500 * attempt + Math.floor(Math.random() * 500);
+          const delayMs = 1200 * attempt + Math.floor(Math.random() * 400);
           await new Promise(r => setTimeout(r, delayMs));
+          if (typingAbortRef.current) {
+            setLoading(false);
+            return;
+          }
           continue;
         }
       }
+    }
+
+    if (typingAbortRef.current) {
+      setLoading(false);
+      return;
     }
 
     if (finalSuccessReply) {
@@ -718,15 +758,17 @@ export default function AiAssistantModal({ userId, userEmail, userName, userAvat
           initial={{ opacity: 0 }}
           animate={{ opacity: 1 }}
           exit={{ opacity: 0 }}
-          className="fixed inset-0 z-[100] w-full h-full bg-black text-white flex flex-col overflow-hidden"
+          className="fixed inset-0 z-[500] w-full h-full bg-black text-white flex flex-col overflow-hidden"
         >
           {/* Top Full Screen Navigation Bar */}
-          <div className="flex items-center justify-between px-3 sm:px-8 py-3 sm:py-4 border-b border-white/10 bg-black/90 backdrop-blur-2xl shrink-0 gap-2 sm:gap-4 z-50">
+          <div className="flex items-center justify-between px-3 sm:px-8 py-3 sm:py-4 border-b border-white/10 bg-black/90 backdrop-blur-2xl shrink-0 gap-2 sm:gap-4 relative z-[510]">
             <div className="flex items-center gap-2.5 sm:gap-3.5 min-w-0">
               <button
+                type="button"
                 onClick={handleClose}
-                className="group relative p-2.5 sm:p-3 hover:bg-white/10 rounded-2xl transition-all active:scale-95 bg-white/5 border border-white/10 overflow-hidden shrink-0 cursor-pointer"
+                className="group relative p-2.5 sm:p-3 hover:bg-white/10 active:bg-white/20 rounded-2xl transition-all active:scale-95 bg-white/5 border border-white/10 overflow-hidden shrink-0 cursor-pointer touch-manipulation z-30"
                 title="Back"
+                aria-label="Back"
               >
                 <div className="absolute inset-0 bg-gradient-to-br from-primary/20 to-transparent opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none" />
                 <ArrowLeft size={18} className="text-white/80 group-hover:text-white relative z-10" />
@@ -768,6 +810,7 @@ export default function AiAssistantModal({ userId, userEmail, userName, userAvat
 
             <div className="flex items-center gap-1.5 sm:gap-2 shrink-0">
               <button
+                type="button"
                 onClick={() => setShowUnlimitedInfoModal(true)}
                 title={unlimitedBtnTooltip}
                 className="group relative px-2.5 py-2 sm:px-3.5 sm:py-2.5 rounded-2xl transition-all active:scale-95 bg-gradient-to-r from-amber-500/20 via-pink-500/20 to-purple-500/20 hover:from-amber-500/30 hover:to-rose-500/30 border border-amber-500/40 text-amber-300 hover:text-amber-200 shadow-md shadow-amber-500/10 flex items-center gap-1.5 cursor-pointer shrink-0"
@@ -776,9 +819,11 @@ export default function AiAssistantModal({ userId, userEmail, userName, userAvat
                 <span className="hidden sm:inline text-xs font-black tracking-wide uppercase">{unlimitedBtnLabel}</span>
               </button>
               <button
+                type="button"
                 onClick={handleClose}
                 title="Close chat"
-                className="group relative p-2.5 sm:p-3 hover:bg-white/10 rounded-2xl transition-all active:scale-95 bg-white/5 border border-white/10 overflow-hidden shrink-0 cursor-pointer text-gray-400 hover:text-white"
+                aria-label="Close chat"
+                className="group relative p-2.5 sm:p-3 hover:bg-white/10 active:bg-white/20 rounded-2xl transition-all active:scale-95 bg-white/5 border border-white/10 overflow-hidden shrink-0 cursor-pointer text-gray-400 hover:text-white touch-manipulation z-30"
               >
                 <div className="absolute inset-0 bg-gradient-to-br from-rose-500/15 to-transparent opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none" />
                 <X size={18} className="relative z-10" />

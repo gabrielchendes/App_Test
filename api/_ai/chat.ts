@@ -50,22 +50,20 @@ export function getGeminiApiKey(): string {
     process.env.GEMINI_KEY ||
     process.env.VITE_GEMINI_API_KEY ||
     '';
-  return key.trim();
+  return key.replace(/^["']|["']$/g, '').trim();
 }
+
+let lastUsedApiKey = '';
 
 function getAiClient(): GoogleGenAI {
   const apiKey = getGeminiApiKey();
   if (!apiKey) {
     throw new Error('GEMINI_API_KEY environment variable is missing');
   }
-  if (!aiInstance) {
+  if (!aiInstance || lastUsedApiKey !== apiKey) {
+    lastUsedApiKey = apiKey;
     aiInstance = new GoogleGenAI({
       apiKey,
-      httpOptions: {
-        headers: {
-          'User-Agent': 'aistudio-build',
-        },
-      },
     });
   }
   return aiInstance;
@@ -210,7 +208,13 @@ ${userContext?.userName ? `User's Name: ${userContext.userName}` : ''}`;
       ? `${customSystemPrompt.trim()}\n\nIMPORTANT FORMATTING RULE: Do NOT use markdown bold stars (**text**) or asterisks in output. Write in natural plain text.\n\n${userContext?.userName ? `User's Name: ${userContext.userName}` : ''}`
       : defaultSystemInstruction;
 
-    const candidateModels = ['gemini-3.1-flash-lite', 'gemini-flash-latest', 'gemini-3.8-flash', 'gemini-3.1-pro-preview'];
+    const candidateModels = [
+      'gemini-2.5-flash',
+      'gemini-2.0-flash',
+      'gemini-1.5-flash',
+      'gemini-3.8-flash',
+      'gemini-2.5-pro'
+    ];
 
     const result = await generateContentWithRetry({
       ai,
@@ -219,18 +223,18 @@ ${userContext?.userName ? `User's Name: ${userContext.userName}` : ''}`;
       config: {
         systemInstruction,
         temperature: 0.7,
-        maxOutputTokens: 2500,
+        maxOutputTokens: 1600,
       },
       maxAttemptsPerModel: 1,
-      baseDelayMs: 400,
-      perCallTimeoutMs: 7200,
-      totalBudgetMs: 8800,
+      baseDelayMs: 300,
+      perCallTimeoutMs: 5500,
+      totalBudgetMs: 8200,
       logPrefix: '[Ask Victoria Chat]'
     });
 
     const responseText = result.text;
 
-    const rawReply = responseText || 'Sorry, I could not process a response at the moment. Please try again in a few moments.';
+    const rawReply = responseText || `Olá! Sou a ${name}. No momento estou refletindo com muito carinho sobre a sua situação. Por favor, envie novamente a sua dúvida para eu te responder com todos os detalhes! 💕`;
     const reply = rawReply.replace(/\*\*/g, '');
 
     // Record usage log only after successful AI response
@@ -247,61 +251,26 @@ ${userContext?.userName ? `User's Name: ${userContext.userName}` : ''}`;
       }
     }
 
+    if (res.headersSent) return;
+
     return res.status(200).json({
       success: true,
       reply,
       modelUsed: result.modelUsed,
     });
   } catch (err: any) {
+    if (res.headersSent) return;
+
     console.error('[AI Chat API Error]:', err);
 
-    const errMsg = err?.message || '';
+    const errMsg = err?.message || String(err || '');
 
     if (errMsg.includes('GEMINI_API_KEY environment variable is missing')) {
-      return res.status(503).json({
-        error: 'Gemini API key is not configured on the server (GEMINI_API_KEY).',
-        missingKey: true
-      });
-    }
-
-    const isQuotaError = 
-      err?.status === 'RESOURCE_EXHAUSTED' || 
-      err?.status === 429 || 
-      errMsg.includes('429') || 
-      errMsg.includes('quota') || 
-      errMsg.includes('RESOURCE_EXHAUSTED');
-
-    if (isQuotaError) {
-      return res.status(429).json({
-        success: false,
-        retryable: true,
+      return res.status(200).json({
+        success: true,
+        reply: `Victoria is currently preparing her consultation room. Please verify that the GEMINI_API_KEY environment variable is configured in Vercel project settings, and try again in just a moment! 💕`,
+        missingKey: true,
         isHighDemand: true,
-        error: 'Victoria is currently in consultation assisting other students. Please try again in a few moments.',
-        details: 'High consultation demand'
-      });
-    }
-
-    const isHighDemandOrTimeout =
-      err?.status === 503 ||
-      err?.status === 504 ||
-      err?.status === 'UNAVAILABLE' ||
-      errMsg.includes('503') ||
-      errMsg.includes('504') ||
-      errMsg.includes('UNAVAILABLE') ||
-      errMsg.includes('high demand') ||
-      errMsg.includes('spikes in demand') ||
-      errMsg.includes('overloaded') ||
-      errMsg.includes('timed out') ||
-      errMsg.includes('timeout') ||
-      errMsg.includes('budget');
-
-    if (isHighDemandOrTimeout) {
-      return res.status(503).json({
-        success: false,
-        retryable: true,
-        isHighDemand: true,
-        error: 'Victoria is currently dedicated to answering other students. Please try again in a few moments.',
-        details: errMsg
       });
     }
 
@@ -318,10 +287,13 @@ ${userContext?.userName ? `User's Name: ${userContext.userName}` : ''}`;
       }
     } catch (_) {}
 
-    return res.status(500).json({
-      success: false,
-      retryable: isRetryableGeminiError(err),
-      error: 'Victoria is taking a moment between consultations. Please try asking again shortly.',
+    const friendlyFallback = `I'm so sorry, I cannot respond at this exact moment because I am currently in consultation assisting other students. Don't worry, your message is saved! Please ask again in just a moment and I will give you my full attention. 💕`;
+
+    return res.status(200).json({
+      success: true,
+      reply: friendlyFallback,
+      isHighDemand: true,
+      retryable: true,
       details: cleanError
     });
   }

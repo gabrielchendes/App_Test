@@ -224,14 +224,12 @@ body {
 }
 
 /* Modern Sonner Toast styling */
-[data-sonner-toaster] {
+[data-sonner-toaster],
+[data-sonner-toaster] > ol,
+[data-sonner-toaster] > * {
   top: 16px !important;
   z-index: 999999 !important;
-  pointer-events: none;
-}
-
-[data-sonner-toaster] > * {
-  pointer-events: auto;
+  pointer-events: none !important;
 }
 
 [data-sonner-toast] {

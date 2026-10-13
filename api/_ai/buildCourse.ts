@@ -512,7 +512,7 @@ export async function handleBuildCompleteCourse(req: VercelRequest, res: VercelR
 
     const ai = getAiClient();
     // Use gemini-3.8-flash as primary text model, with fallbacks to other active models
-    const candidateModels = ['gemini-3.8-flash', 'gemini-flash-latest', 'gemini-3.1-flash-lite'];
+    const candidateModels = ['gemini-2.5-flash', 'gemini-2.0-flash', 'gemini-1.5-flash', 'gemini-3.8-flash'];
 
     const targetPriceCents = Math.round(Number(priceTier) * 100) || 9700;
     const targetOldPriceCents = includeOldPrice ? Math.round(targetPriceCents * 2) : 0;
