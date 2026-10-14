@@ -170,11 +170,14 @@ const FALLBACK_TRANSLATIONS: { [key: string]: string } = {
   'pwa.already_installed': 'ALREADY INSTALLED',
   'pwa.install_app': 'Install App',
   'pwa.tap_to_add': 'Tap to install the app',
+  'offline.banner_title': 'You are offline',
+  'offline.banner_desc': 'Your progress is saved locally and will sync once you reconnect.',
+  'offline.back_online': 'Back online! All data is synchronized.',
 };
 
 export function I18nProvider({ children }: { children: ReactNode }) {
   const { settings } = useSettings();
-  const [language, setLanguage] = useState<'pt' | 'en' | 'es'>('pt');
+  const [language, setLanguage] = useState<'pt' | 'en' | 'es'>('en');
 
   useEffect(() => {
     if (settings?.custom_texts?.['app.language']) {
@@ -197,7 +200,7 @@ export function I18nProvider({ children }: { children: ReactNode }) {
     
     // 2. Segunda prioridade: Preset do idioma selecionado (en, es, pt)
     if (!text) {
-      const currentLang = (settings?.custom_texts?.['app.language'] as any) || 'pt';
+      const currentLang = (settings?.custom_texts?.['app.language'] as any) || 'en';
       text = languagePresets[currentLang as keyof typeof languagePresets]?.[key];
     }
     

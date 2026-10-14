@@ -11,6 +11,7 @@ import { motion, AnimatePresence } from 'motion/react';
 import { usePWAInstall } from '../hooks/usePWAInstall';
 import { getDeviceType, installOnAndroidDirectly } from '../lib/pwa';
 import PWAInstallModal from './PWAInstallModal';
+import AutoFitLoginTitle from './AutoFitLoginTitle';
 
 type LoginMethod = 'passwordless' | 'password';
 
@@ -386,24 +387,23 @@ export default function AuthForm() {
         </div>
       )}
 
-      {/* Main Login Card with Luxury Luminous Border */}
+      {/* Main Login Card */}
       <div className="w-full relative group">
-        {/* Ambient Outer Halo / Glow */}
-        <div className="absolute -inset-[2px] rounded-[26px] animated-luxury-border opacity-75 blur-md group-hover:opacity-100 group-hover:blur-lg transition-all duration-700 pointer-events-none" />
+        {/* Soft subtle glow */}
+        <div className="absolute -inset-[1px] rounded-[24px] bg-gradient-to-b from-white/10 via-primary/5 to-transparent opacity-50 blur-sm pointer-events-none" />
         
-        {/* Border wrapper for crisp 1px gradient frame */}
-        <div className="relative rounded-[24px] p-[1.5px] animated-luxury-border shadow-[0_25px_60px_-15px_rgba(0,0,0,0.9),0_0_35px_rgba(244,63,94,0.15)]">
-          <div className="w-full p-6 sm:p-10 bg-[#0d0f18]/92 backdrop-blur-2xl rounded-[22.5px] relative overflow-hidden">
-            {/* Top Specular Arc Reflex (macOS/iOS glass edge) */}
-            <div className="absolute top-0 inset-x-8 h-[1px] bg-gradient-to-r from-transparent via-white/25 to-transparent pointer-events-none z-20" />
-            <div className="absolute bottom-0 inset-x-12 h-[1px] bg-gradient-to-r from-transparent via-white/5 to-transparent pointer-events-none z-20" />
+        {/* Crisp Card Container */}
+        <div className="relative rounded-[22px] border border-white/10 bg-[#0d0f18]/94 backdrop-blur-2xl shadow-[0_20px_50px_rgba(0,0,0,0.8)] overflow-hidden">
+          {/* Top Specular Arc Reflex (macOS/iOS glass edge) */}
+          <div className="absolute top-0 inset-x-8 h-[1px] bg-gradient-to-r from-transparent via-white/20 to-transparent pointer-events-none z-20" />
 
-            {/* Soft inner radial sheen */}
-            <div className="absolute top-0 left-1/2 -translate-x-1/2 w-3/4 h-28 bg-gradient-to-b from-white/10 to-transparent pointer-events-none blur-xl" />
+          {/* Soft inner radial sheen */}
+          <div className="absolute top-0 left-1/2 -translate-x-1/2 w-3/4 h-24 bg-gradient-to-b from-white/[0.06] to-transparent pointer-events-none blur-xl" />
 
-            <div className="text-center mb-8 relative z-10">
+          <div className="w-full px-5 py-6 sm:px-8 sm:py-7 relative">
+            <div className="text-center mb-5 sm:mb-6 relative z-10">
               {(settings.login_display_type === 'logo' || settings.login_display_type === 'both') && settings.logo_url && (
-                <div className="relative inline-block mx-auto mb-4">
+                <div className="relative inline-block mx-auto mb-3">
                   <div className="absolute -inset-2 bg-primary/20 rounded-full blur-lg opacity-60" />
                   <img 
                     src={settings.logo_url} 
@@ -415,19 +415,16 @@ export default function AuthForm() {
                 </div>
               )}
               {(settings.login_display_type === 'title' || settings.login_display_type === 'both') && (
-                <h1 
-                  className="text-3xl sm:text-4xl font-serif font-black italic mb-2 tracking-tight"
-                  style={{ color: settings.custom_texts?.['auth.title_color'] || '#ffffff' }}
-                >
-                  <span 
-                    className={settings.custom_texts?.['auth.title_color'] ? 'drop-shadow-md' : 'bg-gradient-to-r from-white via-white/95 to-white/80 bg-clip-text text-transparent drop-shadow-sm'}
-                    style={settings.custom_texts?.['auth.title_color'] ? { color: settings.custom_texts['auth.title_color'] } : undefined}
-                  >
-                    {settings.login_platform_name || settings.custom_texts?.['auth.platform_name'] || settings.app_name}
-                  </span>
-                </h1>
+                <AutoFitLoginTitle
+                  title={settings.login_platform_name || settings.custom_texts?.['auth.platform_name'] || settings.app_name || 'Missing Trigger'}
+                  font={settings.custom_texts?.['auth.title_font'] || 'inter'}
+                  titleColor={settings.custom_texts?.['auth.title_color']}
+                  fontSize={settings.custom_texts?.['auth.title_font_size']}
+                  primaryColor={settings.primary_color}
+                  sizeVariant="full"
+                />
               )}
-              <p className="text-gray-400 text-xs sm:text-sm font-medium tracking-wide">
+              <p className="text-zinc-400/90 text-xs sm:text-[13px] font-medium tracking-[0.14em] uppercase mt-1">
                 {t('auth.subtitle')}
               </p>
             </div>
@@ -543,7 +540,7 @@ export default function AuthForm() {
               </button>
             </form>
 
-            <div className="mt-8 text-center space-y-4 relative z-10">
+            <div className="mt-5 sm:mt-6 text-center space-y-3 relative z-10">
               <p className="text-xs text-gray-500 font-medium leading-relaxed">
                 {t('auth.restricted_access_msg')}
               </p>
@@ -552,8 +549,8 @@ export default function AuthForm() {
                 (settings.support_whatsapp_login_enabled && settings.support_whatsapp) || 
                 (settings.support_email_login_enabled && settings.support_email)
               ) && (
-                <div className="pt-4 border-t border-white/5 flex flex-col gap-2">
-                  <div className="bg-white/[0.03] backdrop-blur-md rounded-xl p-4 border border-white/10 space-y-3 shadow-inner">
+                <div className="pt-3 border-t border-white/5 flex flex-col gap-2">
+                  <div className="bg-white/[0.03] backdrop-blur-md rounded-xl p-3 sm:p-3.5 border border-white/10 space-y-2.5 shadow-inner">
                     <p className="text-[10px] font-black text-gray-400 uppercase tracking-widest text-center">
                       {t('auth.support_box')}
                     </p>
@@ -563,7 +560,7 @@ export default function AuthForm() {
                           href={`https://wa.me/${settings.support_whatsapp.replace(/\D/g, '')}`}
                           target="_blank"
                           rel="noopener noreferrer"
-                          className="flex items-center justify-center gap-2 py-2.5 px-3 bg-green-500/10 hover:bg-green-500/20 active:bg-green-500/30 text-green-400 border border-green-500/20 hover:border-green-500/35 rounded-lg text-xs font-bold transition-all duration-150 active:scale-[0.97] select-none"
+                          className="flex items-center justify-center gap-2 py-2 px-3 bg-green-500/10 hover:bg-green-500/20 active:bg-green-500/30 text-green-400 border border-green-500/20 hover:border-green-500/35 rounded-lg text-xs font-bold transition-all duration-150 active:scale-[0.97] select-none"
                         >
                           <WhatsAppIcon size={14} /> {t('auth.whatsapp_label')}
                         </a>
@@ -571,7 +568,7 @@ export default function AuthForm() {
                       {settings.support_email_login_enabled && settings.support_email && (
                         <a 
                           href={`mailto:${settings.support_email}`}
-                          className="flex items-center justify-center gap-2 py-2.5 px-3 bg-primary/10 hover:bg-primary/20 active:bg-primary/30 text-primary border border-primary/20 hover:border-primary/35 rounded-lg text-xs font-bold transition-all duration-150 active:scale-[0.97] select-none"
+                          className="flex items-center justify-center gap-2 py-2 px-3 bg-primary/10 hover:bg-primary/20 active:bg-primary/30 text-primary border border-primary/20 hover:border-primary/35 rounded-lg text-xs font-bold transition-all duration-150 active:scale-[0.97] select-none"
                         >
                           <Mail size={14} /> {t('auth.email_label')}
                         </a>

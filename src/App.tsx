@@ -8,6 +8,8 @@ import { toast } from './lib/customToast';
 import LoginPage from './pages/LoginPage';
 import Dashboard from './pages/Dashboard';
 import { GlowingSpinner } from './components/GlowingSpinner';
+import { OfflineNotice } from './components/OfflineNotice';
+import { preloadCoursesCatalog } from './lib/coursePreload';
 
 // Smooth hardware-accelerated Loading Screen
 function LoadingScreen() {
@@ -119,6 +121,9 @@ export default function App() {
       setAuthLoading(false);
       return;
     }
+
+    // Proactively pre-warm courses catalog in the background for instant 0ms post-login dashboard
+    preloadCoursesCatalog().catch(() => {});
 
     // Check current session with fast ceiling
     const checkInitialSession = async () => {
@@ -349,6 +354,7 @@ export default function App() {
 
   return (
     <div className="min-h-screen bg-bg-main text-white font-sans selection:bg-primary/30 text-pretty">
+      <OfflineNotice />
       {!user ? (
         <LoginPage />
       ) : (

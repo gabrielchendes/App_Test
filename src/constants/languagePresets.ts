@@ -249,6 +249,9 @@ export const languagePresets: Record<string, Record<string, string>> = {
     'course.preview_badge': 'PREVIEW',
     'dashboard.empty_all_unlocked': 'Você já possui todos os cursos disponíveis!',
     'dashboard.empty_locked': 'Você ainda não possui cursos liberados.',
+    'offline.banner_title': 'Você está offline',
+    'offline.banner_desc': 'Suas alterações estão salvas localmente e sincronizarão assim que a conexão retornar.',
+    'offline.back_online': 'Conexão restabelecida! Dados sincronizados.',
   },
   en: {
     'auth.welcome_back': 'Welcome back!',
@@ -498,6 +501,9 @@ export const languagePresets: Record<string, Record<string, string>> = {
     'course.preview_badge': 'PREVIEW',
     'dashboard.empty_all_unlocked': 'You already have all available courses!',
     'dashboard.empty_locked': 'You do not have any unlocked courses yet.',
+    'offline.banner_title': 'You are offline',
+    'offline.banner_desc': 'Your progress is saved locally and will sync once you reconnect.',
+    'offline.back_online': 'Back online! All data is synchronized.',
   },
   es: {
     'auth.welcome_back': '¡Bienvenido de nuevo!',
@@ -747,5 +753,8 @@ export const languagePresets: Record<string, Record<string, string>> = {
     'course.preview_badge': 'VISTA PREVIA',
     'dashboard.empty_all_unlocked': '¡Ya tienes todos los cursos disponibles!',
     'dashboard.empty_locked': 'Aún no tienes cursos liberados.',
+    'offline.banner_title': 'Estás desconectado',
+    'offline.banner_desc': 'Tus cambios se guardan localmente y se sincronizarán al reconectar.',
+    'offline.back_online': '¡Conexión restablecida! Datos sincronizados.',
   }
 };

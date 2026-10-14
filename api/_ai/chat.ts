@@ -196,8 +196,8 @@ export async function handleAiChat(req: VercelRequest, res: VercelResponse) {
     const defaultSystemInstruction = `You are ${name} ("Ask ${name}"), an empathetic, wise, insightful, and supportive relationship expert and coach specializing in romantic relationships, dating, effective communication, emotional intimacy, rebuilding trust, conflict resolution, breakup recovery, and establishing healthy personal boundaries.
 
 Core Consultation Guidelines:
-1. Respond in clear, warm, engaging, and constructive Portuguese (or match the language if the user writes in another language).
-2. Introduce yourself naturally as ${name} when appropriate, providing thoughtful, actionable, and compassionate advice tailored to couples, partners, and individuals seeking relationship growth.
+1. Primary Language: You are operating in the United States. Always respond in fluent, natural, warm, engaging, and constructive American English as your primary language (or seamlessly match the user's language if they explicitly write to you in another language).
+2. Introduce yourself naturally as ${name} when appropriate, providing thoughtful, actionable, and compassionate advice tailored to couples, partners, and individuals seeking relationship growth in the US and globally.
 3. Use well-structured paragraphs, bullet points when appropriate, and an encouraging, non-judgmental tone.
 4. CRITICAL FORMATTING RULE: Do NOT use markdown bold stars (like **text**) or asterisks (*text*) in your output. Write in natural plain text without asterisks so responses feel completely natural and human.
 5. Provide thorough, empathetic, insightful, and practical advice. Adapt the depth and length of your guidance naturally to the user's situation: when users ask complex, emotional, or detailed questions, provide rich, elaborate, step-by-step guidance with actionable communication scripts and psychological perspective, without rushing or cutting thoughts short. When questions are simple or conversational, provide clear and direct guidance.
@@ -205,7 +205,7 @@ Core Consultation Guidelines:
 ${userContext?.userName ? `User's Name: ${userContext.userName}` : ''}`;
 
     const systemInstruction = customSystemPrompt && customSystemPrompt.trim() !== ''
-      ? `${customSystemPrompt.trim()}\n\nIMPORTANT FORMATTING RULE: Do NOT use markdown bold stars (**text**) or asterisks in output. Write in natural plain text.\n\n${userContext?.userName ? `User's Name: ${userContext.userName}` : ''}`
+      ? `Primary Language: Respond in clear, warm American English (unless the user writes in another language).\n\n${customSystemPrompt.trim()}\n\nIMPORTANT FORMATTING RULE: Do NOT use markdown bold stars (**text**) or asterisks in output. Write in natural plain text.\n\n${userContext?.userName ? `User's Name: ${userContext.userName}` : ''}`
       : defaultSystemInstruction;
 
     const candidateModels = [
@@ -232,7 +232,7 @@ ${userContext?.userName ? `User's Name: ${userContext.userName}` : ''}`;
 
     const responseText = result.text;
 
-    const rawReply = responseText || `Olá! Sou a ${name}. No momento estou refletindo com muito carinho sobre a sua situação. Por favor, envie novamente a sua dúvida para eu te responder com todos os detalhes! 💕`;
+    const rawReply = responseText || `Hello! I'm ${name}. I am reflecting carefully on your situation. Please send your question again and I will gladly give you my full guidance and attention! 💕`;
     const reply = rawReply.replace(/\*\*/g, '');
 
     // Record usage log only after successful AI response

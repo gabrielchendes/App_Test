@@ -26,6 +26,7 @@ import { dataCache } from '../lib/cache';
 import { cn } from '../lib/utils';
 import { lazyWithRetry } from '../lib/lazyWithRetry';
 import { GlowingSpinner } from '../components/GlowingSpinner';
+import { CourseCardSkeleton } from '../components/CourseCardSkeleton';
 import { parseCourseHtmlFunnel } from '../utils/courseFunnel';
 import PWAInstallModal from '../components/PWAInstallModal';
 
@@ -55,8 +56,22 @@ export default function Dashboard({ user }: DashboardProps) {
   // Instant synchronous cache retrieval for 0ms initial render
   const cacheKey = `dashboard_data_${user?.id}`;
   const initialCached = useMemo(() => {
+    // 1. User-specific cached data
     const userCached = user?.id ? dataCache.getSync(cacheKey, null) : null;
     if (userCached?.courses?.length) return userCached;
+
+    // 2. Global public courses catalog fallback for 0ms render after sign-in
+    const globalCatalog = dataCache.getSync('global_public_courses_catalog', null);
+    if (globalCatalog && Array.isArray(globalCatalog) && globalCatalog.length > 0) {
+      return {
+        courses: globalCatalog,
+        purchases: [],
+        userProgress: [],
+        courseStats: {},
+        courseChapters: {}
+      };
+    }
+
     return null;
   }, [user?.id, cacheKey]);
 
@@ -67,6 +82,7 @@ export default function Dashboard({ user }: DashboardProps) {
   const [userProgress, setUserProgress] = useState<any[]>(() => initialCached?.userProgress || []);
   const [userProfile, setUserProfile] = useState<{ has_access?: boolean; has_unlimited_ai?: boolean; is_admin?: boolean } | null>(null);
   const [loading, setLoading] = useState(() => !initialCached?.courses?.length);
+  const [isInitialLoadComplete, setIsInitialLoadComplete] = useState(() => !!initialCached?.courses?.length);
   const [refreshKey, setRefreshKey] = useState(0);
   const [viewingCourseId, setViewingCourseId] = useState<string | null>(null);
   const [viewingCourse, setViewingCourse] = useState<Course | null>(null);
@@ -81,11 +97,12 @@ export default function Dashboard({ user }: DashboardProps) {
   const hasFetchedOnceRef = useRef(false);
   const prevViewingCourseIdRef = useRef<string | null>(null);
 
-  // Fast safety ceiling to prevent permanent loading spinner if initial fetch takes too long
+  // Emergency safety ceiling to prevent permanent loading spinner only if network completely hangs
   useEffect(() => {
     const safetyTimer = setTimeout(() => {
       setLoading(false);
-    }, 1500);
+      setIsInitialLoadComplete(true);
+    }, 7000);
     return () => clearTimeout(safetyTimer);
   }, []);
 
@@ -346,6 +363,7 @@ export default function Dashboard({ user }: DashboardProps) {
       setCourseStats(cachedData.courseStats || {});
       setCourseChapters(cachedData.courseChapters || {});
       setLoading(false);
+      setIsInitialLoadComplete(true);
     }
 
     try {
@@ -383,10 +401,16 @@ export default function Dashboard({ user }: DashboardProps) {
         }
       })();
 
+      const userEmailLower = user.email ? user.email.toLowerCase().trim() : '';
+      const emailPurchasePromise = (userEmailLower && userEmailLower !== user.id)
+        ? supabase.from('purchases').select('product_id, created_at').eq('user_id', userEmailLower)
+        : Promise.resolve({ data: [] } as any);
+
       // 2. Fetch all Home data simultaneously in parallel (Zero waterfall, cuts mobile latency in half)
-      const [coursesResult, purchasesByIdResult, progressResult, packagesResult, chaptersResult, profileResult] = await Promise.allSettled([
+      const [coursesResult, purchasesByIdResult, purchasesByEmailResult, progressResult, packagesResult, chaptersResult, profileResult] = await Promise.allSettled([
         fetchCoursesPromise,
         supabase.from('purchases').select('product_id, created_at').eq('user_id', user.id),
+        emailPurchasePromise,
         supabase.from('user_progress').select('chapter_id, completed, user_id').eq('user_id', user.id),
         supabase.from('course_packages').select('id, hotmart_product_id, hotmart_checkout_url, package_courses(course_id)'),
         supabase.from('chapters').select('id, content_type, modules!inner(course_id)'),
@@ -412,27 +436,20 @@ export default function Dashboard({ user }: DashboardProps) {
 
       let basePurchases: { product_id: string; created_at: any }[] = [];
       if (purchasesByIdResult.status === 'fulfilled' && (purchasesByIdResult.value as any)?.data) {
-        basePurchases = (purchasesByIdResult.value as any).data;
+        basePurchases = [...(purchasesByIdResult.value as any).data];
       }
 
-      // Handle purchases by email if applicable
-      if (user.email && user.email.toLowerCase() !== user.id && !isUUID(user.id)) {
-        try {
-          const { data: emailPurchases, error: emailPurErr } = await supabase
-            .from('purchases')
-            .select('product_id, created_at')
-            .eq('user_id', user.email.toLowerCase());
-          if (!emailPurErr && emailPurchases && emailPurchases.length > 0) {
-            const existingProductIds = new Set(basePurchases.map(p => p.product_id));
-            emailPurchases.forEach(ep => {
-              if (!existingProductIds.has(ep.product_id)) {
-                basePurchases.push(ep);
-                existingProductIds.add(ep.product_id);
-              }
-            });
-          }
-        } catch {
-          // Ignore type mismatch errors
+      // Merge purchases by email if present
+      if (purchasesByEmailResult.status === 'fulfilled' && (purchasesByEmailResult.value as any)?.data) {
+        const emailPurchases = (purchasesByEmailResult.value as any).data;
+        if (Array.isArray(emailPurchases) && emailPurchases.length > 0) {
+          const existingProductIds = new Set(basePurchases.map(p => p.product_id));
+          emailPurchases.forEach((ep: any) => {
+            if (!existingProductIds.has(ep.product_id)) {
+              basePurchases.push(ep);
+              existingProductIds.add(ep.product_id);
+            }
+          });
         }
       }
 
@@ -566,6 +583,7 @@ export default function Dashboard({ user }: DashboardProps) {
       }
     } finally {
       setLoading(false);
+      setIsInitialLoadComplete(true);
       fetchInProgressRef.current = false;
     }
   };
@@ -1003,6 +1021,15 @@ export default function Dashboard({ user }: DashboardProps) {
                             onOpen={handleOpenCourse}
                           />
                         ))
+                      ) : (!isInitialLoadComplete || loading) ? (
+                        <div className="flex gap-3.5 sm:gap-5">
+                          {[1, 2, 3, 4].map(i => (
+                            <CourseCardSkeleton 
+                              key={i} 
+                              showTitle={settings?.show_course_titles_home ?? true} 
+                            />
+                          ))}
+                        </div>
                       ) : (
                         <div className="w-full h-48 flex flex-col items-center justify-center text-gray-600 border border-white/5 rounded-3xl bg-white/5">
                           <Book size={32} className="mb-4 opacity-20" />
@@ -1013,21 +1040,32 @@ export default function Dashboard({ user }: DashboardProps) {
                       )}
                     </Carousel>
 
-                    {bonusCourses.length > 0 && (
+                    {(bonusCourses.length > 0 || ((!isInitialLoadComplete || loading) && courses.length === 0)) && (
                       <Carousel 
                         title={settings.custom_texts?.['dashboard.courses_bonus'] || t('dashboard.courses_bonus') || 'Exclusive Prizes and Bonuses 🎁'}
                       >
-                        {bonusCourses.map(course => (
-                          <ProductCard
-                            key={course.id}
-                            product={course}
-                            isUnlocked={true}
-                            progress={getCourseProgress(course.id)}
-                            stats={courseStats[course.id]}
-                            settings={settings}
-                            onOpen={handleOpenCourse}
-                          />
-                        ))}
+                        {bonusCourses.length > 0 ? (
+                          bonusCourses.map(course => (
+                            <ProductCard
+                              key={course.id}
+                              product={course}
+                              isUnlocked={true}
+                              progress={getCourseProgress(course.id)}
+                              stats={courseStats[course.id]}
+                              settings={settings}
+                              onOpen={handleOpenCourse}
+                            />
+                          ))
+                        ) : (
+                          <div className="flex gap-3.5 sm:gap-5">
+                            {[1, 2].map(i => (
+                              <CourseCardSkeleton 
+                                key={i} 
+                                showTitle={settings?.show_course_titles_home ?? true} 
+                              />
+                            ))}
+                          </div>
+                        )}
                       </Carousel>
                     )}
 
@@ -1046,6 +1084,15 @@ export default function Dashboard({ user }: DashboardProps) {
                             onOpen={handleOpenCourse}
                           />
                         ))
+                      ) : (!isInitialLoadComplete || loading) ? (
+                        <div className="flex gap-3.5 sm:gap-5">
+                          {[1, 2, 3].map(i => (
+                            <CourseCardSkeleton 
+                              key={i} 
+                              showTitle={settings?.show_course_titles_home ?? true} 
+                            />
+                          ))}
+                        </div>
                       ) : (
                         <div className="w-full py-16 flex flex-col items-center justify-center text-gray-600 border-2 border-dashed border-white/5 rounded-3xl">
                           <p className="font-bold text-center px-4">{settings.custom_texts?.['dashboard.empty_all_unlocked'] || t('dashboard.empty_all_unlocked') || 'Você já possui todos os cursos disponíveis!'}</p>
