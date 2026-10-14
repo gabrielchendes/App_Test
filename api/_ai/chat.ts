@@ -1,5 +1,5 @@
 import { GoogleGenAI } from '@google/genai';
-import { VercelRequest, VercelResponse } from '@vercel/node';
+import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { createClient } from '@supabase/supabase-js';
 import { generateContentWithRetry, isRetryableGeminiError } from '../_utils/geminiCallWithRetry';
 
@@ -225,8 +225,8 @@ ${userContext?.userName ? `User's Name: ${userContext.userName}` : ''}`;
       },
       maxAttemptsPerModel: 1,
       baseDelayMs: 250,
-      perCallTimeoutMs: 8500,
-      totalBudgetMs: 13500,
+      perCallTimeoutMs: 7500,
+      totalBudgetMs: 9200,
       logPrefix: '[Ask Victoria Chat]'
     });
 

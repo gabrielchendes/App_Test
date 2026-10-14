@@ -1,4 +1,4 @@
-import { VercelRequest, VercelResponse } from '@vercel/node';
+import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { handleAiChat } from '../_ai/chat';
 import { handleAiCourseEditor } from '../_ai/courseEditor';
 import { handleAnalyzeMessage } from '../_ai/analyzeMessage';

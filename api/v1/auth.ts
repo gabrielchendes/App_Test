@@ -1,5 +1,5 @@
 import { createClient } from '@supabase/supabase-js';
-import { VercelRequest, VercelResponse } from '@vercel/node';
+import type { VercelRequest, VercelResponse } from '@vercel/node';
 
 const supabaseUrl = 
   process.env.SUPABASE_URL || 

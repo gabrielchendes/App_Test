@@ -1,5 +1,5 @@
 import { createClient } from '@supabase/supabase-js';
-import { VercelRequest, VercelResponse } from '@vercel/node';
+import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { initializeApp, getApps, cert } from 'firebase-admin/app';
 import { getMessaging } from 'firebase-admin/messaging';
 import { randomUUID } from 'crypto';

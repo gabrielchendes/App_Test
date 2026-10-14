@@ -1,5 +1,5 @@
 import { GoogleGenAI } from '@google/genai';
-import { VercelRequest, VercelResponse } from '@vercel/node';
+import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { safeParseAiJson } from '../_utils/parseAiJson';
 import { generateContentWithRetry } from '../_utils/geminiCallWithRetry';
 import { getGeminiApiKey } from './chat';

@@ -1,8 +1,17 @@
-import { VercelRequest, VercelResponse } from '@vercel/node';
+import type { VercelRequest, VercelResponse } from '@vercel/node';
 import fs from 'fs';
 import path from 'path';
 import { createClient } from '@supabase/supabase-js';
-import { sendAdminPushAlert } from './notifications';
+async function sendAdminPushAlert(params: any) {
+  try {
+    const mod: any = await import('./notifications.js').catch(() => import('./notifications.ts'));
+    if (mod?.sendAdminPushAlert) {
+      await mod.sendAdminPushAlert(params);
+    }
+  } catch (err) {
+    console.warn('[Testimonials] Optional push alert skipped:', err);
+  }
+}
 
 const DATA_DIR = path.join(process.cwd(), 'data');
 const TESTIMONIALS_FILE = path.join(DATA_DIR, 'testimonials.json');

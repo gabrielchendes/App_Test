@@ -69,8 +69,8 @@ export async function generateContentWithRetry(
     config,
     maxAttemptsPerModel = 1,
     baseDelayMs = 300,
-    perCallTimeoutMs = 8500,
-    totalBudgetMs = 13500,
+    perCallTimeoutMs = 7500,
+    totalBudgetMs = 9200,
     logPrefix = '[Gemini Call]'
   } = options;
 

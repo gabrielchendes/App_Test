@@ -1,10 +1,10 @@
 import { GoogleGenAI } from '@google/genai';
-import { VercelRequest, VercelResponse } from '@vercel/node';
+import type { GenerateContentParameters, GenerateContentResponse } from '@google/genai';
+import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { createClient } from '@supabase/supabase-js';
-import { generateContentWithRetry, isRetryableGeminiError } from '../_utils/geminiCallWithRetry';
 
 // Vercel serverless execution limit
-export const maxDuration = 15;
+export const maxDuration = 30;
 
 const supabaseUrl = 
   process.env.SUPABASE_URL || 
@@ -44,11 +44,16 @@ const hasRealSupabase = Boolean(
   (supabaseServiceRoleKey || supabaseAnonKey)
 );
 
-const supabaseAdmin = hasRealSupabase
-  ? createClient(supabaseUrl, supabaseServiceRoleKey || supabaseAnonKey, {
+let supabaseAdmin: ReturnType<typeof createClient> | null = null;
+try {
+  if (hasRealSupabase) {
+    supabaseAdmin = createClient(supabaseUrl, supabaseServiceRoleKey || supabaseAnonKey, {
       auth: { persistSession: false },
-    })
-  : null;
+    });
+  }
+} catch (e) {
+  console.warn('[AI Chat API] Supabase client init error:', e);
+}
 
 export function getGeminiApiKey(): string {
   const key =
@@ -104,9 +109,169 @@ async function withTimeout<T>(promise: Promise<T>, timeoutMs: number, fallback: 
   const timeoutPromise = new Promise<T>((resolve) => {
     timer = setTimeout(() => resolve(fallback), timeoutMs);
   });
-  return Promise.race([promise, timeoutPromise]).finally(() => {
+  try {
+    return await Promise.race([
+      promise.catch((err) => {
+        console.warn('[withTimeout Promise Warning]:', err);
+        return fallback;
+      }),
+      timeoutPromise
+    ]);
+  } finally {
     if (timer) clearTimeout(timer);
-  });
+  }
+}
+
+// Inlined self-contained helper functions to avoid any relative import failures in Vercel ESM
+interface GeminiRetryOptions {
+  ai: GoogleGenAI;
+  candidateModels?: string[];
+  contents: GenerateContentParameters['contents'];
+  config?: GenerateContentParameters['config'];
+  maxAttemptsPerModel?: number;
+  baseDelayMs?: number;
+  perCallTimeoutMs?: number;
+  totalBudgetMs?: number;
+  logPrefix?: string;
+}
+
+function isRetryableGeminiError(error: any): boolean {
+  if (!error) return false;
+  const rawStr = typeof error === 'string' ? error : (JSON.stringify(error) || String(error));
+  const msg = (error.message || error.error?.message || rawStr).toLowerCase();
+  const status = error.status || error.code || error.statusCode || error.error?.code || error.error?.status;
+
+  if (
+    status === 503 ||
+    status === 429 ||
+    status === 500 ||
+    status === 502 ||
+    status === 504 ||
+    status === 'UNAVAILABLE' ||
+    status === 'RESOURCE_EXHAUSTED'
+  ) {
+    return true;
+  }
+
+  if (
+    msg.includes('high demand') ||
+    msg.includes('spikes in demand') ||
+    msg.includes('unavailable') ||
+    msg.includes('resource_exhausted') ||
+    msg.includes('rate limit') ||
+    msg.includes('quota exceeded') ||
+    msg.includes('overloaded') ||
+    msg.includes('try again later') ||
+    msg.includes('econnreset') ||
+    msg.includes('etimedout') ||
+    msg.includes('timed out') ||
+    msg.includes('timeout')
+  ) {
+    return true;
+  }
+
+  return false;
+}
+
+async function generateContentWithRetry(
+  options: GeminiRetryOptions
+): Promise<{ text: string; modelUsed: string; response: GenerateContentResponse }> {
+  const {
+    ai,
+    candidateModels = ['gemini-3.1-flash-lite', 'gemini-flash-latest', 'gemini-3.8-flash'],
+    contents,
+    config,
+    maxAttemptsPerModel = 1,
+    baseDelayMs = 250,
+    perCallTimeoutMs = 7500,
+    totalBudgetMs = 9200,
+    logPrefix = '[Gemini Call]'
+  } = options;
+
+  const startTime = Date.now();
+  let lastError: any = null;
+
+  for (const modelName of candidateModels) {
+    const timeElapsed = Date.now() - startTime;
+    if (timeElapsed >= totalBudgetMs - 1200) {
+      console.info(`${logPrefix} Approaching execution time budget (${timeElapsed}ms / ${totalBudgetMs}ms). Halting further model attempts.`);
+      break;
+    }
+
+    for (let attempt = 1; attempt <= maxAttemptsPerModel; attempt++) {
+      const remainingTime = totalBudgetMs - (Date.now() - startTime);
+      if (remainingTime < 1200) {
+        console.info(`${logPrefix} Not enough time remaining (${remainingTime}ms) for attempt ${attempt} on ${modelName}.`);
+        break;
+      }
+
+      const effectiveCallTimeout = Math.min(perCallTimeoutMs, remainingTime - 300);
+
+      try {
+        let timer: NodeJS.Timeout | null = null;
+        const timeoutPromise = new Promise<never>((_, reject) => {
+          timer = setTimeout(() => {
+            reject(new Error(`Call to model ${modelName} reached deadline after ${effectiveCallTimeout}ms`));
+          }, effectiveCallTimeout);
+        });
+
+        const callPromise = ai.models.generateContent({
+          model: modelName,
+          contents,
+          config,
+        });
+
+        const response = await Promise.race([callPromise, timeoutPromise]).finally(() => {
+          if (timer) clearTimeout(timer);
+        });
+
+        if (response && response.text) {
+          return {
+            text: response.text,
+            modelUsed: modelName,
+            response,
+          };
+        }
+      } catch (err: any) {
+        lastError = err;
+        const isRetryable = isRetryableGeminiError(err);
+        const rawErrStr = typeof err === 'string' ? err : (err?.message || JSON.stringify(err) || String(err));
+
+        console.info(
+          `${logPrefix} Model ${modelName} note: ${rawErrStr}. Trying candidate fallback...`
+        );
+
+        const isHighDemand =
+          rawErrStr.toLowerCase().includes('high demand') ||
+          rawErrStr.toLowerCase().includes('spikes in demand') ||
+          rawErrStr.toLowerCase().includes('unavailable') ||
+          rawErrStr.toLowerCase().includes('overloaded') ||
+          rawErrStr.toLowerCase().includes('timed out') ||
+          rawErrStr.toLowerCase().includes('deadline') ||
+          err?.status === 503 ||
+          err?.code === 503 ||
+          err?.error?.code === 503;
+
+        if (isHighDemand) {
+          break;
+        }
+
+        if (!isRetryable && attempt === 1) {
+          break;
+        }
+
+        const delay = Math.round(
+          baseDelayMs * Math.pow(1.3, attempt - 1) + Math.random() * 150
+        );
+
+        if (attempt < maxAttemptsPerModel && (Date.now() - startTime + delay) < totalBudgetMs - 1500) {
+          await new Promise((resolve) => setTimeout(resolve, delay));
+        }
+      }
+    }
+  }
+
+  throw lastError || new Error(`${logPrefix} All candidate models failed or were busy.`);
 }
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
@@ -132,10 +297,12 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     if (!apiKey) {
       console.warn('[AI Chat API] GEMINI_API_KEY missing on Vercel environment.');
       return res.status(200).json({
-        success: true,
-        reply: `${expertName || 'Victoria'} is currently preparing her consultation room. Please verify that the GEMINI_API_KEY environment variable is set in your Vercel project settings, and try again in just a moment! 💕`,
+        success: false,
+        reply: null,
+        message: `${expertName || 'Victoria'} is currently preparing her consultation room. Please verify that the GEMINI_API_KEY environment variable is set in your Vercel project settings, and try again in just a moment! 💕`,
         missingKey: true,
         isHighDemand: true,
+        limitDeducted: false,
       });
     }
 
@@ -152,7 +319,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           let profile: { id?: string; has_unlimited_ai?: boolean; is_admin?: boolean; email?: string } | null = null;
 
           if (isUUID(userIdentifier)) {
-            const { data } = await supabaseAdmin
+            const { data } = await supabaseAdmin!
               .from('profiles')
               .select('id, has_unlimited_ai, is_admin, email')
               .eq('id', userIdentifier)
@@ -162,7 +329,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
           if (!profile && (userIdentifier.includes('@') || userContext?.email)) {
             const emailToFind = (userContext?.email || userIdentifier).toLowerCase();
-            const { data } = await supabaseAdmin
+            const { data } = await supabaseAdmin!
               .from('profiles')
               .select('id, has_unlimited_ai, is_admin, email')
               .eq('email', emailToFind)
@@ -176,7 +343,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
             isUserUnlimited = true;
           } else {
             const targetUid = (profile?.id && isUUID(profile.id)) ? profile.id : (isUUID(userIdentifier) ? userIdentifier : null);
-            let pQuery = supabaseAdmin.from('purchases').select('id');
+            let pQuery = supabaseAdmin!.from('purchases').select('id');
             if (targetUid) {
               pQuery = pQuery.eq('user_id', targetUid);
             } else {
@@ -197,13 +364,13 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     if (!isUserUnlimited && supabaseAdmin && hasRealSupabase) {
       try {
         await withTimeout((async () => {
-          const { data: settingsRow } = await supabaseAdmin
+          const { data: settingsRow } = await supabaseAdmin!
             .from('app_settings')
             .select('custom_texts')
             .eq('id', 1)
             .maybeSingle();
 
-          const customTexts = settingsRow?.custom_texts || {};
+          const customTexts: Record<string, string> = (settingsRow as any)?.custom_texts || {};
           const isLimitEnabled = customTexts['ai_expert.enable_message_limit'] === 'true';
           const maxMessages = Math.max(1, parseInt(customTexts['ai_expert.max_messages_count'] || '3', 10));
 
@@ -214,7 +381,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
               const startOfToday = new Date();
               startOfToday.setHours(0, 0, 0, 0);
 
-              const { count } = await supabaseAdmin
+              const { count } = await supabaseAdmin!
                 .from('ai_message_logs')
                 .select('*', { count: 'exact', head: true })
                 .eq('user_id', userIdentifier)
@@ -252,14 +419,12 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     // Optimize conversation context by taking the last 10 messages
     const trimmedMessages = messages.slice(-10);
 
-    // CRITICAL: Ensure conversation strictly begins with a user turn
-    // Remove any leading assistant/model greeting from the contents array so Gemini does not reject
+    // Ensure conversation strictly begins with a user turn
     const validTurnMessages = [...trimmedMessages];
     while (validTurnMessages.length > 0 && validTurnMessages[0].role === 'assistant') {
       validTurnMessages.shift();
     }
 
-    // If all messages were assistant, create a default user prompt
     if (validTurnMessages.length === 0) {
       validTurnMessages.push({ role: 'user', content: 'Olá Victoria, estou aqui para conversar!' });
     }
@@ -269,7 +434,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     for (const m of validTurnMessages) {
       const mappedRole: 'user' | 'model' = m.role === 'assistant' ? 'model' : 'user';
       if (contents.length > 0 && contents[contents.length - 1].role === mappedRole) {
-        // Merge into previous turn to maintain valid alternation
         contents[contents.length - 1].parts[0].text += `\n\n${m.content}`;
       } else {
         contents.push({
@@ -313,8 +477,8 @@ ${userContext?.userName ? `User's Name: ${userContext.userName}` : ''}`;
       },
       maxAttemptsPerModel: 1,
       baseDelayMs: 250,
-      perCallTimeoutMs: 8500, // Sufficient time for deep answers without premature cancellation
-      totalBudgetMs: 13500, // Safe execution budget for Vercel functions
+      perCallTimeoutMs: 7500, // Ample time for Gemini Flash Lite (takes ~2-5s) to produce rich guidance
+      totalBudgetMs: 9200, // Strictly within the 10s Vercel Free limit (with 800ms buffer)
       logPrefix: '[Ask Victoria Chat]'
     });
 
@@ -325,7 +489,7 @@ ${userContext?.userName ? `User's Name: ${userContext.userName}` : ''}`;
     // Record usage count ONLY on true AI response success
     if (responseText && userIdentifier && !isUserUnlimited && supabaseAdmin && hasRealSupabase) {
       try {
-        supabaseAdmin
+        (supabaseAdmin as any)
           .from('ai_message_logs')
           .insert({
             user_id: userIdentifier,
