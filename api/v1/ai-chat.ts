@@ -3,8 +3,8 @@ import { VercelRequest, VercelResponse } from '@vercel/node';
 import { createClient } from '@supabase/supabase-js';
 import { generateContentWithRetry, isRetryableGeminiError } from '../_utils/geminiCallWithRetry';
 
-// Vercel Free (Hobby) tier maximum execution limit is 10 seconds
-export const maxDuration = 10;
+// Vercel serverless execution limit
+export const maxDuration = 15;
 
 const supabaseUrl = 
   process.env.SUPABASE_URL || 
@@ -295,13 +295,11 @@ ${userContext?.userName ? `User's Name: ${userContext.userName}` : ''}`;
       ? `${customSystemPrompt.trim()}\n\nIMPORTANT FORMATTING RULE: Do NOT use markdown bold stars (**text**) or asterisks in output. Write in natural plain text.\n\n${userContext?.userName ? `User's Name: ${userContext.userName}` : ''}`
       : defaultSystemInstruction;
 
-    // Use globally supported, high-speed production Gemini models
+    // Highly reliable, fast models with validated Google GenAI SDK support
     const candidateModels = [
-      'gemini-2.5-flash',
-      'gemini-2.0-flash',
-      'gemini-1.5-flash',
-      'gemini-3.8-flash',
-      'gemini-2.5-pro'
+      'gemini-3.1-flash-lite',
+      'gemini-flash-latest',
+      'gemini-3.8-flash'
     ];
 
     const result = await generateContentWithRetry({
@@ -311,12 +309,12 @@ ${userContext?.userName ? `User's Name: ${userContext.userName}` : ''}`;
       config: {
         systemInstruction,
         temperature: 0.7,
-        maxOutputTokens: 1600, // Ample room for rich answers while executing well within serverless limits
+        maxOutputTokens: 1600, // Ample room for rich answers
       },
       maxAttemptsPerModel: 1,
-      baseDelayMs: 300,
-      perCallTimeoutMs: 5500,
-      totalBudgetMs: 8200, // Execution budget well within Vercel Free Plan 10s ceiling
+      baseDelayMs: 250,
+      perCallTimeoutMs: 8500, // Sufficient time for deep answers without premature cancellation
+      totalBudgetMs: 13500, // Safe execution budget for Vercel functions
       logPrefix: '[Ask Victoria Chat]'
     });
 
@@ -324,8 +322,8 @@ ${userContext?.userName ? `User's Name: ${userContext.userName}` : ''}`;
     const rawReply = responseText || `Olá! Sou a ${name}. No momento estou refletindo com muito carinho sobre a sua situação. Por favor, envie novamente a sua dúvida para eu te responder com todos os detalhes! 💕`;
     const reply = rawReply.replace(/\*\*/g, '');
 
-    // Fire-and-forget log insertion in background (non-blocking)
-    if (userIdentifier && !isUserUnlimited && supabaseAdmin && hasRealSupabase) {
+    // Record usage count ONLY on true AI response success
+    if (responseText && userIdentifier && !isUserUnlimited && supabaseAdmin && hasRealSupabase) {
       try {
         supabaseAdmin
           .from('ai_message_logs')
@@ -343,11 +341,12 @@ ${userContext?.userName ? `User's Name: ${userContext.userName}` : ''}`;
       success: true,
       reply,
       modelUsed: result.modelUsed,
+      limitDeducted: true,
     });
   } catch (err: any) {
     if (res.headersSent) return;
 
-    console.error('[AI Chat API Safe Error Handler]:', err);
+    console.warn('[AI Chat API Handled Warning]:', err?.message || err);
 
     const errMsg = err?.message || String(err || '');
 
@@ -364,14 +363,16 @@ ${userContext?.userName ? `User's Name: ${userContext.userName}` : ''}`;
       }
     } catch (_) {}
 
-    // Graceful humanized fallback in 200 OK so student UI never crashes or sees raw 500 error
-    const friendlyFallback = `I'm so sorry, I cannot respond at this exact moment because I am currently in consultation assisting other students. Don't worry, your message is saved! Please ask again in just a moment and I will give you my full attention. 💕`;
+    // Graceful response with success: false so student daily quota is NEVER consumed on failures
+    const friendlyFallback = `I'm so sorry, I cannot respond at this exact moment because I am currently in consultation assisting other students. Don't worry, your message is saved and your message limit was not consumed! Please ask again in just a moment and I will give you my full attention. 💕`;
 
     return res.status(200).json({
-      success: true,
-      reply: friendlyFallback,
+      success: false,
+      reply: null,
+      message: friendlyFallback,
       isHighDemand: true,
       retryable: true,
+      limitDeducted: false,
       details: cleanError,
     });
   }

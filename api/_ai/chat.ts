@@ -209,11 +209,9 @@ ${userContext?.userName ? `User's Name: ${userContext.userName}` : ''}`;
       : defaultSystemInstruction;
 
     const candidateModels = [
-      'gemini-2.5-flash',
-      'gemini-2.0-flash',
-      'gemini-1.5-flash',
-      'gemini-3.8-flash',
-      'gemini-2.5-pro'
+      'gemini-3.1-flash-lite',
+      'gemini-flash-latest',
+      'gemini-3.8-flash'
     ];
 
     const result = await generateContentWithRetry({
@@ -226,9 +224,9 @@ ${userContext?.userName ? `User's Name: ${userContext.userName}` : ''}`;
         maxOutputTokens: 1600,
       },
       maxAttemptsPerModel: 1,
-      baseDelayMs: 300,
-      perCallTimeoutMs: 5500,
-      totalBudgetMs: 8200,
+      baseDelayMs: 250,
+      perCallTimeoutMs: 8500,
+      totalBudgetMs: 13500,
       logPrefix: '[Ask Victoria Chat]'
     });
 
@@ -238,7 +236,7 @@ ${userContext?.userName ? `User's Name: ${userContext.userName}` : ''}`;
     const reply = rawReply.replace(/\*\*/g, '');
 
     // Record usage log only after successful AI response
-    if (userIdentifier && !isUserUnlimited) {
+    if (responseText && userIdentifier && !isUserUnlimited) {
       try {
         await supabaseAdmin
           .from('ai_message_logs')
@@ -257,20 +255,23 @@ ${userContext?.userName ? `User's Name: ${userContext.userName}` : ''}`;
       success: true,
       reply,
       modelUsed: result.modelUsed,
+      limitDeducted: true,
     });
   } catch (err: any) {
     if (res.headersSent) return;
 
-    console.error('[AI Chat API Error]:', err);
+    console.warn('[AI Chat API Handled Warning]:', err?.message || err);
 
     const errMsg = err?.message || String(err || '');
 
     if (errMsg.includes('GEMINI_API_KEY environment variable is missing')) {
       return res.status(200).json({
-        success: true,
-        reply: `Victoria is currently preparing her consultation room. Please verify that the GEMINI_API_KEY environment variable is configured in Vercel project settings, and try again in just a moment! 💕`,
+        success: false,
+        reply: null,
+        message: `Victoria is currently preparing her consultation room. Please verify that the GEMINI_API_KEY environment variable is configured in Vercel project settings, and try again in just a moment! 💕`,
         missingKey: true,
         isHighDemand: true,
+        limitDeducted: false,
       });
     }
 
@@ -287,13 +288,15 @@ ${userContext?.userName ? `User's Name: ${userContext.userName}` : ''}`;
       }
     } catch (_) {}
 
-    const friendlyFallback = `I'm so sorry, I cannot respond at this exact moment because I am currently in consultation assisting other students. Don't worry, your message is saved! Please ask again in just a moment and I will give you my full attention. 💕`;
+    const friendlyFallback = `I'm so sorry, I cannot respond at this exact moment because I am currently in consultation assisting other students. Don't worry, your message is saved and your message limit was not consumed! Please ask again in just a moment and I will give you my full attention. 💕`;
 
     return res.status(200).json({
-      success: true,
-      reply: friendlyFallback,
+      success: false,
+      reply: null,
+      message: friendlyFallback,
       isHighDemand: true,
       retryable: true,
+      limitDeducted: false,
       details: cleanError
     });
   }

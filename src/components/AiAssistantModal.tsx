@@ -553,7 +553,7 @@ export default function AiAssistantModal({ userId, userEmail, userName, userAvat
 
         const controller = new AbortController();
         activeFetchAbortRef.current = controller;
-        const timeoutId = setTimeout(() => controller.abort(), 9500);
+        const timeoutId = setTimeout(() => controller.abort(), 16000);
 
         let res: Response;
         try {
@@ -602,21 +602,31 @@ export default function AiAssistantModal({ userId, userEmail, userName, userAvat
           return;
         }
 
-        if (res.ok && data.success !== false && data.reply) {
+        // Check if this is a genuine successful AI response (NOT an error, high demand, or retry fallback)
+        const isGenuineSuccess = 
+          res.ok && 
+          data.success === true && 
+          !data.isHighDemand && 
+          !data.retryable && 
+          !data.isError && 
+          typeof data.reply === 'string' && 
+          data.reply.trim().length > 0;
+
+        if (isGenuineSuccess) {
           finalSuccessReply = data.reply;
           break; // Succeeded! Exit retry loop
         }
 
         const isRetryableStatus = res.status === 503 || res.status === 504 || res.status === 502 || res.status === 500 || res.status === 429;
-        const isExplicitRetryable = data.retryable === true || data.isHighDemand === true;
+        const isExplicitRetryable = data.retryable === true || data.isHighDemand === true || data.success === false;
         const rawMsg = (typeof data.error === 'string' ? data.error : data.message) || responseText || '';
         const isBusySignal = rawMsg.toLowerCase().includes('busy') || 
                              rawMsg.toLowerCase().includes('demand') || 
                              rawMsg.toLowerCase().includes('conversation') || 
-                             rawMsg.toLowerCase().includes('consultation') ||
-                             rawMsg.toLowerCase().includes('student') ||
+                             rawMsg.toLowerCase().includes('consultation') || 
+                             rawMsg.toLowerCase().includes('student') || 
                              rawMsg.toLowerCase().includes('timeout') || 
-                             rawMsg.toLowerCase().includes('timed out') ||
+                             rawMsg.toLowerCase().includes('timed out') || 
                              rawMsg.toLowerCase().includes('rate limit');
 
         if (isRetryableStatus || isExplicitRetryable || isBusySignal) {
@@ -632,11 +642,6 @@ export default function AiAssistantModal({ userId, userEmail, userName, userAvat
             continue;
           }
         } else {
-          // If response has a fallback reply from the server, use it
-          if (data.reply) {
-            finalSuccessReply = data.reply;
-            break;
-          }
           finalErrorMessage = `${expertName} is currently assisting other students. Please try asking again shortly.`;
           break;
         }
@@ -724,7 +729,7 @@ export default function AiAssistantModal({ userId, userEmail, userName, userAvat
       const errBotMsg: Message = {
         id: (Date.now() + 1).toString(),
         role: 'assistant',
-        content: `I'm so sorry, I cannot respond at the moment because I'm currently helping other students in consultation. Don't worry, your message is saved! Whenever you're ready, tap the button below and I'll give you my full attention. 💕`,
+        content: `I'm so sorry, I cannot respond at the moment because I'm currently helping other students in consultation. Don't worry, your message is saved and your message limit was NOT deducted! Whenever you're ready, tap the button below and I'll give you my full attention. 💕`,
         timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
         isError: true,
         retryQuery: query,
