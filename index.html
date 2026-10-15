@@ -107,6 +107,8 @@
             message.indexOf('NetworkError') !== -1 ||
             message.indexOf('Failed to fetch') !== -1 ||
             message.indexOf('Load failed') !== -1 ||
+            message.indexOf('ResizeObserver loop') !== -1 ||
+            message.indexOf('ResizeObserver') !== -1 ||
             source.indexOf('googletagmanager') !== -1 || 
             source.indexOf('gtag') !== -1 ||
             source.indexOf('supabase') !== -1 ||
@@ -117,6 +119,10 @@
 
         // 1. Classic onerror handler
         window.onerror = function(message, source, lineno, colno, error) {
+          var msg = String(message || (error && error.message) || '');
+          if (msg.indexOf('ResizeObserver') !== -1 || msg.indexOf('undelivered notifications') !== -1) {
+            return true; // Prevents the error from propagating to dev overlay
+          }
           if (isBenignAuth(error, message, source) || checkBenign(message, source) || (error && checkBenign(error.message, source))) {
             console.warn('⚠️ Suppressed early window.onerror:', message, 'from:', source);
             return true; // Prevents the error from propagating
@@ -126,7 +132,15 @@
 
         // 2. Modern event listener with capture and stopPropagation
         window.addEventListener('error', function(event) {
-          var msg = event.message || (event.error && event.error.message) || '';
+          var msg = String(event.message || (event.error && event.error.message) || '');
+          if (msg.indexOf('ResizeObserver') !== -1 || msg.indexOf('undelivered notifications') !== -1) {
+            try {
+              event.preventDefault();
+              event.stopPropagation();
+              event.stopImmediatePropagation();
+            } catch (e) {}
+            return true;
+          }
           var src = event.filename || '';
           if (isBenignAuth(event.error, msg, src) || checkBenign(msg, src)) {
             console.warn('⚠️ Suppressed early error event:', msg, 'from:', src);
@@ -230,6 +244,11 @@
     </script>
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
     <meta name="referrer" content="no-referrer-when-downgrade" />
+    <!-- Premium Typography Fonts -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@400;500;600;700;800;900&family=Cormorant+Garamond:ital,wght@0,400;0,500;0,600;0,700;1,400;1,600&family=Inter:wght@400;500;600;700;800;900&family=Outfit:wght@400;500;600;700;800&family=Playfair+Display:ital,wght@0,400;0,600;0,700;1,400;1,600&family=Plus+Jakarta+Sans:wght@500;600;700;800&display=swap" rel="stylesheet">
+
     <title>Missing Trigger</title>
     <meta name="description" content="Exclusive members area with premium content." />
     <meta property="og:title" content="Missing Trigger" />

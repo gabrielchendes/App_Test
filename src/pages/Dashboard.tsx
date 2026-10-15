@@ -5,7 +5,7 @@ import Navbar from '../components/Navbar';
 import BottomNav from '../components/BottomNav';
 import BannerCarousel from '../components/BannerCarousel';
 import Carousel from '../components/Carousel';
-import ProductCard from '../components/ProductCard';
+import ProductCard, { ProductCardSkeleton } from '../components/ProductCard';
 import FloatingWhatsApp from '../components/FloatingWhatsApp';
 import SupportSection from '../components/SupportSection';
 import { HomeTestimonialCard } from '../components/HomeTestimonialCard';
@@ -54,9 +54,22 @@ export default function Dashboard({ user }: DashboardProps) {
 
   // Instant synchronous cache retrieval for 0ms initial render
   const cacheKey = `dashboard_data_${user?.id}`;
+  const profileCacheKey = `dashboard_profile_${user?.id}`;
   const initialCached = useMemo(() => {
     const userCached = user?.id ? dataCache.getSync(cacheKey, null) : null;
     if (userCached?.courses?.length) return userCached;
+
+    // Fallback: check global catalog cache so screen has courses immediately
+    const globalCached = dataCache.getSync('global_public_courses_catalog', null);
+    if (globalCached && Array.isArray(globalCached) && globalCached.length > 0) {
+      return {
+        courses: globalCached,
+        purchases: [],
+        userProgress: [],
+        courseStats: {},
+        courseChapters: {}
+      };
+    }
     return null;
   }, [user?.id, cacheKey]);
 
@@ -65,8 +78,14 @@ export default function Dashboard({ user }: DashboardProps) {
   const [courseStats, setCourseStats] = useState<Record<string, { lessons: number, materials: number }>>(() => initialCached?.courseStats || {});
   const [purchases, setPurchases] = useState<{product_id: string, created_at: any}[]>(() => initialCached?.purchases || []);
   const [userProgress, setUserProgress] = useState<any[]>(() => initialCached?.userProgress || []);
-  const [userProfile, setUserProfile] = useState<{ has_access?: boolean; has_unlimited_ai?: boolean; is_admin?: boolean } | null>(null);
+  const [userProfile, setUserProfile] = useState<{ has_access?: boolean; has_unlimited_ai?: boolean; is_admin?: boolean } | null>(() => {
+    if (user?.id) {
+      return dataCache.getSync(profileCacheKey, null);
+    }
+    return null;
+  });
   const [loading, setLoading] = useState(() => !initialCached?.courses?.length);
+  const [hasInitialFetchCompleted, setHasInitialFetchCompleted] = useState(false);
   const [refreshKey, setRefreshKey] = useState(0);
   const [viewingCourseId, setViewingCourseId] = useState<string | null>(null);
   const [viewingCourse, setViewingCourse] = useState<Course | null>(null);
@@ -81,11 +100,12 @@ export default function Dashboard({ user }: DashboardProps) {
   const hasFetchedOnceRef = useRef(false);
   const prevViewingCourseIdRef = useRef<string | null>(null);
 
-  // Fast safety ceiling to prevent permanent loading spinner if initial fetch takes too long
+  // Safety ceiling to prevent permanent loading spinner in case of offline/network failure
   useEffect(() => {
     const safetyTimer = setTimeout(() => {
       setLoading(false);
-    }, 1500);
+      setHasInitialFetchCompleted(true);
+    }, 8000);
     return () => clearTimeout(safetyTimer);
   }, []);
 
@@ -248,14 +268,27 @@ export default function Dashboard({ user }: DashboardProps) {
       mediaQuery.addEventListener('change', handleDisplayModeChange);
     }
 
-    // Preload tab chunks in background on idle so switching to profile or community is instant
-    const preloadTimer = setTimeout(() => {
-      import('../components/Profile');
+    // Prioritized preloading of chunks and assets according to user frequency:
+    // 1. High Priority: Comunidade and IA Expert (Ask Victoria) - Warm up early
+    const highPriorityTimer = setTimeout(() => {
       import('../components/Community');
-    }, 1200);
+      import('../components/AiAssistantModal');
+      // Pre-warm Ask Victoria avatar asset
+      const victoriaAvatar = 'https://fhnmpltilhongdofnzbj.supabase.co/storage/v1/object/public/contents/Victoria.png';
+      const img = new Image();
+      img.src = victoriaAvatar;
+    }, 200);
+
+    // 2. Medium Priority: Profile tab
+    const profileTimer = setTimeout(() => {
+      import('../components/Profile');
+    }, 2000);
+
+    // 3. Admin Panel is strictly on-demand (only loaded when an admin clicks the admin tab)
 
     return () => {
-      clearTimeout(preloadTimer);
+      clearTimeout(highPriorityTimer);
+      clearTimeout(profileTimer);
       unsubscribe();
       window.removeEventListener('beforeinstallprompt', handleBeforeInstallPrompt);
       window.removeEventListener('appinstalled', handleAppInstalled);
@@ -454,6 +487,7 @@ export default function Dashboard({ user }: DashboardProps) {
 
       if (profileData) {
         setUserProfile(profileData);
+        dataCache.set(profileCacheKey, profileData, 86400000);
       }
 
       const purchasedIds = basePurchases.map(p => p.product_id);
@@ -537,8 +571,8 @@ export default function Dashboard({ user }: DashboardProps) {
 
       if (processedCourses.length > 0) {
         setCourses(processedCourses);
-        // Persist global catalog cache (10 minutes) for 0ms loads
-        dataCache.set('global_public_courses_catalog', processedCourses, 600000);
+        // Persist global catalog cache (24 hours TTL) for 0ms loads
+        dataCache.set('global_public_courses_catalog', processedCourses, 86400000);
       }
       setPurchases(allPurchases);
       setUserProgress(progData);
@@ -546,14 +580,14 @@ export default function Dashboard({ user }: DashboardProps) {
       setCourseChapters(chapterMap);
 
       if (processedCourses.length > 0) {
-        // Save to persistent user cache (5 minutes TTL with SWR)
+        // Save to persistent user cache (10 minutes TTL with SWR)
         dataCache.set(cacheKey, {
           courses: processedCourses,
           purchases: allPurchases,
           userProgress: progData,
           courseStats: stats,
           courseChapters: chapterMap
-        }, 300000);
+        }, 600000);
       }
 
     } catch (error: any) {
@@ -566,6 +600,7 @@ export default function Dashboard({ user }: DashboardProps) {
       }
     } finally {
       setLoading(false);
+      setHasInitialFetchCompleted(true);
       fetchInProgressRef.current = false;
     }
   };
@@ -991,7 +1026,14 @@ export default function Dashboard({ user }: DashboardProps) {
                     <Carousel 
                       title={settings.custom_texts?.['dashboard.courses_paid'] || t('dashboard.courses_paid') || 'Your Main Journey 🔥'}
                     >
-                      {mainCourses.length > 0 ? (
+                      {loading && mainCourses.length === 0 ? (
+                        <>
+                          <ProductCardSkeleton />
+                          <ProductCardSkeleton />
+                          <ProductCardSkeleton />
+                          <ProductCardSkeleton />
+                        </>
+                      ) : mainCourses.length > 0 ? (
                         mainCourses.map(course => (
                           <ProductCard
                             key={course.id}
@@ -1003,13 +1045,20 @@ export default function Dashboard({ user }: DashboardProps) {
                             onOpen={handleOpenCourse}
                           />
                         ))
-                      ) : (
+                      ) : hasInitialFetchCompleted ? (
                         <div className="w-full h-48 flex flex-col items-center justify-center text-gray-600 border border-white/5 rounded-3xl bg-white/5">
                           <Book size={32} className="mb-4 opacity-20" />
                           <p className="font-bold text-xs uppercase tracking-widest text-center px-4">
                             {settings.custom_texts?.['dashboard.empty_locked'] || t('dashboard.empty_locked') || 'You do not have any courses available yet.'}
                           </p>
                         </div>
+                      ) : (
+                        <>
+                          <ProductCardSkeleton />
+                          <ProductCardSkeleton />
+                          <ProductCardSkeleton />
+                          <ProductCardSkeleton />
+                        </>
                       )}
                     </Carousel>
 
@@ -1034,7 +1083,13 @@ export default function Dashboard({ user }: DashboardProps) {
                     <Carousel 
                       title={settings.custom_texts?.['dashboard.courses_free'] || t('dashboard.courses_free') || 'Acelere sua Evolução  🚀'}
                     >
-                      {paidCourses.length > 0 ? (
+                      {loading && paidCourses.length === 0 ? (
+                        <>
+                          <ProductCardSkeleton />
+                          <ProductCardSkeleton />
+                          <ProductCardSkeleton />
+                        </>
+                      ) : paidCourses.length > 0 ? (
                         paidCourses.map(course => (
                           <ProductCard
                             key={course.id}
@@ -1046,10 +1101,16 @@ export default function Dashboard({ user }: DashboardProps) {
                             onOpen={handleOpenCourse}
                           />
                         ))
-                      ) : (
+                      ) : hasInitialFetchCompleted ? (
                         <div className="w-full py-16 flex flex-col items-center justify-center text-gray-600 border-2 border-dashed border-white/5 rounded-3xl">
                           <p className="font-bold text-center px-4">{settings.custom_texts?.['dashboard.empty_all_unlocked'] || t('dashboard.empty_all_unlocked') || 'Você já possui todos os cursos disponíveis!'}</p>
                         </div>
+                      ) : (
+                        <>
+                          <ProductCardSkeleton />
+                          <ProductCardSkeleton />
+                          <ProductCardSkeleton />
+                        </>
                       )}
                     </Carousel>
 

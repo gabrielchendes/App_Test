@@ -28,6 +28,19 @@ if (typeof window !== 'undefined' && 'serviceWorker' in navigator && !isIframe) 
   }
 }
 
+// Prevent Vite dev overlay and browser from crashing on harmless ResizeObserver loop notifications
+if (typeof window !== 'undefined') {
+  window.addEventListener('error', (e) => {
+    const msg = (e.message || (e.error && e.error.message) || '').toString();
+    if (msg.includes('ResizeObserver') || msg.includes('undelivered notifications')) {
+      e.stopImmediatePropagation();
+      e.stopPropagation();
+      e.preventDefault();
+      return true;
+    }
+  }, true);
+}
+
 createRoot(document.getElementById('root')!).render(
   <ErrorBoundary>
     <TenantProvider>

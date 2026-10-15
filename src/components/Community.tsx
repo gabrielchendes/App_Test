@@ -12,6 +12,7 @@ import imageCompression from 'browser-image-compression';
 import { useSettings } from '../contexts/SettingsContext';
 import { useI18n } from '../contexts/I18nContext';
 import { safeFetch } from '../lib/utils';
+import { dataCache } from '../lib/cache';
 
 export function parseCommentContent(content: string): { text: string; likes: number } {
   if (!content) return { text: '', likes: 0 };
@@ -38,11 +39,12 @@ interface CommunityProps {
 export default function Community({ user, isImportMode = false }: CommunityProps) {
   const { settings } = useSettings();
   const { t } = useI18n();
-  const [posts, setPosts] = useState<CommunityPost[]>([]);
+  const cachedInitialPosts = typeof window !== 'undefined' ? (dataCache.getSync<CommunityPost[]>('community_cached_posts', []) || []) : [];
+  const [posts, setPosts] = useState<CommunityPost[]>(() => cachedInitialPosts);
   const [newPostContent, setNewPostContent] = useState('');
   const [selectedImage, setSelectedImage] = useState<File | null>(null);
   const [imagePreview, setImagePreview] = useState<string | null>(null);
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(() => !cachedInitialPosts.length);
   const [loadingMore, setLoadingMore] = useState(false);
   const [hasMore, setHasMore] = useState(true);
   const [page, setPage] = useState(0);
@@ -283,6 +285,9 @@ export default function Community({ user, isImportMode = false }: CommunityProps
       
       if (isInitial) {
         setPosts(data || []);
+        if (data && data.length > 0) {
+          dataCache.set('community_cached_posts', data, 300000);
+        }
       } else {
         setPosts(prev => {
           // Filter out any duplicates that might have been added via realtime

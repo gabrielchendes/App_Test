@@ -1,4 +1,4 @@
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&family=Playfair+Display:ital,wght@0,400;0,700;0,900;1,400;1,700;1,900&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Cinzel:wght@400;500;600;700;800;900&family=Cormorant+Garamond:ital,wght@0,400;0,500;0,600;0,700;1,400;1,600&family=Inter:wght@400;500;600;700;800;900&family=Outfit:wght@400;500;600;700;800&family=Playfair+Display:ital,wght@0,400;0,600;0,700;1,400;1,600&family=Plus+Jakarta+Sans:wght@500;600;700;800&display=swap');
 @import "tailwindcss";
 
 :root {
@@ -16,7 +16,11 @@
 
 @theme {
   --font-sans: "Inter", ui-sans-serif, system-ui, sans-serif;
-  --font-serif: "Playfair Display", serif;
+  --font-serif: "Playfair Display", Georgia, serif;
+  --font-cinzel: "Cinzel", Georgia, serif;
+  --font-cormorant: "Cormorant Garamond", Georgia, serif;
+  --font-outfit: "Outfit", sans-serif;
+  --font-jakarta: "Plus Jakarta Sans", sans-serif;
   --color-primary: var(--primary);
   --color-primary-hover: var(--primary-hover);
   --color-bg-main: var(--bg-main);
@@ -37,6 +41,18 @@
     -ms-overflow-style: none !important;
     scrollbar-width: none !important;
     overflow: -moz-scrollbars-none;
+  }
+  .font-cinzel {
+    font-family: 'Cinzel', Georgia, serif;
+  }
+  .font-cormorant {
+    font-family: 'Cormorant Garamond', Georgia, serif;
+  }
+  .font-outfit {
+    font-family: 'Outfit', sans-serif;
+  }
+  .font-jakarta {
+    font-family: 'Plus Jakarta Sans', sans-serif;
   }
 }
 

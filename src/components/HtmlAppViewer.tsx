@@ -471,8 +471,12 @@ function prepareNativeHtml(rawHtml: string, frameId: string): string {
     try {
       var rootEl = document.getElementById('pwa-mini-app-root') || document.body;
       if (rootEl) {
+        var roRaf = null;
         var ro = new ResizeObserver(function() {
-          notifyParent(false);
+          if (roRaf) cancelAnimationFrame(roRaf);
+          roRaf = requestAnimationFrame(function() {
+            notifyParent(false);
+          });
         });
         ro.observe(rootEl);
       }

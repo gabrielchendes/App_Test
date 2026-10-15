@@ -224,4 +224,24 @@ const ProductCard = memo(({ product, isUnlocked, progress = 0, stats, settings, 
   );
 });
 
+export const ProductCardSkeleton = memo(() => {
+  return (
+    <div className="relative flex-shrink-0 w-[140px] sm:w-[190px] rounded-2xl overflow-hidden shadow-2xl bg-zinc-950 flex flex-col p-[1.5px] border border-white/5 snap-start">
+      <div className="relative z-10 flex flex-col flex-grow bg-zinc-900/40 rounded-[14.5px] overflow-hidden">
+        {/* Thumbnail skeleton with shimmer */}
+        <div className="relative aspect-[3/4] w-full bg-zinc-900 skeleton-shimmer overflow-hidden">
+          <div className="absolute inset-0 bg-gradient-to-t from-black/70 via-black/20 to-transparent" />
+        </div>
+        {/* Info skeleton */}
+        <div className="p-2.5 sm:p-4 flex flex-col items-center gap-2 flex-grow bg-zinc-950">
+          <div className="w-16 h-3 bg-zinc-800/80 rounded-full skeleton-shimmer" />
+          <div className="w-full h-3.5 bg-zinc-800/60 rounded-md skeleton-shimmer mt-0.5" />
+          <div className="w-2/3 h-3 bg-zinc-800/40 rounded-md skeleton-shimmer" />
+          <div className="w-full h-7 sm:h-9 mt-2 bg-zinc-800/60 rounded-lg sm:rounded-xl skeleton-shimmer" />
+        </div>
+      </div>
+    </div>
+  );
+});
+
 export default ProductCard;
