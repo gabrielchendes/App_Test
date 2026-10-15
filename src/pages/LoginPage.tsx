@@ -1,16 +1,9 @@
-import { useEffect } from 'react';
 import AuthForm from '../components/AuthForm';
 import { useSettings } from '../contexts/SettingsContext';
 import FloatingWhatsApp from '../components/FloatingWhatsApp';
-import { preloadCoursesCatalog } from '../lib/coursePreload';
 
 export default function LoginPage() {
   const { settings } = useSettings();
-
-  useEffect(() => {
-    // Warm up course catalog in the background so dashboard loads instantaneously upon sign-in
-    preloadCoursesCatalog().catch(() => {});
-  }, []);
 
   return (
     <div className="min-h-[100dvh] min-h-screen flex items-center justify-center p-4 sm:p-6 py-6 pb-10 sm:py-8 safe-area-pb relative overflow-hidden bg-[#07080c]">

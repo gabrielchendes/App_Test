@@ -93,7 +93,6 @@ import { toast } from '../lib/customToast';
 import { useSettings } from '../contexts/SettingsContext';
 import { useI18n } from '../contexts/I18nContext';
 import { AdminTestimonials } from './AdminTestimonials';
-import AutoFitLoginTitle from './AutoFitLoginTitle';
 import { safeParse, safeFetch } from '../lib/utils';
 import { dataCache } from '../lib/cache';
 import { DEFAULT_UNLIMITED_INFO_HTML } from '../constants/defaultUnlimitedHtml';
@@ -7021,149 +7020,6 @@ export default function AdminPanel({ user }: AdminPanelProps) {
                                     </div>
                                   </div>
 
-                                  {/* 7. Estilo da Tipografia do Título */}
-                                  <div className="space-y-2">
-                                    <div className="flex items-center justify-between">
-                                      <label className="text-xs font-black text-gray-500 uppercase tracking-widest">Estilo da Tipografia do Título</label>
-                                      <span className="text-[10px] text-blue-400 font-semibold tracking-wider uppercase">Tipografia do Login</span>
-                                    </div>
-                                    <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
-                                      {[
-                                        { id: 'inter', label: 'Inter (Original)', sub: 'Letra Original do App (Padrão)', fontClass: 'font-sans font-bold' },
-                                        { id: 'cinzel', label: 'Cinzel', sub: 'Imperial & Luxo', fontClass: 'font-cinzel tracking-wider uppercase' },
-                                        { id: 'jakarta', label: 'Plus Jakarta', sub: 'Tech Moderno & Clean', fontClass: 'font-jakarta font-bold' },
-                                        { id: 'outfit', label: 'Outfit', sub: 'Geométrico Elegante', fontClass: 'font-outfit uppercase font-bold' },
-                                        { id: 'playfair', label: 'Playfair', sub: 'Editorial Clássico', fontClass: 'font-serif font-semibold' },
-                                        { id: 'cormorant', label: 'Cormorant', sub: 'Alta Costura & Editorial', fontClass: 'font-cormorant italic tracking-wide text-base' },
-                                      ].map((f) => {
-                                        const currentFont = draftCustomTexts['auth.title_font'] || settings.custom_texts?.['auth.title_font'] || 'inter';
-                                        const isSelected = currentFont === f.id;
-                                        return (
-                                          <button
-                                            key={f.id}
-                                            type="button"
-                                            onClick={() => setDraftCustomTexts({ ...draftCustomTexts, 'auth.title_font': f.id })}
-                                            className={`p-2.5 rounded-xl border text-left transition-all cursor-pointer relative overflow-hidden ${
-                                              isSelected 
-                                                ? 'bg-blue-500/10 border-blue-400/50 text-white shadow-[0_0_15px_rgba(59,130,246,0.15)] ring-1 ring-blue-400/40' 
-                                                : 'bg-black/40 border-white/10 text-gray-400 hover:text-white hover:border-white/20'
-                                            }`}
-                                          >
-                                            <div className={`text-sm ${f.fontClass} ${isSelected ? 'text-blue-300' : 'text-white'}`}>
-                                              {f.label}
-                                            </div>
-                                            <div className="text-[10px] text-gray-500 mt-0.5 truncate">
-                                              {f.sub}
-                                            </div>
-                                            {isSelected && (
-                                              <div className="absolute top-1.5 right-1.5 w-1.5 h-1.5 rounded-full bg-blue-400 shadow-[0_0_6px_#60a5fa]" />
-                                            )}
-                                          </button>
-                                        );
-                                      })}
-                                    </div>
-                                    <p className="text-[11px] text-gray-400 leading-relaxed">
-                                      Escolha o estilo tipográfico exclusivo do título na tela de login. A opção &quot;Inter (Original)&quot; restaura a letra original clássica e limpa do aplicativo.
-                                    </p>
-                                  </div>
-
-                                  {/* 8. Tamanho da Fonte do Título (Ajuste Manual) */}
-                                  <div className="space-y-3 p-4 rounded-xl border border-white/10 bg-white/[0.02]">
-                                    <div className="flex items-center justify-between">
-                                      <div className="flex items-center gap-2">
-                                        <Type size={14} className="text-blue-400" />
-                                        <label className="text-xs font-black text-gray-400 uppercase tracking-widest">
-                                          Tamanho da Letra do Título
-                                        </label>
-                                      </div>
-                                      {(() => {
-                                        const currentSize = draftCustomTexts['auth.title_font_size'] !== undefined 
-                                          ? draftCustomTexts['auth.title_font_size'] 
-                                          : (settings.custom_texts?.['auth.title_font_size'] || '28');
-                                        return (
-                                          <div className="flex items-center gap-2">
-                                            <span className="text-xs font-mono font-bold text-white px-2.5 py-1 rounded-md bg-white/10 border border-white/15">
-                                              {currentSize}px
-                                            </span>
-                                            <button
-                                              type="button"
-                                              onClick={() => setDraftCustomTexts({ ...draftCustomTexts, 'auth.title_font_size': '28' })}
-                                              className="flex items-center gap-1 text-[10px] text-gray-400 hover:text-white px-2 py-1 rounded bg-white/5 hover:bg-white/10 border border-white/10 transition-colors cursor-pointer"
-                                              title="Restaurar padrão (28px)"
-                                            >
-                                              <RotateCcw size={10} />
-                                              Padrão
-                                            </button>
-                                          </div>
-                                        );
-                                      })()}
-                                    </div>
-
-                                    {/* Slider & Input */}
-                                    {(() => {
-                                      const currentSizeStr = draftCustomTexts['auth.title_font_size'] !== undefined 
-                                        ? draftCustomTexts['auth.title_font_size'] 
-                                        : (settings.custom_texts?.['auth.title_font_size'] || '28');
-                                      const numVal = parseInt(currentSizeStr, 10) || 28;
-
-                                      return (
-                                        <div className="space-y-2.5">
-                                          <div className="flex items-center gap-3">
-                                            <input
-                                              type="range"
-                                              min="16"
-                                              max="48"
-                                              step="1"
-                                              value={numVal}
-                                              onChange={(e) => setDraftCustomTexts({ ...draftCustomTexts, 'auth.title_font_size': e.target.value })}
-                                              className="w-full h-1.5 bg-zinc-700 rounded-lg appearance-none cursor-pointer accent-blue-500"
-                                            />
-                                            <input
-                                              type="number"
-                                              min="14"
-                                              max="60"
-                                              value={numVal}
-                                              onChange={(e) => setDraftCustomTexts({ ...draftCustomTexts, 'auth.title_font_size': e.target.value })}
-                                              className="w-16 bg-black border border-white/10 rounded-lg px-2 py-1 text-xs text-white text-center font-mono focus:border-blue-500 outline-none"
-                                            />
-                                          </div>
-
-                                          {/* Presets */}
-                                          <div className="flex flex-wrap gap-1.5 pt-1">
-                                            {[
-                                              { label: 'Compacto', val: '20' },
-                                              { label: 'Médio', val: '24' },
-                                              { label: 'Padrão', val: '28' },
-                                              { label: 'Elegante', val: '32' },
-                                              { label: 'Grande', val: '38' },
-                                              { label: 'Imperial', val: '44' },
-                                            ].map((p) => {
-                                              const isPresetActive = String(numVal) === p.val;
-                                              return (
-                                                <button
-                                                  key={p.val}
-                                                  type="button"
-                                                  onClick={() => setDraftCustomTexts({ ...draftCustomTexts, 'auth.title_font_size': p.val })}
-                                                  className={`px-2.5 py-1 text-[10px] font-medium rounded-lg border transition-all cursor-pointer ${
-                                                    isPresetActive 
-                                                      ? 'bg-blue-600 border-blue-500 text-white shadow-sm' 
-                                                      : 'bg-black/30 border-white/10 text-gray-400 hover:text-white hover:border-white/20'
-                                                  }`}
-                                                >
-                                                  {p.label} ({p.val}px)
-                                                </button>
-                                              );
-                                            })}
-                                          </div>
-                                        </div>
-                                      );
-                                    })()}
-
-                                    <p className="text-[11px] text-gray-400 leading-relaxed">
-                                      Defina com precisão o tamanho da fonte do título na tela de login. Sem redimensionamento automático ou distorções.
-                                    </p>
-                                  </div>
-
                                   {/* Reordered custom_texts fields */}
                                   {[
                                     { key: 'auth.subtitle', label: 'Subtítulo do Login' },
@@ -7264,17 +7120,17 @@ export default function AdminPanel({ user }: AdminPanelProps) {
                                                referrerPolicy="no-referrer" 
                                              />
                                            ) : null}
-                                            {(localSettings?.login_display_type === 'title' || localSettings?.login_display_type === 'both') && (
-                                              <AutoFitLoginTitle
-                                                title={localSettings?.login_platform_name || draftCustomTexts['auth.platform_name'] || settings.login_platform_name || settings.custom_texts?.['auth.platform_name'] || localSettings?.app_name || settings.app_name || 'Missing Trigger'}
-                                                font={draftCustomTexts['auth.title_font'] || settings.custom_texts?.['auth.title_font'] || 'inter'}
-                                                titleColor={draftCustomTexts['auth.title_color'] || settings.custom_texts?.['auth.title_color']}
-                                                fontSize={draftCustomTexts['auth.title_font_size'] || settings.custom_texts?.['auth.title_font_size']}
-                                                sizeVariant="preview"
-                                                showHalo={false}
-                                              />
-                                            )}
-                                           <p className="text-[9px] text-gray-400 mt-0.5 font-medium tracking-[0.12em] uppercase">
+                                           {(localSettings?.login_display_type === 'title' || localSettings?.login_display_type === 'both') && (
+                                             <h2 
+                                               className="text-lg font-black italic uppercase tracking-tighter transition-colors" 
+                                               style={{ 
+                                                 color: draftCustomTexts['auth.title_color'] || settings.custom_texts?.['auth.title_color'] || '#ffffff' 
+                                               }}
+                                             >
+                                               {localSettings?.login_platform_name || draftCustomTexts['auth.platform_name'] || settings.login_platform_name || settings.custom_texts?.['auth.platform_name'] || localSettings?.app_name || settings.app_name || 'App Name'}
+                                             </h2>
+                                           )}
+                                           <p className="text-[9px] text-gray-500 mt-1 font-medium">
                                              {draftCustomTexts['auth.subtitle'] || settings.custom_texts?.['auth.subtitle'] || languagePresets.en['auth.subtitle']}
                                            </p>
                                          </div>

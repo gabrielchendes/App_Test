@@ -22,9 +22,7 @@ class ErrorBoundary extends Component<Props, State> {
     if (
       msg.includes('Refresh Token Not Found') ||
       msg.includes('Invalid Refresh Token') ||
-      msg.includes('invalid_grant') ||
-      msg.includes('ResizeObserver') ||
-      msg.includes('undelivered notifications')
+      msg.includes('invalid_grant')
     ) {
       // Don't crash UI, return safe non-error state so app shows login screen
       return { hasError: false, error: null };
