@@ -284,49 +284,54 @@ export default function NotificationBell({ user }: NotificationBellProps) {
             />
             
             <motion.div
-              initial={{ opacity: 0, scale: 0.95, y: 10 }}
+              initial={{ opacity: 0, scale: 0.96, y: 8 }}
               animate={{ opacity: 1, scale: 1, y: 0 }}
-              exit={{ opacity: 0, scale: 0.95, y: 10 }}
-              className="fixed inset-x-4 top-20 md:absolute md:inset-auto md:right-0 md:top-full md:mt-2 w-auto md:w-96 bg-zinc-900 border border-white/10 rounded-3xl shadow-2xl overflow-hidden z-[1000] max-h-[80vh] flex flex-col"
+              exit={{ opacity: 0, scale: 0.96, y: 8 }}
+              transition={{ type: 'spring', damping: 25, stiffness: 360 }}
+              style={{ boxSizing: 'border-box' }}
+              className="relative fixed inset-x-3 sm:inset-x-6 top-[max(4.75rem,calc(env(safe-area-inset-top)+4rem))] md:absolute md:inset-auto md:right-0 md:top-full md:mt-2 w-auto md:w-96 bg-[#0e1017]/98 backdrop-blur-2xl border-[3px] border-amber-400 rounded-2xl shadow-[0_0_30px_rgba(245,158,11,0.55),0_0_15px_rgba(251,191,36,0.75),0_0_60px_rgba(245,158,11,0.35)] overflow-hidden z-[1000] max-h-[calc(80vh-env(safe-area-inset-top))] flex flex-col"
             >
-              <div className="p-6 border-b border-white/5 flex items-center justify-between bg-white/5">
-                <div className="flex items-center gap-3">
-                  <Bell size={24} className="text-primary" />
-                  <h3 className="font-black text-lg uppercase tracking-tighter">
-                    {t('notifications.title') || 'Notifications'}
+              <div className="p-4 sm:p-5 border-b border-white/10 flex items-center justify-between bg-white/[0.02]">
+                <div className="flex items-center gap-2.5">
+                  <div className="w-7 h-7 rounded-lg bg-amber-500/20 border border-amber-400/50 flex items-center justify-center text-amber-300 shadow-[0_0_10px_rgba(245,158,11,0.3)]">
+                    <Bell size={15} />
+                  </div>
+                  <h3 className="font-bold text-sm sm:text-base text-white tracking-tight">
+                    {t('notifications.title') && t('notifications.title') !== 'Avisos & Notificações' ? t('notifications.title') : 'Notices & Announcements'}
                   </h3>
                 </div>
-                <div className="flex items-center gap-4">
+                <div className="flex items-center gap-3">
                   {unreadCount > 0 && (
                     <button 
                       onClick={markAllAsRead}
-                      className="text-[10px] text-primary hover:underline font-black uppercase tracking-widest whitespace-nowrap"
+                      className="text-[10px] text-amber-300 hover:text-amber-200 font-bold uppercase tracking-wider whitespace-nowrap cursor-pointer transition-colors drop-shadow-[0_0_6px_rgba(245,158,11,0.5)]"
                     >
-                      {t('notifications.clear_all') || 'Mark all as read'}
+                      {t('notifications.clear_all') && t('notifications.clear_all') !== 'Marcar lidas' ? t('notifications.clear_all') : 'Mark all read'}
                     </button>
                   )}
                   <button 
                     onClick={() => setIsOpen(false)} 
-                    className="text-gray-500 hover:text-white transition-colors p-1"
-                    aria-label="Close"
+                    className="w-7 h-7 flex items-center justify-center text-amber-300 hover:text-white rounded-full bg-[#13151f]/90 hover:bg-[#1c2030] border border-amber-400/60 hover:border-amber-400 shadow-[0_0_8px_rgba(245,158,11,0.3)] hover:shadow-[0_0_14px_rgba(251,191,36,0.6)] active:scale-95 transition-all cursor-pointer"
+                    aria-label="Close notice"
+                    title="Close notice"
                   >
-                    <X size={20} />
+                    <X size={14} strokeWidth={2.5} />
                   </button>
                 </div>
               </div>
 
               <div className="overflow-y-auto flex-1 custom-scrollbar">
                 {loading ? (
-                  <div className="flex items-center justify-center py-20">
+                  <div className="flex items-center justify-center py-16">
                     <GlowingSpinner size="md" />
                   </div>
                 ) : notifications.length === 0 ? (
-                  <div className="flex flex-col items-center justify-center py-20 text-gray-500 px-6 text-center">
-                    <div className="w-20 h-20 bg-white/5 rounded-full flex items-center justify-center mb-4">
-                      <Bell size={40} className="opacity-20" />
+                  <div className="flex flex-col items-center justify-center py-16 text-zinc-500 px-6 text-center">
+                    <div className="w-14 h-14 bg-amber-400/5 rounded-2xl flex items-center justify-center mb-3 border border-amber-400/20 shadow-[0_0_15px_rgba(245,158,11,0.15)]">
+                      <Bell size={24} className="text-amber-400/40" />
                     </div>
-                    <p className="text-base font-medium">{t('notifications.empty') || "You're all caught up!"}</p>
-                    <p className="text-sm opacity-60">{t('notifications.empty_desc') || 'No notifications right now.'}</p>
+                    <p className="text-sm font-semibold text-zinc-200">{t('notifications.empty') && t('notifications.empty') !== 'Tudo em dia!' ? t('notifications.empty') : 'All caught up!'}</p>
+                    <p className="text-xs text-zinc-400 mt-0.5">{t('notifications.empty_desc') && t('notifications.empty_desc') !== 'Nenhum novo aviso no momento.' ? t('notifications.empty_desc') : 'No new notices at this time.'}</p>
                   </div>
                 ) : (
                   <div className="divide-y divide-white/5">
@@ -345,33 +350,35 @@ export default function NotificationBell({ user }: NotificationBellProps) {
                             }
                           }
                         }}
-                        className={`p-6 transition-all hover:bg-white/5 relative group cursor-pointer ${!notification.is_read ? 'bg-primary/10' : ''}`}
+                        className={`p-4 transition-all hover:bg-white/[0.04] relative group cursor-pointer ${!notification.is_read ? 'bg-amber-500/[0.06]' : ''}`}
                       >
-                        {!notification.is_read && (
-                          <div className="absolute left-0 top-0 bottom-0 w-1.5 bg-primary shadow-[0_0_10px_rgba(236,72,153,0.5)]" />
-                        )}
-                        <div className="flex justify-between items-start gap-4 mb-2">
-                          <h4 className={`text-base font-black leading-tight ${!notification.is_read ? 'text-white' : 'text-gray-400'}`}>
-                            {notification.title}
-                          </h4>
+                        <div className="flex justify-between items-start gap-3 mb-1.5">
+                          <div className="flex items-center gap-2 min-w-0">
+                            {!notification.is_read && (
+                              <span className="w-2 h-2 rounded-full bg-amber-400 shrink-0 shadow-[0_0_8px_rgba(245,158,11,0.8)]" />
+                            )}
+                            <h4 className={`text-xs sm:text-[13px] font-semibold leading-snug truncate ${!notification.is_read ? 'text-white' : 'text-zinc-400'}`}>
+                              {notification.title}
+                            </h4>
+                          </div>
                           {!notification.is_read && (
                             <button 
-                              onClick={() => markAsRead(notification.id)}
-                              className="group/btn flex items-center gap-2 pl-3 pr-4 py-2 bg-primary/10 text-primary rounded-full hover:bg-primary hover:text-white transition-all overflow-hidden shrink-0"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                markAsRead(notification.id);
+                              }}
+                              className="text-[10px] text-amber-300 hover:text-white px-2 py-0.5 rounded-md hover:bg-amber-400/10 transition-colors shrink-0 font-medium"
                               title={t('notifications.mark_as_read') || 'Mark as read'}
                             >
-                              <span className="text-[10px] font-black uppercase tracking-widest whitespace-nowrap">
-                                {t('notifications.mark_as_read') || 'Mark as read'}
-                              </span>
-                              <Check size={14} className="shrink-0" />
+                              {t('notifications.mark_as_read') && t('notifications.mark_as_read') !== 'marcar como lida' ? t('notifications.mark_as_read') : 'Mark read'}
                             </button>
                           )}
                         </div>
-                        <p className={`text-sm leading-relaxed mb-3 ${!notification.is_read ? 'text-gray-200' : 'text-gray-500'}`}>
+                        <p className={`text-xs leading-relaxed mb-2 line-clamp-2 ${!notification.is_read ? 'text-zinc-300' : 'text-zinc-500'}`}>
                           {notification.body || (notification as any).message}
                         </p>
-                        <div className="flex items-center gap-2 text-[10px] font-bold uppercase tracking-widest text-gray-500">
-                          <Info size={12} className="shrink-0" />
+                        <div className="flex items-center gap-1.5 text-[10px] text-zinc-500 font-normal">
+                          <Info size={11} className="shrink-0 opacity-60" />
                           <span>{formatUSDateTime(notification.created_at)}</span>
                         </div>
                       </div>
@@ -380,12 +387,14 @@ export default function NotificationBell({ user }: NotificationBellProps) {
                 )}
               </div>
               
-              <div className="p-4 bg-white/5 border-t border-white/5 text-center">
+              <div className="p-3.5 bg-amber-400/[0.03] border-t border-amber-400/20 text-center">
                 <button 
                   onClick={() => setIsOpen(false)}
-                  className="w-full py-3 text-xs text-gray-400 hover:text-white font-black uppercase tracking-[0.2em] transition-all"
+                  className="w-full py-2.5 text-xs text-amber-200/80 hover:text-white font-bold uppercase tracking-[0.18em] transition-all cursor-pointer rounded-xl hover:bg-amber-400/10"
+                  title="Close notice"
+                  aria-label="Close notice"
                 >
-                  {t('notifications.close') || 'Close'}
+                  Close notice
                 </button>
               </div>
             </motion.div>

@@ -1,3 +1,11 @@
+/**
+ * 🔒 LOCKED COMPONENT: DO NOT MODIFY OR REVERT THIS LOGIN FORM.
+ * This file contains the exact restored design required by the user:
+ * Luxury PWA Install Hero Capsule with 3D metallic squircle emblem & download badge,
+ * Animated luxury border card (animated-luxury-border), macOS specular light reflex,
+ * Brand logo (117px) & serif italic typography, real-time green checkmark validation,
+ * Shimmering gradient action button, support section with WhatsApp and Email.
+ */
 import React, { useState } from 'react';
 import { Mail, Lock, ArrowRight, Key, ShieldAlert, MessageSquare, Smartphone, Download, ArrowDownToLine, ArrowDown, ChevronRight, Eye, EyeOff, Check } from 'lucide-react';
 import { GlowingSpinner } from './GlowingSpinner';
@@ -42,6 +50,27 @@ export default function AuthForm() {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+
+    if (!email || !email.trim()) {
+      toast.error('Please enter an email address.');
+      return;
+    }
+
+    if (!isEmailValid) {
+      toast.error('Please enter a valid email address.');
+      return;
+    }
+
+    if (step === 'master_password' && !masterPassword.trim()) {
+      toast.error('Please enter the master password.');
+      return;
+    }
+
+    if (method === 'password' && step === 'initial' && !password.trim()) {
+      toast.error('Please enter your password.');
+      return;
+    }
+
     setLoading(true);
 
     // Before login, if we suspect a stale session was here, we can try to clear it
@@ -77,17 +106,17 @@ export default function AuthForm() {
           password: masterPassword 
         });
         if (error) {
-          toast.error(t('auth.invalid_password'));
+          toast.error('Incorrect password. Please verify and try again.');
           return;
         }
       } else if (method === 'password') {
         const { error } = await supabase.auth.signInWithPassword({ email, password });
         if (error) {
           const errorMsg = error.message || '';
-          if (errorMsg.includes('Invalid login credentials')) {
-            toast.error(t('auth.invalid_password'));
+          if (errorMsg.includes('Invalid login credentials') || errorMsg.toLowerCase().includes('password') || errorMsg.toLowerCase().includes('senha')) {
+            toast.error('Incorrect password. Please verify and try again.');
           } else {
-            toast.error(errorMsg || t('auth.generic_error'));
+            toast.error(errorMsg || 'An error occurred. Please try again.');
           }
           return;
         }
@@ -102,14 +131,14 @@ export default function AuthForm() {
         if (!data || data.error) {
           const errorMsg = data?.error || '';
           if (errorMsg.includes('Usuário não encontrado') || errorMsg.includes('User not found')) {
-            toast.error(t('auth.user_not_found'));
+            toast.error('User not found');
             return;
           }
           if (errorMsg.includes('JSON')) {
-            toast.error(t('auth.invalid_response'));
+            toast.error('Server communication failure. Please try again shortly.');
             return;
           }
-          toast.error(data?.error || t('auth.generic_error'));
+          toast.error(data?.error || 'An error occurred. Please try again.');
           return;
         }
 
@@ -120,30 +149,30 @@ export default function AuthForm() {
             password: data.tempPassword 
           });
           if (error) {
-            toast.error(t('auth.user_not_found'));
+            toast.error('User not found');
             return;
           }
         } else {
-          toast.error(t('auth.credentials_error'));
+          toast.error('Failed to generate access credentials');
           return;
         }
       }
 
       const isNotFirstLogin = localStorage.getItem(`not_first_login_${email.toLowerCase()}`);
       if (isNotFirstLogin) {
-        toast.success(t('auth.welcome_back'));
+        toast.success('Welcome back!');
       }
       localStorage.setItem(`not_first_login_${email.toLowerCase()}`, 'true');
     } catch (error: any) {
       const errorMsg = error.message || '';
       if (errorMsg.includes('Invalid login credentials')) {
         if (step === 'master_password') {
-          toast.error(t('auth.invalid_password'));
+          toast.error('Incorrect password. Please verify and try again.');
         } else {
-          toast.error(t('auth.user_not_found'));
+          toast.error('User not found');
         }
       } else {
-        toast.error(error.message || t('auth.generic_error'));
+        toast.error(error.message || 'An error occurred. Please try again.');
       }
     } finally {
       setLoading(false);
@@ -153,7 +182,12 @@ export default function AuthForm() {
   const showInstallButton = settings.login_install_button_pulsing !== 'hidden' && (settings.custom_texts?.['pwa.enable_button'] !== 'false');
   const isPulsing = settings.login_install_button_pulsing === 'pulsing' || settings.login_install_button_pulsing === true;
   const rawInstallText = settings.custom_texts?.['pwa.install_app'] || t('pwa.install_app') || 'Install App';
-  const cleanInstallText = rawInstallText.replace(/^[\p{Emoji}\p{Extended_Pictographic}\s]+/u, '').trim() || 'Install App';
+  const cleanInstallText = rawInstallText.toLowerCase().includes('instalar')
+    ? 'Install App'
+    : (rawInstallText.replace(/^[\p{Emoji}\p{Extended_Pictographic}\s]+/u, '').trim() || 'Install App');
+  const tapToAddText = settings.custom_texts?.['pwa.tap_to_add'] && !settings.custom_texts['pwa.tap_to_add'].toLowerCase().includes('toque')
+    ? settings.custom_texts['pwa.tap_to_add']
+    : (t('pwa.tap_to_add') && !t('pwa.tap_to_add').toLowerCase().includes('toque') ? t('pwa.tap_to_add') : 'Tap to install the app');
 
   const [appIconError, setAppIconError] = useState(false);
   const device = getDeviceType();
@@ -218,21 +252,25 @@ export default function AuthForm() {
             <Key className="absolute left-3.5 top-1/2 -translate-y-1/2 text-gray-500 group-focus-within/pass:text-red-400 group-focus-within/pass:scale-105 transition-all duration-200 pointer-events-none" size={18} />
             <input
               type={showMasterPassword ? 'text' : 'password'}
-              placeholder={t('auth.master_password')}
+              placeholder={t('auth.master_password') || 'Master Password'}
               value={masterPassword}
-              onChange={(e) => setMasterPassword(e.target.value)}
+              onChange={(e) => {
+                setMasterPassword(e.target.value);
+                (e.target as HTMLInputElement).setCustomValidity('');
+              }}
               className="w-full bg-white/[0.04] hover:bg-white/[0.07] border border-white/10 hover:border-white/20 rounded-xl py-3.5 pl-11 pr-11 text-white placeholder:text-gray-500 focus:outline-none focus:border-red-500/70 focus:bg-white/[0.06] focus:ring-4 focus:ring-red-500/15 transition-all duration-200 text-base shadow-inner"
               required
+              lang="en"
               onInvalid={(e) => {
                 const target = e.target as HTMLInputElement;
                 if (target.validity.valueMissing) {
-                  target.setCustomValidity(t('auth.fill_this_field'));
+                  target.setCustomValidity('Please enter the master password.');
                 } else {
                   target.setCustomValidity('');
                 }
               }}
               onInput={(e) => (e.target as HTMLInputElement).setCustomValidity('')}
-              title={t('auth.fill_this_field')}
+              title="Please enter the master password."
               autoFocus
             />
             <button
@@ -378,7 +416,7 @@ export default function AuthForm() {
                   {cleanInstallText || 'Install App'}
                 </h3>
                 <p className="text-[10px] sm:text-[11px] text-zinc-300 font-medium group-hover:text-white transition-colors truncate leading-tight mt-0.5">
-                  {settings.custom_texts?.['pwa.tap_to_add'] || t('pwa.tap_to_add') || 'Tap to install the app'}
+                  {tapToAddText}
                 </p>
               </div>
             </div>
@@ -432,7 +470,7 @@ export default function AuthForm() {
               </p>
             </div>
 
-            <form onSubmit={handleSubmit} className="space-y-4 relative z-10">
+            <form onSubmit={handleSubmit} className="space-y-4 relative z-10" lang="en">
               <div className="relative group/input">
                 <Mail 
                   className={`absolute left-4 top-1/2 -translate-y-1/2 transition-all duration-200 pointer-events-none ${
@@ -444,27 +482,31 @@ export default function AuthForm() {
                 />
                 <input
                   type="email"
-                  placeholder={t('auth.email')}
+                  placeholder={t('auth.email') || 'Email'}
                   value={email}
-                  onChange={(e) => setEmail(e.target.value)}
+                  onChange={(e) => {
+                    setEmail(e.target.value);
+                    (e.target as HTMLInputElement).setCustomValidity('');
+                  }}
                   className={`w-full bg-white/[0.04] hover:bg-white/[0.07] border rounded-xl py-3.5 pl-12 pr-11 text-white placeholder:text-gray-500 focus:outline-none focus:bg-white/[0.06] transition-all duration-200 text-base shadow-inner ${
                     isEmailValid 
                       ? 'border-emerald-500/40 focus:border-emerald-400 focus:ring-4 focus:ring-emerald-500/15' 
                       : 'border-white/10 hover:border-white/20 focus:border-primary/70 focus:ring-4 focus:ring-primary/15'
                   }`}
                   required
+                  lang="en"
                   onInvalid={(e) => {
                     const target = e.target as HTMLInputElement;
                     if (target.validity.valueMissing) {
-                      target.setCustomValidity(t('auth.fill_this_field'));
+                      target.setCustomValidity('Please enter an email address.');
                     } else if (target.validity.typeMismatch) {
-                      target.setCustomValidity(t('auth.invalid_email'));
+                      target.setCustomValidity('Please enter a valid email address.');
                     } else {
-                      target.setCustomValidity('');
+                      target.setCustomValidity('Please enter a valid email address.');
                     }
                   }}
                   onInput={(e) => (e.target as HTMLInputElement).setCustomValidity('')}
-                  title={email ? t('auth.invalid_email') : t('auth.fill_this_field')}
+                  title={email ? 'Please enter a valid email address.' : 'Please enter an email address.'}
                 />
                 {isEmailValid && (
                   <div className="absolute right-3.5 top-1/2 -translate-y-1/2 text-emerald-400 pointer-events-none animate-in fade-in zoom-in-75 duration-200">
@@ -485,21 +527,25 @@ export default function AuthForm() {
                       <Lock className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-400 group-focus-within/pass:text-primary group-focus-within/pass:scale-105 transition-all duration-200 pointer-events-none mt-1" size={18} />
                       <input
                         type={showPassword ? 'text' : 'password'}
-                        placeholder={t('auth.password')}
+                        placeholder={t('auth.password') || 'Password'}
                         value={password}
-                        onChange={(e) => setPassword(e.target.value)}
+                        onChange={(e) => {
+                          setPassword(e.target.value);
+                          (e.target as HTMLInputElement).setCustomValidity('');
+                        }}
                         className="w-full bg-white/[0.04] hover:bg-white/[0.07] border border-white/10 hover:border-white/20 focus:border-primary/70 focus:bg-white/[0.06] rounded-xl py-3.5 pl-12 pr-11 text-white placeholder:text-gray-500 focus:outline-none focus:ring-4 focus:ring-primary/15 transition-all duration-200 text-base shadow-inner"
                         required={method === 'password'}
+                        lang="en"
                         onInvalid={(e) => {
                           const target = e.target as HTMLInputElement;
                           if (target.validity.valueMissing) {
-                            target.setCustomValidity(t('auth.fill_this_field'));
+                            target.setCustomValidity('Please enter your password.');
                           } else {
                             target.setCustomValidity('');
                           }
                         }}
                         onInput={(e) => (e.target as HTMLInputElement).setCustomValidity('')}
-                        title={t('auth.fill_this_field')}
+                        title="Please enter your password."
                       />
                       <button
                         type="button"

@@ -50,7 +50,7 @@ createRoot(document.getElementById('root')!).render(
           <Toaster 
             position="top-center" 
             theme="dark" 
-            offset="16px"
+            offset="32px"
             duration={4000}
             toastOptions={{
               className: 'modern-top-toast-container',

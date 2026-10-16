@@ -243,7 +243,7 @@ body {
 [data-sonner-toaster],
 [data-sonner-toaster] > ol,
 [data-sonner-toaster] > * {
-  top: 16px !important;
+  top: max(24px, calc(env(safe-area-inset-top, 0px) + 16px)) !important;
   z-index: 999999 !important;
   pointer-events: none !important;
 }

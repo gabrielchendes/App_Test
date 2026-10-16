@@ -244,15 +244,15 @@ export default function PWAInstallModal({ isOpen, onClose, onInstall }: PWAInsta
     if (platform === 'android') {
       if (showDualMobile) {
         return [
-          'Abra no navegador Google Chrome no seu celular Android',
-          'Toque no ícone de três pontos (⋮) no canto superior direito',
-          'Selecione a opção “Instalar aplicativo” ou “Adicionar à tela inicial”',
-          'Confirme para ter o app na sua tela de início'
+          'Open Google Chrome browser on your Android phone',
+          'Tap the three dots icon (⋮) in the upper right corner',
+          'Select “Install app” or “Add to Home screen”',
+          'Confirm to have the app on your home screen'
         ];
       }
       const step = t('pwa.android_step1');
       if (step && step !== 'pwa.android_step1') return [step];
-      return ['Clique no botão Instalar abaixo'];
+      return ['Click the Install button below'];
     }
     if (platform === 'desktop') {
       const step = t('pwa.desktop_step1');
@@ -474,7 +474,7 @@ export default function PWAInstallModal({ isOpen, onClose, onInstall }: PWAInsta
                       className="w-full max-w-xs group relative overflow-hidden flex items-center justify-center gap-2 py-3.5 px-6 bg-primary text-black font-black uppercase tracking-wider rounded-2xl md:rounded-3xl hover:brightness-110 active:scale-95 transition-all text-xs md:text-sm shadow-xl shadow-primary/25 cursor-pointer"
                     >
                       <Check className="w-4 h-4 md:w-5 md:h-5 shrink-0" />
-                      <span>{settings.custom_texts?.['pwa.got_it'] || t('pwa.got_it') || 'ENTENDI'}</span>
+                      <span>{settings.custom_texts?.['pwa.got_it'] || t('pwa.got_it') || 'GOT IT'}</span>
                     </button>
                   </div>
                 ) : (

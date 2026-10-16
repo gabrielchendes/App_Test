@@ -895,29 +895,62 @@ export default function Dashboard({ user }: DashboardProps) {
         )}
       </AnimatePresence>
 
-      {/* Welcome Notification Modal */}
+      {/* Quadro de Avisos Importantes (Modal de Notificações & Comunicados) */}
       <AnimatePresence>
         {showWelcomeModal && (
-          <div className="fixed inset-0 z-[100] flex items-center justify-center p-6 bg-black/60 backdrop-blur-xl">
+          <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 sm:p-6 bg-black/80 backdrop-blur-md overflow-y-auto overscroll-contain">
             <motion.div 
-              initial={{ opacity: 0, scale: 0.9, y: 30 }}
+              initial={{ opacity: 0, scale: 0.94, y: 16 }}
               animate={{ opacity: 1, scale: 1, y: 0 }}
-              exit={{ opacity: 0, scale: 0.9, y: 30 }}
-              className="relative w-full max-w-sm bg-zinc-900 border border-white/10 rounded-[2.5rem] overflow-hidden shadow-2xl"
+              exit={{ opacity: 0, scale: 0.94, y: 16 }}
+              transition={{ type: 'spring', damping: 26, stiffness: 360 }}
+              style={{ boxSizing: 'border-box' }}
+              className="relative w-full max-w-[360px] my-auto bg-[#0c0e16] border-[3px] border-amber-400 rounded-2xl sm:rounded-3xl shadow-[0_0_30px_rgba(245,158,11,0.55),0_0_15px_rgba(251,191,36,0.75),0_0_60px_rgba(245,158,11,0.35)] overflow-hidden text-left"
             >
-              <div className="absolute top-0 left-0 w-full h-1 bg-primary shadow-[0_0_20px_rgba(var(--primary-rgb),0.5)]" />
-              <div className="p-10 text-center">
-                <div className="w-20 h-20 bg-primary/10 rounded-3xl flex items-center justify-center mx-auto mb-8 border border-primary/20 rotate-3">
-                  <Bell className="text-primary animate-pulse" size={36} />
+              {/* Close button with polished golden border, jewel glow, and English aria-label */}
+              <button
+                type="button"
+                onClick={() => {
+                  localStorage.setItem(`push_modal_dismissed_${user.id}`, 'true');
+                  setShowWelcomeModal(false);
+                }}
+                className="absolute top-3.5 right-3.5 z-10 w-8 h-8 flex items-center justify-center text-amber-300 hover:text-white rounded-full bg-[#13151f]/90 hover:bg-[#1c2030] border-2 border-amber-400/60 hover:border-amber-400 shadow-[0_0_12px_rgba(245,158,11,0.4)] hover:shadow-[0_0_18px_rgba(251,191,36,0.7)] active:scale-95 transition-all duration-200 cursor-pointer"
+                title="Close notice"
+                aria-label="Close notice"
+              >
+                <X size={15} strokeWidth={2.5} className="drop-shadow-[0_0_4px_rgba(251,191,36,0.5)]" />
+              </button>
+
+              <div className="p-6 sm:p-7 text-center">
+                {/* Refined luminous icon badge */}
+                <div className="relative w-13 h-13 rounded-2xl bg-gradient-to-br from-amber-400/30 via-yellow-500/20 to-transparent border border-amber-400/50 flex items-center justify-center mx-auto mb-4 shadow-[0_0_22px_rgba(245,158,11,0.35)]">
+                  <Bell className="text-amber-300 drop-shadow-[0_0_8px_rgba(251,191,36,0.6)]" size={22} />
+                  <span className="absolute -top-0.5 -right-0.5 w-2.5 h-2.5 rounded-full bg-amber-300 ring-2 ring-[#0d0e14] shadow-[0_0_8px_rgba(251,191,36,0.8)]" />
                 </div>
-                <h3 className="text-2xl font-black text-white uppercase tracking-tighter italic mb-4">
-                  {settings.custom_texts?.['push.title'] || t('push.title') || 'Important Notices!'}
+
+                {/* Quiet editorial kicker in English */}
+                <div className="text-[10px] font-bold uppercase tracking-[0.22em] text-amber-300 drop-shadow-[0_0_8px_rgba(245,158,11,0.5)] mb-1.5">
+                  Announcement Board
+                </div>
+
+                {/* Title in English */}
+                <h3 className="text-lg sm:text-xl font-bold text-white tracking-tight leading-snug mb-2">
+                  {settings.custom_texts?.['push.title'] && settings.custom_texts['push.title'] !== 'Avisos Importantes!' 
+                    ? settings.custom_texts['push.title'] 
+                    : 'Important Notice!'}
                 </h3>
-                <p className="text-gray-400 text-sm mb-10 leading-relaxed font-medium">
-                  {settings.custom_texts?.['push.description'] || t('push.description') || 'Would you like to receive notifications about new classes, materials, and important announcements directly on your mobile phone?'}
+
+                {/* Description in English */}
+                <p className="text-zinc-300/90 text-xs sm:text-[13px] leading-relaxed font-normal mb-6 px-1">
+                  {settings.custom_texts?.['push.description'] && !settings.custom_texts['push.description'].includes('Deseja receber avisos')
+                    ? settings.custom_texts['push.description']
+                    : 'Stay informed with new lessons, exclusive learning materials, and important announcements directly on your device.'}
                 </p>
-                <div className="flex flex-col gap-4">
+
+                {/* Action Buttons in English */}
+                <div className="flex flex-col gap-2.5">
                   <button 
+                    type="button"
                     onClick={async () => {
                       localStorage.setItem(`push_modal_dismissed_${user.id}`, 'true');
                       setShowWelcomeModal(false);
@@ -925,24 +958,29 @@ export default function Dashboard({ user }: DashboardProps) {
                         const { requestNotificationPermission } = await import('../lib/pushNotifications');
                         const granted = await requestNotificationPermission(user.id);
                         if (granted) {
-                          toast.success(settings.custom_texts?.['push.success'] || t('push.success') || 'Notifications enabled successfully!');
+                          toast.success(settings.custom_texts?.['push.success'] || 'Notifications enabled successfully!');
                         }
                       } catch (err) {
                         console.warn('Notification activation error:', err);
                       }
                     }}
-                    className="w-full bg-primary hover:bg-primary-hover text-white font-black py-5 rounded-2xl shadow-2xl shadow-primary/30 active:scale-95 transition-all text-xs tracking-[0.2em] uppercase italic"
+                    className="w-full bg-gradient-to-r from-amber-400 via-yellow-400 to-amber-500 hover:brightness-110 text-zinc-950 font-bold py-3 px-4 rounded-xl shadow-[0_0_22px_rgba(245,158,11,0.45)] border border-amber-200/80 active:scale-[0.98] transition-all text-xs tracking-wider uppercase flex items-center justify-center gap-2 cursor-pointer"
                   >
-                    {settings.custom_texts?.['push.allow'] || t('push.allow') || 'Turn on notifications'}
+                    <Bell size={14} className="shrink-0 text-zinc-950" />
+                    <span>{settings.custom_texts?.['push.allow'] && settings.custom_texts['push.allow'] !== 'Ativar avisos' ? settings.custom_texts['push.allow'] : 'Enable notifications'}</span>
                   </button>
+
                   <button 
+                    type="button"
                     onClick={() => {
                       localStorage.setItem(`push_modal_dismissed_${user.id}`, 'true');
                       setShowWelcomeModal(false);
                     }}
-                    className="w-full py-3 text-[10px] text-gray-600 font-bold uppercase tracking-[0.3em] hover:text-white transition-colors"
+                    className="w-full py-2.5 text-xs text-amber-200/80 hover:text-white font-medium transition-colors cursor-pointer border border-amber-400/20 hover:border-amber-400/40 rounded-xl bg-amber-400/5 hover:bg-amber-400/10"
+                    title="Close notice"
+                    aria-label="Close notice"
                   >
-                    {settings.custom_texts?.['push.deny'] || t('push.deny') || 'Not now'}
+                    Close notice
                   </button>
                 </div>
               </div>

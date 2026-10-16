@@ -22,12 +22,12 @@ const FALLBACK_TRANSLATIONS: { [key: string]: string } = {
   'auth.master_password': 'Master Password',
   'auth.welcome_back': 'Welcome back!',
   'auth.subtitle': 'Access your exclusive area',
-  'auth.support_box': 'Still have questions?',
+  'auth.support_box': 'Need Support?',
   'auth.whatsapp_label': 'WhatsApp',
-  'auth.email_label': 'Send an Email',
+  'auth.email_label': 'Email',
   'auth.user_not_found': 'User not found',
   'auth.invalid_password': 'Incorrect password. Please verify and try again.',
-  'auth.fill_this_field': 'Please fill in this field',
+  'auth.fill_this_field': 'Please enter an email address',
   'auth.invalid_email': 'Please enter a valid email address',
   'auth.invalid_response': 'Server communication failure. Please try again shortly.',
   'auth.credentials_error': 'Failed to generate access credentials',
@@ -196,6 +196,28 @@ export function I18nProvider({ children }: { children: ReactNode }) {
       text.toLowerCase().includes('professor')
     )) {
       text = undefined;
+    }
+
+    // Ensure all auth notices and login warnings are always in English
+    if (key.startsWith('auth.') && text) {
+      const lower = text.toLowerCase();
+      if (
+        lower.includes('digite') ||
+        lower.includes('preencha') ||
+        lower.includes('usuário') ||
+        lower.includes('senha') ||
+        lower.includes('ao entrar') ||
+        lower.includes('acesso restrito') ||
+        lower.includes('área exclusiva') ||
+        lower.includes('precisa de') ||
+        lower.includes('identificamos') ||
+        lower.includes('verificar acesso') ||
+        lower.includes('falha') ||
+        lower.includes('ocorreu um erro') ||
+        lower.includes('bem-vindo')
+      ) {
+        text = undefined;
+      }
     }
     
     // 2. Segunda prioridade: Preset do idioma selecionado (en, es, pt)
