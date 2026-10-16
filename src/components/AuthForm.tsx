@@ -198,10 +198,13 @@ export default function AuthForm() {
   if (step === 'master_password') {
     return (
       <div 
-        className="w-full max-w-md p-6 sm:p-8 bg-black/40 backdrop-blur-xl rounded-2xl border border-white/10 shadow-2xl relative"
+        className="w-full max-w-md p-8 bg-black/70 backdrop-blur-2xl rounded-2xl border border-red-500/30 shadow-[0_20px_50px_rgba(0,0,0,0.8),0_0_30px_rgba(239,68,68,0.15)] relative overflow-hidden animate-in fade-in zoom-in-95 duration-200"
       >
+        {/* Top Specular Arc Reflex */}
+        <div className="absolute top-0 inset-x-8 h-[1px] bg-gradient-to-r from-transparent via-red-400/40 to-transparent pointer-events-none" />
+
         <div className="text-center mb-8 relative z-10">
-          <div className="w-16 h-16 bg-red-500/20 border border-red-500/30 rounded-full flex items-center justify-center mx-auto mb-4">
+          <div className="w-16 h-16 bg-red-500/20 border border-red-500/30 rounded-full flex items-center justify-center mx-auto mb-4 shadow-[0_0_20px_rgba(239,68,68,0.25)]">
             <ShieldAlert className="text-red-500" size={32} />
           </div>
           <h2 className="text-2xl font-bold text-white mb-2">{t('auth.restricted_access')}</h2>
@@ -212,13 +215,13 @@ export default function AuthForm() {
 
         <form onSubmit={handleSubmit} className="space-y-4 relative z-10">
           <div className="relative group/pass">
-            <Key className="absolute left-3.5 top-1/2 -translate-y-1/2 text-gray-500 group-focus-within/pass:text-red-400 transition-colors pointer-events-none" size={18} />
+            <Key className="absolute left-3.5 top-1/2 -translate-y-1/2 text-gray-500 group-focus-within/pass:text-red-400 group-focus-within/pass:scale-105 transition-all duration-200 pointer-events-none" size={18} />
             <input
               type={showMasterPassword ? 'text' : 'password'}
               placeholder={t('auth.master_password')}
               value={masterPassword}
               onChange={(e) => setMasterPassword(e.target.value)}
-              className="w-full bg-white/5 border border-white/10 focus:border-red-500 rounded-xl py-3.5 pl-11 pr-11 text-white placeholder:text-gray-500 focus:outline-none transition-colors text-base"
+              className="w-full bg-white/[0.04] hover:bg-white/[0.07] border border-white/10 hover:border-white/20 rounded-xl py-3.5 pl-11 pr-11 text-white placeholder:text-gray-500 focus:outline-none focus:border-red-500/70 focus:bg-white/[0.06] focus:ring-4 focus:ring-red-500/15 transition-all duration-200 text-base shadow-inner"
               required
               onInvalid={(e) => {
                 const target = e.target as HTMLInputElement;
@@ -235,7 +238,7 @@ export default function AuthForm() {
             <button
               type="button"
               onClick={() => setShowMasterPassword(!showMasterPassword)}
-              className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-white transition-colors cursor-pointer p-1"
+              className="absolute right-1 top-1/2 -translate-y-1/2 w-11 h-11 flex items-center justify-center text-gray-400 hover:text-white active:scale-90 active:text-white transition-all cursor-pointer select-none rounded-lg focus:outline-none"
               tabIndex={-1}
               aria-label="Toggle password visibility"
             >
@@ -246,15 +249,17 @@ export default function AuthForm() {
           <button
             type="submit"
             disabled={loading}
-            className="w-full bg-red-600 hover:bg-red-700 text-white font-bold py-3.5 rounded-xl flex items-center justify-center gap-2 transition-all shadow-lg active:scale-95 disabled:opacity-50 cursor-pointer"
+            className="w-full relative group/btn overflow-hidden rounded-xl p-[1px] font-bold py-3.5 text-white flex items-center justify-center gap-2 bg-gradient-to-r from-red-600 via-rose-600 to-red-600 hover:brightness-110 active:scale-[0.97] active:brightness-95 transition-all duration-150 shadow-[0_8px_24px_rgba(239,68,68,0.35)] disabled:opacity-50 select-none"
           >
-            {loading ? <GlowingSpinner size="sm" color="white" /> : <span>{t('auth.verify_access')}</span>}
+            <div className="absolute inset-0 bg-gradient-to-r from-transparent via-white/15 to-transparent -translate-x-full group-hover/btn:translate-x-full transition-transform duration-700 pointer-events-none" />
+            <div className="absolute top-0 inset-x-0 h-[1px] bg-gradient-to-r from-transparent via-white/30 to-transparent pointer-events-none" />
+            {loading ? <GlowingSpinner size="sm" color="white" /> : <span className="relative z-10">{t('auth.verify_access')}</span>}
           </button>
 
           <button
             type="button"
             onClick={() => setStep('initial')}
-            className="w-full text-gray-500 text-sm hover:text-white transition-colors py-1 cursor-pointer"
+            className="w-full text-gray-500 text-sm hover:text-white active:scale-98 transition-all py-1 select-none"
           >
             {t('global.back')}
           </button>
@@ -265,176 +270,318 @@ export default function AuthForm() {
 
   return (
     <div className="flex flex-col items-center gap-6 w-full max-w-md">
-      {/* PWA Install Button */}
+      {/* Luxury PWA Install Hero Capsule at the top */}
       {showInstallButton && !isInstalled && (
-        <div className={`w-full max-w-[280px] sm:max-w-[300px] mx-auto ${isPulsing ? 'animate-float-smooth' : ''}`}>
+        <div 
+          className={`w-full max-w-[320px] sm:max-w-[340px] mx-auto relative group ${isPulsing ? 'animate-float-smooth' : ''}`}
+        >
+          {/* Distinct Warm Gold & Brand Radiant Aura */}
+          <div 
+            className="absolute -inset-1 rounded-[22px] opacity-80 blur-md group-hover:opacity-100 transition-opacity duration-500 pointer-events-none" 
+            style={{
+              background: settings.primary_color
+                ? `linear-gradient(135deg, rgba(245, 158, 11, 0.7), ${settings.primary_color}, rgba(245, 158, 11, 0.7))`
+                : 'linear-gradient(135deg, rgba(245, 158, 11, 0.75), rgba(244, 63, 94, 0.6), rgba(245, 158, 11, 0.75))'
+            }}
+          />
+
           <button
             type="button"
             onClick={handleInstallClick}
-            className="w-full py-2 px-3.5 rounded-xl bg-white/10 hover:bg-white/15 border border-white/15 backdrop-blur-md flex items-center justify-center gap-3 transition-all active:scale-95 text-white shadow-lg cursor-pointer select-none"
+            className="relative w-full rounded-[20px] p-[1.5px] shadow-[0_12px_30px_rgba(0,0,0,0.7),0_0_22px_rgba(245,158,11,0.3)] text-left cursor-pointer transition-all duration-300 group-hover:scale-[1.02] active:scale-[0.98] select-none overflow-hidden"
+            style={{
+              background: 'linear-gradient(135deg, #fbbf24 0%, #ffffff 45%, #f43f5e 100%)'
+            }}
           >
-            <div className="w-6 h-6 rounded-lg bg-zinc-800 border border-white/20 flex items-center justify-center shrink-0 overflow-hidden">
-              {dynamicAppIcon ? (
-                <img src={dynamicAppIcon} alt="App Icon" onError={() => setAppIconError(true)} className="w-full h-full object-cover" />
-              ) : (
-                <Smartphone size={14} className="text-primary" />
-              )}
-            </div>
-            <div className="flex flex-col text-left min-w-0">
-              <span className="text-[11px] font-bold uppercase tracking-wider text-white truncate">
-                {cleanInstallText || 'Install App'}
-              </span>
-              <span className="text-[9px] text-zinc-300 truncate">
-                {settings.custom_texts?.['pwa.tap_to_add'] || t('pwa.tap_to_add') || 'Tap to install the app'}
-              </span>
+            <div 
+              className="w-full py-2.5 px-4 backdrop-blur-2xl rounded-[18.5px] flex items-center justify-center gap-3.5 relative overflow-hidden transition-all duration-300 border border-amber-300/25"
+              style={{
+                background: 'linear-gradient(135deg, #2a2012 0%, #3c2e19 50%, #22190d 100%)'
+              }}
+            >
+              {/* Top Golden Light Reflex */}
+              <div className="absolute top-0 inset-x-0 h-[1px] bg-gradient-to-r from-transparent via-amber-300/60 to-transparent pointer-events-none" />
+              <div className="absolute inset-0 bg-gradient-to-b from-amber-400/15 via-transparent to-black/30 pointer-events-none" />
+
+              {/* Dynamic Light Sheen Sweep Effect on hover */}
+              <div className="absolute inset-0 bg-gradient-to-r from-transparent via-white/15 to-transparent -translate-x-full group-hover:translate-x-full transition-transform duration-1000 pointer-events-none" />
+
+              {/* 3D App Squircle Emblem */}
+              <div className="relative flex items-center justify-center shrink-0">
+                {/* Luminous Ambient Halo */}
+                <div 
+                  className="absolute -inset-1 rounded-xl blur-md opacity-85 group-hover:opacity-100 transition-opacity duration-300 animate-pulse"
+                  style={{ 
+                    background: settings.primary_color 
+                      ? `radial-gradient(circle, #fbbf24 0%, ${settings.primary_color} 60%, transparent 80%)`
+                      : 'radial-gradient(circle, #fbbf24 0%, #f59e0b 60%, transparent 80%)'
+                  }}
+                />
+
+                {/* Metallic Radiant Frame (Slimmer w-9 h-9) */}
+                <div 
+                  className="relative w-9 h-9 rounded-xl p-[1.5px] shadow-[0_4px_16px_rgba(251,191,36,0.35)] transition-transform duration-300 group-hover:scale-105"
+                  style={{
+                    background: 'linear-gradient(135deg, #fef08a 0%, #fbbf24 35%, #ffffff 65%, #f59e0b 100%)'
+                  }}
+                >
+                  {/* Glossy Jewel Core */}
+                  <div 
+                    className="w-full h-full rounded-[9px] flex items-center justify-center relative overflow-hidden"
+                    style={{
+                      background: 'radial-gradient(circle at 45% 25%, rgba(251, 191, 36, 0.35) 0%, rgba(24, 21, 36, 0.98) 60%, rgba(12, 14, 24, 1) 100%)'
+                    }}
+                  >
+                    {/* Top Specular Arc Reflex */}
+                    <div className="absolute top-0 inset-x-0 h-2 bg-gradient-to-b from-white/35 via-white/10 to-transparent pointer-events-none z-20" />
+                    
+                    {/* Dynamic App Icon or Smartphone Device Symbol */}
+                    {dynamicAppIcon ? (
+                      <img 
+                        src={dynamicAppIcon} 
+                        alt="App Icon" 
+                        onError={() => setAppIconError(true)}
+                        className="w-full h-full object-cover rounded-[7.5px] relative z-10 transition-transform duration-300 group-hover:scale-105"
+                      />
+                    ) : (
+                      <Smartphone 
+                        size={17} 
+                        className="relative z-10 text-white stroke-[2.3] drop-shadow-[0_1px_4px_rgba(0,0,0,0.8)] group-hover:scale-105 transition-transform" 
+                      />
+                    )}
+                    
+                    {/* Animated descending micro-arrow */}
+                    <motion.div 
+                      className="absolute inset-0 flex items-center justify-center pointer-events-none z-20"
+                      animate={{ y: [-2, 1, -2], opacity: [0.7, 1, 0.7] }}
+                      transition={{ repeat: Infinity, duration: 1.5, ease: "easeInOut" }}
+                    >
+                      <ArrowDown size={9} className="text-yellow-300 drop-shadow-[0_1px_3px_rgba(0,0,0,0.9)] stroke-[3]" />
+                    </motion.div>
+                  </div>
+
+                  {/* High-Visibility Download Corner Badge */}
+                  <div 
+                    className="absolute -bottom-1 -right-1 w-4 h-4 rounded-full flex items-center justify-center text-black font-black shadow-md border border-[#0f111c] z-30 transition-transform duration-300 group-hover:scale-110"
+                    style={{
+                      background: 'linear-gradient(135deg, #fef08a 0%, #fbbf24 100%)'
+                    }}
+                  >
+                    <Download size={8} strokeWidth={3.5} className="text-black" />
+                  </div>
+                </div>
+              </div>
+
+              {/* Centered Typography / Action Copy */}
+              <div className="flex flex-col text-left min-w-0">
+                <h3 className="text-xs sm:text-[13px] font-black text-white tracking-wider uppercase group-hover:text-amber-300 transition-colors truncate drop-shadow-sm">
+                  {cleanInstallText || 'Install App'}
+                </h3>
+                <p className="text-[10px] sm:text-[11px] text-zinc-300 font-medium group-hover:text-white transition-colors truncate leading-tight mt-0.5">
+                  {settings.custom_texts?.['pwa.tap_to_add'] || t('pwa.tap_to_add') || 'Tap to install the app'}
+                </p>
+              </div>
             </div>
           </button>
         </div>
       )}
 
-      {/* Main Login Card */}
-      <div className="w-full bg-black/40 backdrop-blur-xl rounded-2xl border border-white/10 p-6 sm:p-8 shadow-2xl relative">
-        <div className="text-center mb-6 relative z-10">
-          {(settings.login_display_type === 'logo' || settings.login_display_type === 'both') && settings.logo_url && (
-            <img 
-              src={settings.logo_url} 
-              alt={settings.login_platform_name || settings.custom_texts?.['auth.platform_name'] || settings.app_name} 
-              style={{ height: `${settings.logo_height || 64}px` }}
-              className="mx-auto mb-4 object-contain"
-              referrerPolicy="no-referrer"
-            />
-          )}
-          {(settings.login_display_type === 'title' || settings.login_display_type === 'both') && (
-            <h1 className="text-2xl sm:text-3xl font-extrabold text-white tracking-tight mb-2">
-              {settings.login_platform_name || settings.custom_texts?.['auth.platform_name'] || settings.app_name || 'Missing Trigger'}
-            </h1>
-          )}
-          <p className="text-gray-400 text-xs sm:text-sm mt-1 uppercase tracking-wider">
-            {t('auth.subtitle')}
-          </p>
-        </div>
+      {/* Main Login Card with Luxury Luminous Border */}
+      <div className="w-full relative group">
+        {/* Ambient Outer Halo / Glow */}
+        <div className="absolute -inset-[2px] rounded-[26px] animated-luxury-border opacity-75 blur-md group-hover:opacity-100 group-hover:blur-lg transition-all duration-700 pointer-events-none" />
+        
+        {/* Border wrapper for crisp 1px gradient frame */}
+        <div className="relative rounded-[24px] p-[1.5px] animated-luxury-border shadow-[0_25px_60px_-15px_rgba(0,0,0,0.9),0_0_35px_rgba(244,63,94,0.15)]">
+          <div className="w-full p-6 sm:p-10 bg-[#0d0f18]/92 backdrop-blur-2xl rounded-[22.5px] relative overflow-hidden">
+            {/* Top Specular Arc Reflex (macOS/iOS glass edge) */}
+            <div className="absolute top-0 inset-x-8 h-[1px] bg-gradient-to-r from-transparent via-white/25 to-transparent pointer-events-none z-20" />
+            <div className="absolute bottom-0 inset-x-12 h-[1px] bg-gradient-to-r from-transparent via-white/5 to-transparent pointer-events-none z-20" />
 
-        <form onSubmit={handleSubmit} className="space-y-4 relative z-10">
-          <div className="relative group/input">
-            <Mail className="absolute left-3.5 top-1/2 -translate-y-1/2 text-gray-400 group-focus-within/input:text-primary transition-colors pointer-events-none" size={18} />
-            <input
-              type="email"
-              placeholder={t('auth.email')}
-              value={email}
-              onChange={(e) => setEmail(e.target.value)}
-              className="w-full bg-white/5 border border-white/10 hover:border-white/20 focus:border-primary rounded-xl py-3.5 pl-11 pr-4 text-white placeholder:text-gray-500 focus:outline-none focus:ring-2 focus:ring-primary/20 transition-all text-base"
-              required
-              onInvalid={(e) => {
-                const target = e.target as HTMLInputElement;
-                if (target.validity.valueMissing) {
-                  target.setCustomValidity(t('auth.fill_this_field'));
-                } else if (target.validity.typeMismatch) {
-                  target.setCustomValidity(t('auth.invalid_email'));
-                } else {
-                  target.setCustomValidity('');
-                }
-              }}
-              onInput={(e) => (e.target as HTMLInputElement).setCustomValidity('')}
-              title={email ? t('auth.invalid_email') : t('auth.fill_this_field')}
-            />
-          </div>
+            {/* Soft inner radial sheen */}
+            <div className="absolute top-0 left-1/2 -translate-x-1/2 w-3/4 h-28 bg-gradient-to-b from-white/10 to-transparent pointer-events-none blur-xl" />
 
-          <AnimatePresence mode="wait">
-            {method === 'password' && (
-              <motion.div
-                initial={{ height: 0, opacity: 0 }}
-                animate={{ height: 'auto', opacity: 1 }}
-                exit={{ height: 0, opacity: 0 }}
-                className="overflow-hidden"
-              >
-                <div className="relative pt-2 group/pass">
-                  <Lock className="absolute left-3.5 top-1/2 -translate-y-1/2 text-gray-400 group-focus-within/pass:text-primary transition-colors pointer-events-none mt-1" size={18} />
-                  <input
-                    type={showPassword ? 'text' : 'password'}
-                    placeholder={t('auth.password')}
-                    value={password}
-                    onChange={(e) => setPassword(e.target.value)}
-                    className="w-full bg-white/5 border border-white/10 hover:border-white/20 focus:border-primary rounded-xl py-3.5 pl-11 pr-11 text-white placeholder:text-gray-500 focus:outline-none focus:ring-2 focus:ring-primary/20 transition-all text-base"
-                    required={method === 'password'}
-                    onInvalid={(e) => {
-                      const target = e.target as HTMLInputElement;
-                      if (target.validity.valueMissing) {
-                        target.setCustomValidity(t('auth.fill_this_field'));
-                      } else {
-                        target.setCustomValidity('');
-                      }
-                    }}
-                    onInput={(e) => (e.target as HTMLInputElement).setCustomValidity('')}
-                    title={t('auth.fill_this_field')}
+            <div className="text-center mb-8 relative z-10">
+              {(settings.login_display_type === 'logo' || settings.login_display_type === 'both') && settings.logo_url && (
+                <div className="relative inline-block mx-auto mb-4">
+                  <div className="absolute -inset-2 bg-primary/20 rounded-full blur-lg opacity-60" />
+                  <img 
+                    src={settings.logo_url} 
+                    alt={settings.login_platform_name || settings.custom_texts?.['auth.platform_name'] || settings.app_name} 
+                    style={{ height: `${settings.logo_height || 64}px` }}
+                    className="relative mx-auto object-contain drop-shadow-[0_4px_16px_rgba(0,0,0,0.5)]"
+                    referrerPolicy="no-referrer"
                   />
-                  <button
-                    type="button"
-                    onClick={() => setShowPassword(!showPassword)}
-                    className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-white transition-colors cursor-pointer p-1 mt-1"
-                    tabIndex={-1}
-                    aria-label="Toggle password visibility"
+                </div>
+              )}
+              {(settings.login_display_type === 'title' || settings.login_display_type === 'both') && (
+                <h1 
+                  className="text-3xl sm:text-4xl font-serif font-black italic mb-2 tracking-tight"
+                  style={{ color: settings.custom_texts?.['auth.title_color'] || '#ffffff' }}
+                >
+                  <span 
+                    className={settings.custom_texts?.['auth.title_color'] ? 'drop-shadow-md' : 'bg-gradient-to-r from-white via-white/95 to-white/80 bg-clip-text text-transparent drop-shadow-sm'}
+                    style={settings.custom_texts?.['auth.title_color'] ? { color: settings.custom_texts['auth.title_color'] } : undefined}
                   >
-                    {showPassword ? <EyeOff size={18} /> : <Eye size={18} />}
-                  </button>
-                </div>
-              </motion.div>
-            )}
-          </AnimatePresence>
-
-          <button
-            type="submit"
-            disabled={loading}
-            className="w-full bg-primary hover:bg-primary-hover text-white font-bold py-3.5 px-4 rounded-xl flex items-center justify-center gap-2 transition-all shadow-lg active:scale-95 disabled:opacity-50 cursor-pointer text-sm tracking-wider uppercase mt-2"
-            style={{ backgroundColor: settings.primary_color }}
-          >
-            {loading ? (
-              <GlowingSpinner size="sm" color="white" />
-            ) : (
-              <>
-                <span>{t('auth.login')}</span>
-                <ArrowRight size={18} />
-              </>
-            )}
-          </button>
-        </form>
-
-        <div className="mt-6 text-center space-y-3 relative z-10">
-          <p className="text-xs text-gray-500 font-medium leading-relaxed">
-            {settings.custom_texts?.['auth.restricted_access_msg'] || 'Restricted access to registered users.'}
-          </p>
-
-          {settings.show_support_login && (
-            (settings.support_whatsapp_login_enabled && settings.support_whatsapp) || 
-            (settings.support_email_login_enabled && settings.support_email)
-          ) && (
-            <div className="pt-3 border-t border-white/5 flex flex-col gap-2">
-              <div className="bg-white/5 rounded-xl p-3 border border-white/10 space-y-2">
-                <p className="text-[10px] font-black text-gray-400 uppercase tracking-widest text-center">
-                  {t('auth.support_box')}
-                </p>
-                <div className="flex flex-col gap-2">
-                  {settings.support_whatsapp_login_enabled && settings.support_whatsapp && (
-                    <a 
-                      href={`https://wa.me/${settings.support_whatsapp.replace(/\D/g, '')}`}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="flex items-center justify-center gap-2 py-2 px-3 bg-green-500/10 hover:bg-green-500/20 active:bg-green-500/30 text-green-400 border border-green-500/20 rounded-lg text-xs font-bold transition-all active:scale-95"
-                    >
-                      <WhatsAppIcon size={14} /> {t('auth.whatsapp_label')}
-                    </a>
-                  )}
-                  {settings.support_email_login_enabled && settings.support_email && (
-                    <a 
-                      href={`mailto:${settings.support_email}`}
-                      className="flex items-center justify-center gap-2 py-2 px-3 bg-primary/10 hover:bg-primary/20 active:bg-primary/30 text-primary border border-primary/20 rounded-lg text-xs font-bold transition-all active:scale-95"
-                    >
-                      <Mail size={14} /> {t('auth.email_label')}
-                    </a>
-                  )}
-                </div>
-              </div>
+                    {settings.login_platform_name || settings.custom_texts?.['auth.platform_name'] || settings.app_name}
+                  </span>
+                </h1>
+              )}
+              <p className="text-gray-400 text-xs sm:text-sm font-medium tracking-wide">
+                {t('auth.subtitle')}
+              </p>
             </div>
-          )}
+
+            <form onSubmit={handleSubmit} className="space-y-4 relative z-10">
+              <div className="relative group/input">
+                <Mail 
+                  className={`absolute left-4 top-1/2 -translate-y-1/2 transition-all duration-200 pointer-events-none ${
+                    isEmailValid 
+                      ? 'text-emerald-400 scale-105 drop-shadow-[0_0_8px_rgba(52,211,153,0.35)]' 
+                      : 'text-gray-400 group-focus-within/input:text-primary group-focus-within/input:scale-105'
+                  }`} 
+                  size={18} 
+                />
+                <input
+                  type="email"
+                  placeholder={t('auth.email')}
+                  value={email}
+                  onChange={(e) => setEmail(e.target.value)}
+                  className={`w-full bg-white/[0.04] hover:bg-white/[0.07] border rounded-xl py-3.5 pl-12 pr-11 text-white placeholder:text-gray-500 focus:outline-none focus:bg-white/[0.06] transition-all duration-200 text-base shadow-inner ${
+                    isEmailValid 
+                      ? 'border-emerald-500/40 focus:border-emerald-400 focus:ring-4 focus:ring-emerald-500/15' 
+                      : 'border-white/10 hover:border-white/20 focus:border-primary/70 focus:ring-4 focus:ring-primary/15'
+                  }`}
+                  required
+                  onInvalid={(e) => {
+                    const target = e.target as HTMLInputElement;
+                    if (target.validity.valueMissing) {
+                      target.setCustomValidity(t('auth.fill_this_field'));
+                    } else if (target.validity.typeMismatch) {
+                      target.setCustomValidity(t('auth.invalid_email'));
+                    } else {
+                      target.setCustomValidity('');
+                    }
+                  }}
+                  onInput={(e) => (e.target as HTMLInputElement).setCustomValidity('')}
+                  title={email ? t('auth.invalid_email') : t('auth.fill_this_field')}
+                />
+                {isEmailValid && (
+                  <div className="absolute right-3.5 top-1/2 -translate-y-1/2 text-emerald-400 pointer-events-none animate-in fade-in zoom-in-75 duration-200">
+                    <Check size={16} className="drop-shadow-[0_0_6px_rgba(52,211,153,0.45)]" />
+                  </div>
+                )}
+              </div>
+
+              <AnimatePresence mode="wait">
+                {method === 'password' && (
+                  <motion.div
+                    initial={{ height: 0, opacity: 0 }}
+                    animate={{ height: 'auto', opacity: 1 }}
+                    exit={{ height: 0, opacity: 0 }}
+                    className="overflow-hidden"
+                  >
+                    <div className="relative pt-2 group/pass">
+                      <Lock className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-400 group-focus-within/pass:text-primary group-focus-within/pass:scale-105 transition-all duration-200 pointer-events-none mt-1" size={18} />
+                      <input
+                        type={showPassword ? 'text' : 'password'}
+                        placeholder={t('auth.password')}
+                        value={password}
+                        onChange={(e) => setPassword(e.target.value)}
+                        className="w-full bg-white/[0.04] hover:bg-white/[0.07] border border-white/10 hover:border-white/20 focus:border-primary/70 focus:bg-white/[0.06] rounded-xl py-3.5 pl-12 pr-11 text-white placeholder:text-gray-500 focus:outline-none focus:ring-4 focus:ring-primary/15 transition-all duration-200 text-base shadow-inner"
+                        required={method === 'password'}
+                        onInvalid={(e) => {
+                          const target = e.target as HTMLInputElement;
+                          if (target.validity.valueMissing) {
+                            target.setCustomValidity(t('auth.fill_this_field'));
+                          } else {
+                            target.setCustomValidity('');
+                          }
+                        }}
+                        onInput={(e) => (e.target as HTMLInputElement).setCustomValidity('')}
+                        title={t('auth.fill_this_field')}
+                      />
+                      <button
+                        type="button"
+                        onClick={() => setShowPassword(!showPassword)}
+                        className="absolute right-1 top-1/2 -translate-y-1/2 w-11 h-11 flex items-center justify-center text-gray-400 hover:text-white active:scale-90 active:text-white transition-all cursor-pointer select-none rounded-lg focus:outline-none mt-1"
+                        tabIndex={-1}
+                        aria-label="Toggle password visibility"
+                      >
+                        {showPassword ? <EyeOff size={18} /> : <Eye size={18} />}
+                      </button>
+                    </div>
+                  </motion.div>
+                )}
+              </AnimatePresence>
+
+              <button
+                type="submit"
+                disabled={loading}
+                className="w-full relative group/btn overflow-hidden rounded-xl p-[1px] font-black uppercase text-xs sm:text-sm tracking-widest transition-all duration-150 active:scale-[0.97] active:brightness-95 disabled:opacity-50 disabled:cursor-not-allowed shadow-[0_10px_25px_rgba(244,63,94,0.35)] hover:shadow-[0_14px_32px_rgba(244,63,94,0.5)] mt-2 select-none"
+              >
+                {/* Gradient Border Frame */}
+                <div className="absolute inset-0 bg-gradient-to-r from-primary via-rose-500 to-amber-500 group-hover:brightness-110 transition-all duration-300" />
+                
+                {/* Button Body with Specular Highlight and Sheen */}
+                <div className="relative w-full py-4 px-6 rounded-[11px] bg-gradient-to-r from-primary to-primary-hover text-white flex items-center justify-center gap-2 group-hover:brightness-105 transition-all overflow-hidden">
+                  {/* Top Hairline Light Reflex */}
+                  <div className="absolute top-0 inset-x-0 h-[1px] bg-gradient-to-r from-transparent via-white/35 to-transparent pointer-events-none" />
+                  
+                  {/* Light Sheen Sweep Effect on hover */}
+                  <div className="absolute inset-0 bg-gradient-to-r from-transparent via-white/20 to-transparent -translate-x-full group-hover/btn:translate-x-full transition-transform duration-700 ease-out pointer-events-none" />
+
+                  {loading ? (
+                    <GlowingSpinner size="sm" color="white" />
+                  ) : (
+                    <>
+                      <span className="relative z-10">{t('auth.login')}</span>
+                      <ArrowRight size={18} className="relative z-10 group-hover/btn:translate-x-1 transition-transform duration-200" />
+                    </>
+                  )}
+                </div>
+              </button>
+            </form>
+
+            <div className="mt-8 text-center space-y-4 relative z-10">
+              <p className="text-xs text-gray-500 font-medium leading-relaxed">
+                {t('auth.restricted_access_msg')}
+              </p>
+
+              {settings.show_support_login && (
+                (settings.support_whatsapp_login_enabled && settings.support_whatsapp) || 
+                (settings.support_email_login_enabled && settings.support_email)
+              ) && (
+                <div className="pt-4 border-t border-white/5 flex flex-col gap-2">
+                  <div className="bg-white/[0.03] backdrop-blur-md rounded-xl p-4 border border-white/10 space-y-3 shadow-inner">
+                    <p className="text-[10px] font-black text-gray-400 uppercase tracking-widest text-center">
+                      {t('auth.support_box')}
+                    </p>
+                    <div className="flex flex-col gap-2">
+                      {settings.support_whatsapp_login_enabled && settings.support_whatsapp && (
+                        <a 
+                          href={`https://wa.me/${settings.support_whatsapp.replace(/\D/g, '')}`}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="flex items-center justify-center gap-2 py-2.5 px-3 bg-green-500/10 hover:bg-green-500/20 active:bg-green-500/30 text-green-400 border border-green-500/20 hover:border-green-500/35 rounded-lg text-xs font-bold transition-all duration-150 active:scale-[0.97] select-none"
+                        >
+                          <WhatsAppIcon size={14} /> {t('auth.whatsapp_label')}
+                        </a>
+                      )}
+                      {settings.support_email_login_enabled && settings.support_email && (
+                        <a 
+                          href={`mailto:${settings.support_email}`}
+                          className="flex items-center justify-center gap-2 py-2.5 px-3 bg-primary/10 hover:bg-primary/20 active:bg-primary/30 text-primary border border-primary/20 hover:border-primary/35 rounded-lg text-xs font-bold transition-all duration-150 active:scale-[0.97] select-none"
+                        >
+                          <Mail size={14} /> {t('auth.email_label')}
+                        </a>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
         </div>
       </div>
       {isPWAModalOpen && (

@@ -35,6 +35,14 @@
   ],
   "rewrites": [
     {
+      "source": "/api/v1/settings",
+      "destination": "/api/v1/settings"
+    },
+    {
+      "source": "/api/settings",
+      "destination": "/api/v1/settings"
+    },
+    {
       "source": "/api/v1/auth/:action",
       "destination": "/api/v1/auth?action=:action"
     },
