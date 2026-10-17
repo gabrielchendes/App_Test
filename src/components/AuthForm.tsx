@@ -40,7 +40,10 @@ export default function AuthForm() {
     } catch (e) {}
     return '';
   });
+  const [emailTouched, setEmailTouched] = useState(false);
+  const [emailError, setEmailError] = useState('');
   const [password, setPassword] = useState('');
+  const [passwordError, setPasswordError] = useState('');
   const [masterPassword, setMasterPassword] = useState('');
   const [step, setStep] = useState<'initial' | 'master_password'>('initial');
 
@@ -50,13 +53,19 @@ export default function AuthForm() {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    setEmailError('');
+    setPasswordError('');
 
     if (!email || !email.trim()) {
+      setEmailTouched(true);
+      setEmailError('Please enter an email address.');
       toast.error('Please enter an email address.');
       return;
     }
 
     if (!isEmailValid) {
+      setEmailTouched(true);
+      setEmailError('Please enter a valid email address.');
       toast.error('Please enter a valid email address.');
       return;
     }
@@ -67,6 +76,7 @@ export default function AuthForm() {
     }
 
     if (method === 'password' && step === 'initial' && !password.trim()) {
+      setPasswordError('Please enter your password.');
       toast.error('Please enter your password.');
       return;
     }
@@ -247,30 +257,15 @@ export default function AuthForm() {
           </p>
         </div>
 
-        <form onSubmit={handleSubmit} className="space-y-4 relative z-10">
+        <form noValidate onSubmit={handleSubmit} className="space-y-4 relative z-10" lang="en">
           <div className="relative group/pass">
             <Key className="absolute left-3.5 top-1/2 -translate-y-1/2 text-gray-500 group-focus-within/pass:text-red-400 group-focus-within/pass:scale-105 transition-all duration-200 pointer-events-none" size={18} />
             <input
               type={showMasterPassword ? 'text' : 'password'}
               placeholder={t('auth.master_password') || 'Master Password'}
               value={masterPassword}
-              onChange={(e) => {
-                setMasterPassword(e.target.value);
-                (e.target as HTMLInputElement).setCustomValidity('');
-              }}
+              onChange={(e) => setMasterPassword(e.target.value)}
               className="w-full bg-white/[0.04] hover:bg-white/[0.07] border border-white/10 hover:border-white/20 rounded-xl py-3.5 pl-11 pr-11 text-white placeholder:text-gray-500 focus:outline-none focus:border-red-500/70 focus:bg-white/[0.06] focus:ring-4 focus:ring-red-500/15 transition-all duration-200 text-base shadow-inner"
-              required
-              lang="en"
-              onInvalid={(e) => {
-                const target = e.target as HTMLInputElement;
-                if (target.validity.valueMissing) {
-                  target.setCustomValidity('Please enter the master password.');
-                } else {
-                  target.setCustomValidity('');
-                }
-              }}
-              onInput={(e) => (e.target as HTMLInputElement).setCustomValidity('')}
-              title="Please enter the master password."
               autoFocus
             />
             <button
@@ -470,48 +465,53 @@ export default function AuthForm() {
               </p>
             </div>
 
-            <form onSubmit={handleSubmit} className="space-y-4 relative z-10" lang="en">
-              <div className="relative group/input">
-                <Mail 
-                  className={`absolute left-4 top-1/2 -translate-y-1/2 transition-all duration-200 pointer-events-none ${
-                    isEmailValid 
-                      ? 'text-emerald-400 scale-105 drop-shadow-[0_0_8px_rgba(52,211,153,0.35)]' 
-                      : 'text-gray-400 group-focus-within/input:text-primary group-focus-within/input:scale-105'
-                  }`} 
-                  size={18} 
-                />
-                <input
-                  type="email"
-                  placeholder={t('auth.email') || 'Email'}
-                  value={email}
-                  onChange={(e) => {
-                    setEmail(e.target.value);
-                    (e.target as HTMLInputElement).setCustomValidity('');
-                  }}
-                  className={`w-full bg-white/[0.04] hover:bg-white/[0.07] border rounded-xl py-3.5 pl-12 pr-11 text-white placeholder:text-gray-500 focus:outline-none focus:bg-white/[0.06] transition-all duration-200 text-base shadow-inner ${
-                    isEmailValid 
-                      ? 'border-emerald-500/40 focus:border-emerald-400 focus:ring-4 focus:ring-emerald-500/15' 
-                      : 'border-white/10 hover:border-white/20 focus:border-primary/70 focus:ring-4 focus:ring-primary/15'
-                  }`}
-                  required
-                  lang="en"
-                  onInvalid={(e) => {
-                    const target = e.target as HTMLInputElement;
-                    if (target.validity.valueMissing) {
-                      target.setCustomValidity('Please enter an email address.');
-                    } else if (target.validity.typeMismatch) {
-                      target.setCustomValidity('Please enter a valid email address.');
-                    } else {
-                      target.setCustomValidity('Please enter a valid email address.');
-                    }
-                  }}
-                  onInput={(e) => (e.target as HTMLInputElement).setCustomValidity('')}
-                  title={email ? 'Please enter a valid email address.' : 'Please enter an email address.'}
-                />
-                {isEmailValid && (
-                  <div className="absolute right-3.5 top-1/2 -translate-y-1/2 text-emerald-400 pointer-events-none animate-in fade-in zoom-in-75 duration-200">
-                    <Check size={16} className="drop-shadow-[0_0_6px_rgba(52,211,153,0.45)]" />
-                  </div>
+            <form noValidate onSubmit={handleSubmit} className="space-y-4 relative z-10" lang="en">
+              <div className="space-y-1">
+                <div className="relative group/input">
+                  <Mail 
+                    className={`absolute left-4 top-1/2 -translate-y-1/2 transition-all duration-200 pointer-events-none ${
+                      isEmailValid 
+                        ? 'text-emerald-400 scale-105 drop-shadow-[0_0_8px_rgba(52,211,153,0.35)]' 
+                        : emailError
+                          ? 'text-rose-400'
+                          : 'text-gray-400 group-focus-within/input:text-primary group-focus-within/input:scale-105'
+                    }`} 
+                    size={18} 
+                  />
+                  <input
+                    type="email"
+                    placeholder={t('auth.email') || 'Email'}
+                    value={email}
+                    autoComplete="email"
+                    onChange={(e) => {
+                      setEmail(e.target.value);
+                      if (emailError) setEmailError('');
+                    }}
+                    onBlur={() => {
+                      setEmailTouched(true);
+                      if (email.trim() && !isEmailValid) {
+                        setEmailError('Please enter a valid email address.');
+                      }
+                    }}
+                    className={`w-full bg-white/[0.04] hover:bg-white/[0.07] border rounded-xl py-3.5 pl-12 pr-11 text-white placeholder:text-gray-500 focus:outline-none focus:bg-white/[0.06] transition-all duration-200 text-base shadow-inner ${
+                      isEmailValid 
+                        ? 'border-emerald-500/40 focus:border-emerald-400 focus:ring-4 focus:ring-emerald-500/15' 
+                        : emailError
+                          ? 'border-rose-500/50 focus:border-rose-500 focus:ring-4 focus:ring-rose-500/15'
+                          : 'border-white/10 hover:border-white/20 focus:border-primary/70 focus:ring-4 focus:ring-primary/15'
+                    }`}
+                  />
+                  {isEmailValid && (
+                    <div className="absolute right-3.5 top-1/2 -translate-y-1/2 text-emerald-400 pointer-events-none animate-in fade-in zoom-in-75 duration-200">
+                      <Check size={16} className="drop-shadow-[0_0_6px_rgba(52,211,153,0.45)]" />
+                    </div>
+                  )}
+                </div>
+                {emailError && (
+                  <p className="text-xs text-rose-400/90 pl-2 pt-0.5 flex items-center gap-1.5 animate-in fade-in slide-in-from-top-1 duration-150">
+                    <span className="w-1 h-1 rounded-full bg-rose-400 shrink-0" />
+                    <span>{emailError}</span>
+                  </p>
                 )}
               </div>
 
@@ -523,39 +523,40 @@ export default function AuthForm() {
                     exit={{ height: 0, opacity: 0 }}
                     className="overflow-hidden"
                   >
-                    <div className="relative pt-2 group/pass">
-                      <Lock className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-400 group-focus-within/pass:text-primary group-focus-within/pass:scale-105 transition-all duration-200 pointer-events-none mt-1" size={18} />
-                      <input
-                        type={showPassword ? 'text' : 'password'}
-                        placeholder={t('auth.password') || 'Password'}
-                        value={password}
-                        onChange={(e) => {
-                          setPassword(e.target.value);
-                          (e.target as HTMLInputElement).setCustomValidity('');
-                        }}
-                        className="w-full bg-white/[0.04] hover:bg-white/[0.07] border border-white/10 hover:border-white/20 focus:border-primary/70 focus:bg-white/[0.06] rounded-xl py-3.5 pl-12 pr-11 text-white placeholder:text-gray-500 focus:outline-none focus:ring-4 focus:ring-primary/15 transition-all duration-200 text-base shadow-inner"
-                        required={method === 'password'}
-                        lang="en"
-                        onInvalid={(e) => {
-                          const target = e.target as HTMLInputElement;
-                          if (target.validity.valueMissing) {
-                            target.setCustomValidity('Please enter your password.');
-                          } else {
-                            target.setCustomValidity('');
-                          }
-                        }}
-                        onInput={(e) => (e.target as HTMLInputElement).setCustomValidity('')}
-                        title="Please enter your password."
-                      />
-                      <button
-                        type="button"
-                        onClick={() => setShowPassword(!showPassword)}
-                        className="absolute right-1 top-1/2 -translate-y-1/2 w-11 h-11 flex items-center justify-center text-gray-400 hover:text-white active:scale-90 active:text-white transition-all cursor-pointer select-none rounded-lg focus:outline-none mt-1"
-                        tabIndex={-1}
-                        aria-label="Toggle password visibility"
-                      >
-                        {showPassword ? <EyeOff size={18} /> : <Eye size={18} />}
-                      </button>
+                    <div className="space-y-1 pt-2">
+                      <div className="relative group/pass">
+                        <Lock className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-400 group-focus-within/pass:text-primary group-focus-within/pass:scale-105 transition-all duration-200 pointer-events-none" size={18} />
+                        <input
+                          type={showPassword ? 'text' : 'password'}
+                          placeholder={t('auth.password') || 'Password'}
+                          value={password}
+                          autoComplete="current-password"
+                          onChange={(e) => {
+                            setPassword(e.target.value);
+                            if (passwordError) setPasswordError('');
+                          }}
+                          className={`w-full bg-white/[0.04] hover:bg-white/[0.07] border rounded-xl py-3.5 pl-12 pr-11 text-white placeholder:text-gray-500 focus:outline-none focus:bg-white/[0.06] transition-all duration-200 text-base shadow-inner ${
+                            passwordError
+                              ? 'border-rose-500/50 focus:border-rose-500 focus:ring-4 focus:ring-rose-500/15'
+                              : 'border-white/10 hover:border-white/20 focus:border-primary/70 focus:ring-4 focus:ring-primary/15'
+                          }`}
+                        />
+                        <button
+                          type="button"
+                          onClick={() => setShowPassword(!showPassword)}
+                          className="absolute right-1 top-1/2 -translate-y-1/2 w-11 h-11 flex items-center justify-center text-gray-400 hover:text-white active:scale-90 active:text-white transition-all cursor-pointer select-none rounded-lg focus:outline-none"
+                          tabIndex={-1}
+                          aria-label="Toggle password visibility"
+                        >
+                          {showPassword ? <EyeOff size={18} /> : <Eye size={18} />}
+                        </button>
+                      </div>
+                      {passwordError && (
+                        <p className="text-xs text-rose-400/90 pl-2 pt-0.5 flex items-center gap-1.5 animate-in fade-in slide-in-from-top-1 duration-150">
+                          <span className="w-1 h-1 rounded-full bg-rose-400 shrink-0" />
+                          <span>{passwordError}</span>
+                        </p>
+                      )}
                     </div>
                   </motion.div>
                 )}
@@ -594,7 +595,7 @@ export default function AuthForm() {
                 {t('auth.restricted_access_msg')}
               </p>
 
-              {settings.show_support_login && (
+              {(settings.show_support_login !== false) && (
                 (settings.support_whatsapp_login_enabled && settings.support_whatsapp) || 
                 (settings.support_email_login_enabled && settings.support_email)
               ) && (

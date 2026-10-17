@@ -139,8 +139,16 @@ export async function generateContentWithRetry(
           err?.code === 503 ||
           err?.error?.code === 503;
 
-        if (isHighDemand) {
-          console.info(`${logPrefix} Model ${modelName} busy/timed out; falling over immediately to next model.`);
+        const isQuotaOrRateLimit =
+          rawErrStr.toLowerCase().includes('resource_exhausted') ||
+          rawErrStr.toLowerCase().includes('quota') ||
+          rawErrStr.toLowerCase().includes('rate limit') ||
+          err?.status === 429 ||
+          err?.code === 429 ||
+          err?.error?.code === 429;
+
+        if (isHighDemand || isQuotaOrRateLimit) {
+          console.info(`${logPrefix} Model ${modelName} ${isQuotaOrRateLimit ? 'rate limited/quota reached' : 'busy/timed out'}; falling over immediately.`);
           break;
         }
 

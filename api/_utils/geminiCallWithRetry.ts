@@ -56,13 +56,13 @@ export async function generateContentWithRetry(
 ): Promise<{ text: string; modelUsed: string; response: GenerateContentResponse }> {
   const {
     ai,
-    candidateModels = ['gemini-3.1-flash-lite', 'gemini-flash-latest', 'gemini-3.8-flash'],
+    candidateModels = ['gemini-3.1-flash-lite', 'gemini-3.8-flash', 'gemini-flash-latest'],
     contents,
     config,
     maxAttemptsPerModel = 1,
-    baseDelayMs = 300,
-    perCallTimeoutMs = 7500,
-    totalBudgetMs = 9200,
+    baseDelayMs = 200,
+    perCallTimeoutMs = 6000,
+    totalBudgetMs = 8400,
     logPrefix = '[Gemini Call]'
   } = options;
 
@@ -132,8 +132,17 @@ export async function generateContentWithRetry(
           err?.code === 503 ||
           err?.error?.code === 503;
 
-        // On high demand or timeout, immediately fail over to the next candidate model
-        if (isHighDemand) {
+        const isQuotaOrRateLimit =
+          rawErrStr.toLowerCase().includes('resource_exhausted') ||
+          rawErrStr.toLowerCase().includes('quota') ||
+          rawErrStr.toLowerCase().includes('rate limit') ||
+          err?.status === 429 ||
+          err?.code === 429 ||
+          err?.error?.code === 429;
+
+        // On high demand, quota, or timeout, immediately fail over to the next candidate model
+        if (isHighDemand || isQuotaOrRateLimit) {
+          console.info(`${logPrefix} Model ${modelName} ${isQuotaOrRateLimit ? 'rate limited/quota reached' : 'busy/timed out'}; falling over immediately.`);
           break;
         }
 

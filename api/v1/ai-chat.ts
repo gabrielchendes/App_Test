@@ -252,7 +252,16 @@ async function generateContentWithRetry(
           err?.code === 503 ||
           err?.error?.code === 503;
 
-        if (isHighDemand) {
+        const isQuotaOrRateLimit =
+          rawErrStr.toLowerCase().includes('resource_exhausted') ||
+          rawErrStr.toLowerCase().includes('quota') ||
+          rawErrStr.toLowerCase().includes('rate limit') ||
+          err?.status === 429 ||
+          err?.code === 429 ||
+          err?.error?.code === 429;
+
+        if (isHighDemand || isQuotaOrRateLimit) {
+          console.info(`${logPrefix} Model ${modelName} ${isQuotaOrRateLimit ? 'rate limited/quota reached' : 'busy/timed out'}; falling over immediately.`);
           break;
         }
 
@@ -462,8 +471,8 @@ ${userContext?.userName ? `User's Name: ${userContext.userName}` : ''}`;
     // Highly reliable, fast models with validated Google GenAI SDK support
     const candidateModels = [
       'gemini-3.1-flash-lite',
-      'gemini-flash-latest',
-      'gemini-3.8-flash'
+      'gemini-3.8-flash',
+      'gemini-flash-latest'
     ];
 
     const result = await generateContentWithRetry({
@@ -476,9 +485,9 @@ ${userContext?.userName ? `User's Name: ${userContext.userName}` : ''}`;
         maxOutputTokens: 1600, // Ample room for rich answers
       },
       maxAttemptsPerModel: 1,
-      baseDelayMs: 250,
-      perCallTimeoutMs: 7500, // Ample time for Gemini Flash Lite (takes ~2-5s) to produce rich guidance
-      totalBudgetMs: 9200, // Strictly within the 10s Vercel Free limit (with 800ms buffer)
+      baseDelayMs: 200,
+      perCallTimeoutMs: 6000, // Fast response per model call
+      totalBudgetMs: 8400, // Strictly within the 10s Vercel Free limit (with buffer to return JSON)
       logPrefix: '[Ask Victoria Chat]'
     });
 
@@ -527,8 +536,15 @@ ${userContext?.userName ? `User's Name: ${userContext.userName}` : ''}`;
       }
     } catch (_) {}
 
+    const isQuotaLimit = 
+      cleanError.toLowerCase().includes('quota') || 
+      cleanError.toLowerCase().includes('rate limit') || 
+      cleanError.toLowerCase().includes('resource_exhausted');
+
     // Graceful response with success: false so student daily quota is NEVER consumed on failures
-    const friendlyFallback = `I'm so sorry, I cannot respond at this exact moment because I am currently in consultation assisting other students. Don't worry, your message is saved and your message limit was not consumed! Please ask again in just a moment and I will give you my full attention. 💕`;
+    const friendlyFallback = isQuotaLimit 
+      ? `I am receiving a surge of questions right now and need just a brief moment to reflect. Your message is safely saved and your limit was not deducted! Please ask again in just a moment. 💕`
+      : `I'm so sorry, I cannot respond at this exact moment because I am currently in consultation assisting other students. Don't worry, your message is saved and your message limit was not consumed! Please ask again in just a moment and I will give you my full attention. 💕`;
 
     return res.status(200).json({
       success: false,
@@ -536,6 +552,7 @@ ${userContext?.userName ? `User's Name: ${userContext.userName}` : ''}`;
       message: friendlyFallback,
       isHighDemand: true,
       retryable: true,
+      retryAfterMs: isQuotaLimit ? 2500 : 1500,
       limitDeducted: false,
       details: cleanError,
     });

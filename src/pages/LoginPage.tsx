@@ -1,8 +1,7 @@
 /**
- * 🔒 LOCKED COMPONENT: DO NOT MODIFY OR REVERT THIS LOGIN SCREEN.
- * This file contains the exact restored design required by the user:
- * Atmospheric velvet aurora glows (#07080c, primary/12, amber-500/10, radial grid),
- * AuthForm integration, and legal disclaimer footer.
+ * Login Screen: Dynamically customized via Admin Panel.
+ * Featuring atmospheric velvet aurora glows, AuthForm integration,
+ * dynamic branding, and fully customizable texts and support links.
  */
 import AuthForm from '../components/AuthForm';
 import { useSettings } from '../contexts/SettingsContext';
@@ -34,7 +33,7 @@ export default function LoginPage() {
           <p className="text-zinc-500/80 hover:text-zinc-400 text-xs max-w-sm text-center leading-relaxed transition-colors">
             {settings.custom_texts?.['auth.disclaimer'] && !settings.custom_texts['auth.disclaimer'].includes('Ao entrar')
               ? settings.custom_texts['auth.disclaimer']
-              : ``}
+              : `By signing in, you agree to our Terms of Use and Privacy Policy. ${settings.login_platform_name || settings.custom_texts?.['auth.platform_name'] || settings.app_name} © ${new Date().getFullYear()}`}
           </p>
         </div>
       </div>

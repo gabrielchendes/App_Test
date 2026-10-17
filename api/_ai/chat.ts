@@ -210,8 +210,8 @@ ${userContext?.userName ? `User's Name: ${userContext.userName}` : ''}`;
 
     const candidateModels = [
       'gemini-3.1-flash-lite',
-      'gemini-flash-latest',
-      'gemini-3.8-flash'
+      'gemini-3.8-flash',
+      'gemini-flash-latest'
     ];
 
     const result = await generateContentWithRetry({
@@ -224,9 +224,9 @@ ${userContext?.userName ? `User's Name: ${userContext.userName}` : ''}`;
         maxOutputTokens: 1600,
       },
       maxAttemptsPerModel: 1,
-      baseDelayMs: 250,
-      perCallTimeoutMs: 7500,
-      totalBudgetMs: 9200,
+      baseDelayMs: 200,
+      perCallTimeoutMs: 6000,
+      totalBudgetMs: 8400,
       logPrefix: '[Ask Victoria Chat]'
     });
 
@@ -288,7 +288,14 @@ ${userContext?.userName ? `User's Name: ${userContext.userName}` : ''}`;
       }
     } catch (_) {}
 
-    const friendlyFallback = `I'm so sorry, I cannot respond at this exact moment because I am currently in consultation assisting other students. Don't worry, your message is saved and your message limit was not consumed! Please ask again in just a moment and I will give you my full attention. 💕`;
+    const isQuotaLimit = 
+      cleanError.toLowerCase().includes('quota') || 
+      cleanError.toLowerCase().includes('rate limit') || 
+      cleanError.toLowerCase().includes('resource_exhausted');
+
+    const friendlyFallback = isQuotaLimit 
+      ? `I am receiving a surge of questions right now and need just a brief moment to reflect. Your message is safely saved and your limit was not deducted! Please ask again in just a moment. 💕`
+      : `I'm so sorry, I cannot respond at this exact moment because I am currently in consultation assisting other students. Don't worry, your message is saved and your message limit was not consumed! Please ask again in just a moment and I will give you my full attention. 💕`;
 
     return res.status(200).json({
       success: false,
@@ -296,6 +303,7 @@ ${userContext?.userName ? `User's Name: ${userContext.userName}` : ''}`;
       message: friendlyFallback,
       isHighDemand: true,
       retryable: true,
+      retryAfterMs: isQuotaLimit ? 2500 : 1500,
       limitDeducted: false,
       details: cleanError
     });

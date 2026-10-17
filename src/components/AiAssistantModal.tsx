@@ -532,7 +532,7 @@ export default function AiAssistantModal({ userId, userEmail, userName, userAvat
       content: m.content
     }));
 
-    const MAX_CLIENT_ATTEMPTS = 3;
+    const MAX_CLIENT_ATTEMPTS = 5;
     let finalSuccessReply: string | null = null;
     let finalErrorMessage: string = errorMessage;
 
@@ -546,14 +546,18 @@ export default function AiAssistantModal({ userId, userEmail, userName, userAvat
         if (attempt === 1) {
           setStatusText(`${expertName} is reading your message and writing...`);
         } else if (attempt === 2) {
-          setStatusText(`${expertName} is preparing detailed guidance for you...`);
+          setStatusText(`${expertName} is connecting and consulting...`);
         } else if (attempt === 3) {
+          setStatusText(`${expertName} is preparing detailed guidance for you...`);
+        } else if (attempt === 4) {
+          setStatusText(`${expertName} is gathering relationship insights for you...`);
+        } else {
           setStatusText(`${expertName} is finalizing your personal advice...`);
         }
 
         const controller = new AbortController();
         activeFetchAbortRef.current = controller;
-        const timeoutId = setTimeout(() => controller.abort(), 16000);
+        const timeoutId = setTimeout(() => controller.abort(), 12000);
 
         let res: Response;
         try {
@@ -607,7 +611,6 @@ export default function AiAssistantModal({ userId, userEmail, userName, userAvat
           res.ok && 
           data.success === true && 
           !data.isHighDemand && 
-          !data.retryable && 
           !data.isError && 
           typeof data.reply === 'string' && 
           data.reply.trim().length > 0;
@@ -617,23 +620,30 @@ export default function AiAssistantModal({ userId, userEmail, userName, userAvat
           break; // Succeeded! Exit retry loop
         }
 
-        const isRetryableStatus = res.status === 503 || res.status === 504 || res.status === 502 || res.status === 500 || res.status === 429;
-        const isExplicitRetryable = data.retryable === true || data.isHighDemand === true || data.success === false;
         const rawMsg = (typeof data.error === 'string' ? data.error : data.message) || responseText || '';
+        const isQuotaOrRateLimit = res.status === 429 || 
+          rawMsg.toLowerCase().includes('quota') || 
+          rawMsg.toLowerCase().includes('rate limit') || 
+          rawMsg.toLowerCase().includes('resource_exhausted') ||
+          (data.details && typeof data.details === 'string' && (data.details.toLowerCase().includes('quota') || data.details.toLowerCase().includes('rate limit')));
+
+        const isRetryableStatus = res.status === 503 || res.status === 504 || res.status === 502 || res.status === 500;
+        const isExplicitRetryable = data.retryable === true || data.isHighDemand === true;
         const isBusySignal = rawMsg.toLowerCase().includes('busy') || 
                              rawMsg.toLowerCase().includes('demand') || 
                              rawMsg.toLowerCase().includes('conversation') || 
                              rawMsg.toLowerCase().includes('consultation') || 
                              rawMsg.toLowerCase().includes('student') || 
                              rawMsg.toLowerCase().includes('timeout') || 
-                             rawMsg.toLowerCase().includes('timed out') || 
-                             rawMsg.toLowerCase().includes('rate limit');
+                             rawMsg.toLowerCase().includes('timed out');
 
-        if (isRetryableStatus || isExplicitRetryable || isBusySignal) {
+        if (isQuotaOrRateLimit || isRetryableStatus || isExplicitRetryable || isBusySignal) {
           finalErrorMessage = `${expertName} is currently helping other students. Please try again in a few moments.`;
           if (attempt < MAX_CLIENT_ATTEMPTS) {
-            const delayMs = 1200 * attempt + Math.floor(Math.random() * 400);
-            console.warn(`[Ask Victoria] Attempt ${attempt}/${MAX_CLIENT_ATTEMPTS} busy in consultation. Retrying in ${delayMs}ms...`);
+            const delayMs = isQuotaOrRateLimit 
+              ? (data.retryAfterMs || (1800 + attempt * 1000))
+              : (1200 * attempt + Math.floor(Math.random() * 300));
+            console.warn(`[Ask Victoria] Attempt ${attempt}/${MAX_CLIENT_ATTEMPTS} busy/quota wait (${delayMs}ms). Retrying...`);
             await new Promise(r => setTimeout(r, delayMs));
             if (typingAbortRef.current) {
               setLoading(false);
@@ -643,6 +653,14 @@ export default function AiAssistantModal({ userId, userEmail, userName, userAvat
           }
         } else {
           finalErrorMessage = `${expertName} is currently assisting other students. Please try asking again shortly.`;
+          if (attempt < MAX_CLIENT_ATTEMPTS) {
+            await new Promise(r => setTimeout(r, 1500));
+            if (typingAbortRef.current) {
+              setLoading(false);
+              return;
+            }
+            continue;
+          }
           break;
         }
       } catch (netErr: any) {
