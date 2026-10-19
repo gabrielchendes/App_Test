@@ -5463,18 +5463,6 @@ export default function AdminPanel({ user }: AdminPanelProps) {
                           />
                         </div>
 
-                        <div className="space-y-2">
-                          <label className="text-xs font-black text-gray-400 uppercase tracking-widest">Mensagem de Boas-Vindas ao Resetar Chat</label>
-                          <textarea
-                            rows={3}
-                            value={draftCustomTexts['ai_expert.reset_chat_welcome'] ?? settings.custom_texts?.['ai_expert.reset_chat_welcome'] ?? ''}
-                            onChange={(e) => setDraftCustomTexts({ ...draftCustomTexts, 'ai_expert.reset_chat_welcome': e.target.value })}
-                            className="w-full bg-black border border-white/10 rounded-2xl p-4 text-white text-sm focus:border-pink-500 outline-none"
-                            placeholder={`Chat reset! ❤️ I'm ${draftCustomTexts['ai_expert.name'] ?? settings.custom_texts?.['ai_expert.name'] ?? 'Victoria'}, how can I help you now?`}
-                          />
-                          <p className="text-[11px] text-gray-500">Mensagem exibida quando a usuária clica no botão de reiniciar a conversa no chat da IA.</p>
-                        </div>
-
                         {/* Quick Prompts Section with Toggle */}
                         <div className="space-y-3 pt-4 border-t border-white/10">
                           <div className="flex items-center justify-between">

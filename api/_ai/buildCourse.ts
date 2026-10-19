@@ -511,8 +511,16 @@ export async function handleBuildCompleteCourse(req: VercelRequest, res: VercelR
     }
 
     const ai = getAiClient();
-    // Use gemini-3.8-flash as primary text model, with fallbacks to other active models
-    const candidateModels = ['gemini-3.1-flash-lite', 'gemini-flash-latest', 'gemini-3.8-flash'];
+    // High-capacity models with independent quota pools
+    const candidateModels = [
+      'gemini-3-flash-preview',
+      'gemini-3.5-flash-lite',
+      'gemini-3.5-flash',
+      'gemini-3.6-flash',
+      'gemini-3.8-flash',
+      'gemini-3.1-flash-lite',
+      'gemini-flash-latest'
+    ];
 
     const targetPriceCents = Math.round(Number(priceTier) * 100) || 9700;
     const targetOldPriceCents = includeOldPrice ? Math.round(targetPriceCents * 2) : 0;

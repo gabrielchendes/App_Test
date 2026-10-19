@@ -111,58 +111,73 @@ export const ModernTopToast: React.FC<ModernTopToastProps> = ({
   icon,
   badge,
   action,
+  duration,
 }) => {
   const y = useMotionValue(0);
-  const opacity = useTransform(y, [-100, -50, 0, 30], [0, 0.6, 1, 0.95]);
-  const scale = useTransform(y, [-100, 0, 30], [0.94, 1, 1.01]);
+  const opacity = useTransform(y, [-50, -10, 0, 30], [0, 0.88, 1, 0.95]);
+  const scale = useTransform(y, [-50, 0, 30], [0.94, 1, 1.01]);
   const [isDismissing, setIsDismissing] = React.useState(false);
+  const isDismissingRef = React.useRef(false);
 
   const cfg = variantConfigs[variant] || variantConfigs.default;
 
-  const handleDismiss = React.useCallback(() => {
-    if (isDismissing) return;
+  // Continuous, elegant upward glide that finishes completely into unmount without freezing
+  const triggerDismiss = React.useCallback((customDuration = 0.32) => {
+    if (isDismissingRef.current) return;
+    isDismissingRef.current = true;
     setIsDismissing(true);
+
     try {
       if (typeof window !== 'undefined' && 'vibrate' in navigator) {
         navigator.vibrate([10]);
       }
     } catch {}
 
-    animateMotion(y, -140, {
-      type: 'spring',
-      stiffness: 420,
-      damping: 30,
-    });
-
-    setTimeout(() => {
-      try {
+    // Gracefully animate y upward past the viewport top while opacity fades seamlessly
+    animateMotion(y, -56, {
+      duration: customDuration,
+      ease: [0.22, 1, 0.36, 1], // Refined, smooth easing: finishes completely until gone
+      onComplete: () => {
         toast.dismiss(id);
-      } catch {}
-    }, 200);
-  }, [id, isDismissing, y]);
+      },
+    });
+  }, [id, y]);
 
-  // Touch tracking for intuitive upward swipe dismissal
-  const touchStartY = React.useRef<number | null>(null);
+  // Natural auto-dismiss aligned with duration: glides up smoothly and vanishes
+  React.useEffect(() => {
+    if (!duration || duration === Infinity) return;
+    const autoDismissDelay = Math.max(800, duration - 340);
+    const timer = setTimeout(() => {
+      triggerDismiss(0.34);
+    }, autoDismissDelay);
 
-  const onTouchStart = (e: React.TouchEvent) => {
-    touchStartY.current = e.touches[0].clientY;
+    return () => clearTimeout(timer);
+  }, [duration, triggerDismiss]);
+
+  // Touch & pointer tracking: pushing up slightly glides smoothly all the way to dismiss
+  const startYRef = React.useRef<number | null>(null);
+
+  const handleStart = (clientY: number) => {
+    if (isDismissingRef.current) return;
+    startYRef.current = clientY;
   };
 
-  const onTouchMove = (e: React.TouchEvent) => {
-    if (touchStartY.current === null || isDismissing) return;
-    const diff = e.touches[0].clientY - touchStartY.current;
+  const handleMove = (clientY: number) => {
+    if (startYRef.current === null || isDismissingRef.current) return;
+    const diff = clientY - startYRef.current;
     if (diff < 0) {
       y.set(diff);
-      if (diff < -15) {
-        touchStartY.current = null;
-        handleDismiss();
+      // Pushing up even slightly (-16px) initiates the fluid upward glide exit
+      if (diff < -16) {
+        startYRef.current = null;
+        triggerDismiss(0.28);
       }
     }
   };
 
-  const onTouchEnd = () => {
-    if (touchStartY.current === null || isDismissing) return;
-    touchStartY.current = null;
+  const handleEnd = () => {
+    if (startYRef.current === null || isDismissingRef.current) return;
+    startYRef.current = null;
     animateMotion(y, 0, {
       type: 'spring',
       stiffness: 450,
@@ -173,13 +188,16 @@ export const ModernTopToast: React.FC<ModernTopToastProps> = ({
   return (
     <motion.div
       style={{ y, opacity, scale }}
-      onTouchStart={onTouchStart}
-      onTouchMove={onTouchMove}
-      onTouchEnd={onTouchEnd}
+      onTouchStart={(e) => handleStart(e.touches[0].clientY)}
+      onTouchMove={(e) => handleMove(e.touches[0].clientY)}
+      onTouchEnd={handleEnd}
+      onPointerDown={(e) => handleStart(e.clientY)}
+      onPointerMove={(e) => handleMove(e.clientY)}
+      onPointerUp={handleEnd}
       initial={{ opacity: 0, y: -24, scale: 0.96 }}
       animate={
         isDismissing
-          ? { opacity: 0, y: -80, scale: 0.92, transition: { duration: 0.2 } }
+          ? undefined
           : { opacity: 1, y: 0, scale: 1, transition: { type: 'spring', damping: 26, stiffness: 380 } }
       }
       className="group relative w-full max-w-[88vw] sm:max-w-[360px] mx-auto select-none pointer-events-auto will-change-transform"
@@ -220,7 +238,7 @@ export const ModernTopToast: React.FC<ModernTopToastProps> = ({
                     e.preventDefault();
                     e.stopPropagation();
                     action.onClick();
-                    handleDismiss();
+                    triggerDismiss(0.24);
                   }}
                   className="px-2.5 py-1 bg-white/10 hover:bg-white/20 border border-white/15 text-white font-medium text-[10px] tracking-wide rounded-md transition-all active:scale-95 cursor-pointer"
                 >
@@ -236,7 +254,7 @@ export const ModernTopToast: React.FC<ModernTopToastProps> = ({
             onClick={(e) => {
               e.preventDefault();
               e.stopPropagation();
-              handleDismiss();
+              triggerDismiss(0.30);
             }}
             className="shrink-0 w-6 h-6 flex items-center justify-center text-zinc-400 hover:text-white rounded-full bg-white/5 hover:bg-white/15 border border-white/15 hover:border-white/35 active:scale-95 transition-all cursor-pointer"
             title="Close notice"

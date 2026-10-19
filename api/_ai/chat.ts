@@ -2,6 +2,15 @@ import { GoogleGenAI } from '@google/genai';
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { createClient } from '@supabase/supabase-js';
 import { generateContentWithRetry, isRetryableGeminiError } from '../_utils/geminiCallWithRetry';
+import {
+  formatMemoryForPrompt,
+  extractAndMergeMemory,
+  saveChatMessageToDb,
+  loadChatMessagesFromDb,
+  saveUserMemoryToDb,
+  loadUserMemoryFromDb,
+  UserMemoryProfile
+} from './memory';
 
 // Vercel Free (Hobby) tier maximum execution limit is 10 seconds
 export const maxDuration = 10;
@@ -40,6 +49,10 @@ const supabaseAdmin = createClient(supabaseUrl || 'https://placeholder.supabase.
   auth: { persistSession: false }
 });
 
+const supabasePublic = createClient(supabaseUrl || 'https://placeholder.supabase.co', supabaseAnonKey || 'placeholder-key', {
+  auth: { persistSession: false }
+});
+
 let aiInstance: GoogleGenAI | null = null;
 
 export function getGeminiApiKey(): string {
@@ -71,6 +84,38 @@ function getAiClient(): GoogleGenAI {
 
 export async function handleAiChat(req: VercelRequest, res: VercelResponse) {
   res.setHeader('Content-Type', 'application/json; charset=utf-8');
+
+  // Handle GET request: Fetch user's stored chat history and User Memory Profile
+  if (req.method === 'GET') {
+    try {
+      const candidateIds = [
+        req.query?.userId,
+        req.query?.userEmail,
+        req.query?.email,
+        req.query?.id
+      ].map(id => (id || '').toString().trim().toLowerCase()).filter(Boolean);
+
+      if (candidateIds.length === 0) {
+        return res.status(200).json({ success: true, messages: [], userMemory: null });
+      }
+
+      const [storedMessages, storedMemory] = await Promise.all([
+        loadChatMessagesFromDb(supabaseAdmin, candidateIds, supabasePublic),
+        loadUserMemoryFromDb(supabaseAdmin, candidateIds, supabasePublic)
+      ]);
+
+      return res.status(200).json({
+        success: true,
+        messages: storedMessages || [],
+        userMemory: storedMemory || null
+      });
+    } catch (getErr: any) {
+      console.warn('[AI Chat API GET Error]:', getErr?.message || getErr);
+      return res.status(200).json({ success: true, messages: [], userMemory: null });
+    }
+  }
+
+  // Handle POST request: Generate AI response, persist messages, update User Memory Profile
   try {
     let body = req.body;
     if (typeof body === 'string') {
@@ -85,8 +130,22 @@ export async function handleAiChat(req: VercelRequest, res: VercelResponse) {
       return res.status(400).json({ error: 'Message history is required.' });
     }
 
-    // Server-side VIP / Unlimited access check against Supabase
-    const userIdentifier = (userId || userContext?.userId || '').trim();
+    const candidateIds = [
+      userId,
+      userContext?.userId,
+      userContext?.email,
+      body?.email
+    ].map(id => (id || '').toString().trim().toLowerCase()).filter(Boolean);
+
+    const userIdentifier = candidateIds[0] || (userContext?.userName || 'student').trim().toLowerCase();
+
+    // 1. Immediately persist the incoming student message to Supabase
+    const lastUserMsg = [...messages].reverse().find(m => m.role === 'user');
+    if (lastUserMsg && candidateIds.length > 0) {
+      saveChatMessageToDb(supabaseAdmin, candidateIds, lastUserMsg, supabasePublic).catch(() => {});
+    }
+
+    // 2. Server-side VIP / Unlimited access check against Supabase
     let isUserUnlimited = false;
 
     if (userIdentifier) {
@@ -136,7 +195,7 @@ export async function handleAiChat(req: VercelRequest, res: VercelResponse) {
       }
     }
 
-    // Check message limit if user is not VIP
+    // 3. Check message limit if user is not VIP
     if (!isUserUnlimited) {
       try {
         const { data: settingsRow } = await supabaseAdmin
@@ -181,10 +240,22 @@ export async function handleAiChat(req: VercelRequest, res: VercelResponse) {
       }
     }
 
+    // 4. Load Student Fact Memory (User Memory Profile) from Supabase
+    let existingMemory: UserMemoryProfile | null = null;
+    if (candidateIds.length > 0) {
+      try {
+        existingMemory = await loadUserMemoryFromDb(supabaseAdmin, candidateIds, supabasePublic);
+      } catch (memErr) {
+        console.warn('[AI Chat API] Memory retrieval note:', memErr);
+      }
+    }
+
+    const memoryInstruction = formatMemoryForPrompt(existingMemory);
+
     const ai = getAiClient();
 
-    // Optimize conversation context by taking the last 12 messages to keep response fast and under Vercel execution limits
-    const trimmedMessages = messages.slice(-12);
+    // 5. Send only immediate last 10 messages (compact context for Vercel 10s budget & Gemini free tier quotas)
+    const trimmedMessages = messages.slice(-10);
 
     // Map message roles to Gemini expected format: user | model
     const contents = trimmedMessages.map((m: { role: string; content: string }) => ({
@@ -202,14 +273,19 @@ Core Consultation Guidelines:
 4. CRITICAL FORMATTING RULE: Do NOT use markdown bold stars (like **text**) or asterisks (*text*) in your output. Write in natural plain text without asterisks so responses feel completely natural and human.
 5. Provide thorough, empathetic, insightful, and practical advice. Adapt the depth and length of your guidance naturally to the user's situation: when users ask complex, emotional, or detailed questions, provide rich, elaborate, step-by-step guidance with actionable communication scripts and psychological perspective, without rushing or cutting thoughts short. When questions are simple or conversational, provide clear and direct guidance.
 6. Gently remind users that while you provide expert relationship guidance and communication strategies, you are a coach and not a substitute for clinical emergency therapy.
-${userContext?.userName ? `User's Name: ${userContext.userName}` : ''}`;
+${userContext?.userName ? `User's Name: ${userContext.userName}` : ''}${memoryInstruction}`;
 
     const systemInstruction = customSystemPrompt && customSystemPrompt.trim() !== ''
-      ? `Primary Language: Respond in clear, warm American English (unless the user writes in another language).\n\n${customSystemPrompt.trim()}\n\nIMPORTANT FORMATTING RULE: Do NOT use markdown bold stars (**text**) or asterisks in output. Write in natural plain text.\n\n${userContext?.userName ? `User's Name: ${userContext.userName}` : ''}`
+      ? `Primary Language: Respond in clear, warm American English (unless the user writes in another language).\n\n${customSystemPrompt.trim()}\n\nIMPORTANT FORMATTING RULE: Do NOT use markdown bold stars (**text**) or asterisks in output. Write in natural plain text.\n\n${userContext?.userName ? `User's Name: ${userContext.userName}` : ''}${memoryInstruction}`
       : defaultSystemInstruction;
 
+    // Prioritize the cheapest Flash-Lite model for maximum free conversation throughput
     const candidateModels = [
-      'gemini-3.1-flash-lite',
+      'gemini-3.5-flash-lite',  // Lowest token cost ($0.075 / 1M) & maximum volume of conversations
+      'gemini-3-flash-preview', // High-speed fallback
+      'gemini-3.1-flash-lite',  // Flash Lite fallback
+      'gemini-3.5-flash',
+      'gemini-3.6-flash',
       'gemini-3.8-flash',
       'gemini-flash-latest'
     ];
@@ -235,17 +311,45 @@ ${userContext?.userName ? `User's Name: ${userContext.userName}` : ''}`;
     const rawReply = responseText || `Hello! I'm ${name}. I am reflecting carefully on your situation. Please send your question again and I will gladly give you my full guidance and attention! 💕`;
     const reply = rawReply.replace(/\*\*/g, '');
 
-    // Record usage log only after successful AI response
-    if (responseText && userIdentifier && !isUserUnlimited) {
+    let updatedMemory: UserMemoryProfile | null = existingMemory;
+
+    // 6. On success: Persist assistant reply & update Student Fact Memory in Supabase
+    if (responseText && candidateIds.length > 0) {
+      // Save assistant reply
+      saveChatMessageToDb(supabaseAdmin, candidateIds, {
+        id: `ast_${Date.now()}`,
+        role: 'assistant',
+        content: reply,
+        timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+      }, supabasePublic).catch(() => {});
+
+      // Extract new facts & update User Memory Profile
       try {
-        await supabaseAdmin
-          .from('ai_message_logs')
-          .insert({
+        updatedMemory = extractAndMergeMemory(
+          existingMemory,
+          lastUserMsg?.content || '',
+          reply,
+          userContext?.userName
+        );
+        saveUserMemoryToDb(supabaseAdmin, candidateIds, updatedMemory, supabasePublic).catch(() => {});
+      } catch (memSaveErr) {
+        console.warn('[AI Chat API] Memory update note:', memSaveErr);
+      }
+
+      // Record quota usage count if not unlimited
+      if (!isUserUnlimited) {
+        try {
+          const logPayload = {
             user_id: userIdentifier,
             created_at: new Date().toISOString()
-          });
-      } catch (logErr) {
-        console.warn('[AI Chat API] Note: Failed to log message in ai_message_logs:', logErr);
+          };
+          const { error: logErr } = await supabaseAdmin.from('ai_message_logs').insert(logPayload);
+          if (logErr && (logErr.code === '401' || logErr.message?.includes('Unregistered API key'))) {
+            await supabasePublic.from('ai_message_logs').insert(logPayload);
+          }
+        } catch (logErr) {
+          console.warn('[AI Chat API] Note: Failed to log message in ai_message_logs:', logErr);
+        }
       }
     }
 
@@ -256,6 +360,7 @@ ${userContext?.userName ? `User's Name: ${userContext.userName}` : ''}`;
       reply,
       modelUsed: result.modelUsed,
       limitDeducted: true,
+      userMemory: updatedMemory || existingMemory || null
     });
   } catch (err: any) {
     if (res.headersSent) return;

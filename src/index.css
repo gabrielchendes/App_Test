@@ -258,11 +258,13 @@ body {
   overflow: visible !important;
 }
 
-/* Ensure Sonner's internal fade/slide on removed doesn't cut off or create a ghost box */
-[data-sonner-toast][data-removed="true"] {
+/* Ensure Sonner's internal fade on removed vanishes cleanly with the same elegant upward glide without freezing */
+[data-sonner-toast][data-removed="true"],
+[data-sonner-toast][data-dismissed="true"] {
   opacity: 0 !important;
   pointer-events: none !important;
-  transition: opacity 0.25s ease !important;
+  transform: translateY(-56px) scale(0.94) !important;
+  transition: opacity 0.32s cubic-bezier(0.22, 1, 0.36, 1), transform 0.32s cubic-bezier(0.22, 1, 0.36, 1) !important;
 }
 
 [data-sonner-toast]:not(:has(.group)) {

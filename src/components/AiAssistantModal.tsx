@@ -102,8 +102,6 @@ export default function AiAssistantModal({ userId, userEmail, userName, userAvat
     ? customWelcome
     : `Hello${userName ? `, ${userName}` : ''}! ❤️ I’m Victoria Hayes, your Relationship Expert.\n\nWhatever is happening between you and him, you don’t have to figure it out alone.\n\nTell me what’s going on — what he said, what he did, how things have changed, or what you’re hoping will happen.\n\nI’m here to help with whatever you need, and together, we’ll figure out what’s happening and what to do next. 💕`;
 
-  const resetChatWelcome = settings?.custom_texts?.['ai_expert.reset_chat_welcome'] || `Chat reset! ❤️ I'm ${expertName}, how can I help you now?`;
-
   // Admin-configurable response timing settings:
   // Checkbox: responder o mais rápido possível (instantâneo)
   const isFastResponseMode = (settings?.custom_texts?.['ai_expert.fast_response_mode'] ?? 'false') === 'true';
@@ -373,16 +371,122 @@ export default function AiAssistantModal({ userId, userEmail, userName, userAvat
     }
   };
 
-  const [messages, setMessages] = useState<Message[]>([
-    {
-      id: 'welcome',
-      role: 'assistant',
-      content: defaultWelcomeText,
-      timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-    }
-  ]);
+  // Clean user identifier for personal chat history and memory storage
+  const userIdentifier = (userId || userEmail || userName || 'guest').trim().toLowerCase();
+  const chatStorageKey = `ai_expert_messages_${userIdentifier}`;
 
-  // Sync welcome message if settings change and conversation hasn't started
+  const getCandidateStorageKeys = React.useCallback(() => {
+    return Array.from(new Set([
+      `ai_expert_messages_${userIdentifier}`,
+      userEmail ? `ai_expert_messages_${userEmail.trim().toLowerCase()}` : '',
+      userId ? `ai_expert_messages_${userId.trim().toLowerCase()}` : '',
+    ].filter(Boolean)));
+  }, [userIdentifier, userEmail, userId]);
+
+  // Instant local cache initialization so past conversation renders at 0ms
+  const [messages, setMessages] = useState<Message[]>(() => {
+    try {
+      const keys = [
+        `ai_expert_messages_${userIdentifier}`,
+        userEmail ? `ai_expert_messages_${userEmail.trim().toLowerCase()}` : '',
+        userId ? `ai_expert_messages_${userId.trim().toLowerCase()}` : '',
+      ].filter(Boolean);
+
+      for (const k of keys) {
+        const stored = localStorage.getItem(k);
+        if (stored) {
+          const parsed = JSON.parse(stored);
+          if (Array.isArray(parsed) && parsed.length > 0) {
+            return parsed;
+          }
+        }
+      }
+    } catch (_) {}
+
+    return [
+      {
+        id: 'welcome',
+        role: 'assistant',
+        content: defaultWelcomeText,
+        timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+      }
+    ];
+  });
+
+  // Re-check local storage when user logs in or switches identifier
+  useEffect(() => {
+    if (!userIdentifier || userIdentifier === 'guest') return;
+    try {
+      const keys = getCandidateStorageKeys();
+      for (const k of keys) {
+        const stored = localStorage.getItem(k);
+        if (stored) {
+          const parsed = JSON.parse(stored);
+          if (Array.isArray(parsed) && parsed.length > 0) {
+            setMessages(parsed);
+            return;
+          }
+        }
+      }
+    } catch (_) {}
+  }, [userIdentifier, getCandidateStorageKeys]);
+
+  // Fetch real chat history from Supabase database when modal opens
+  useEffect(() => {
+    let isMounted = true;
+
+    if (isOpen && userIdentifier && userIdentifier !== 'guest') {
+      const loadHistory = async () => {
+        try {
+          const queryParams = new URLSearchParams();
+          if (userId) queryParams.set('userId', userId.trim());
+          if (userEmail) queryParams.set('userEmail', userEmail.trim());
+
+          const res = await fetch(`/api/v1/ai-chat?${queryParams.toString()}`, {
+            method: 'GET',
+            headers: { 'Accept': 'application/json' }
+          });
+
+          if (res.ok) {
+            const data = await res.json();
+            if (data?.success && Array.isArray(data.messages) && data.messages.length > 0 && isMounted) {
+              // Ensure welcoming greeting is present at the beginning of the consultation
+              let fullHistory: Message[] = data.messages;
+              const hasWelcome = fullHistory.some(m => m.id === 'welcome' || (m.role === 'assistant' && m.content.includes(expertName)));
+              if (!hasWelcome) {
+                fullHistory = [
+                  {
+                    id: 'welcome',
+                    role: 'assistant',
+                    content: defaultWelcomeText,
+                    timestamp: fullHistory[0]?.timestamp || new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+                  },
+                  ...fullHistory
+                ];
+              }
+
+              setMessages(fullHistory);
+              try {
+                const keys = getCandidateStorageKeys();
+                const jsonStr = JSON.stringify(fullHistory);
+                keys.forEach(k => localStorage.setItem(k, jsonStr));
+              } catch (_) {}
+            }
+          }
+        } catch (err) {
+          console.warn('[AI Assistant Modal] Error fetching chat history from server:', err);
+        }
+      };
+
+      loadHistory();
+    }
+
+    return () => {
+      isMounted = false;
+    };
+  }, [isOpen, userIdentifier, userId, userEmail, chatStorageKey, defaultWelcomeText, expertName, getCandidateStorageKeys]);
+
+  // Sync welcome message if settings change and conversation has no user messages yet
   useEffect(() => {
     if (messages.length === 1 && messages[0].id === 'welcome') {
       setMessages([
@@ -512,10 +616,18 @@ export default function AiAssistantModal({ userId, userEmail, userName, userAvat
     // If retrying, check if user message was already rendered
     setMessages(prev => {
       const lastUserMsg = [...prev].reverse().find(m => m.role === 'user');
+      let updated: Message[];
       if (textToSend && lastUserMsg && lastUserMsg.content === query) {
-        return prev;
+        updated = prev;
+      } else {
+        updated = [...prev, userMsg];
       }
-      return [...prev, userMsg];
+      try {
+        const keys = getCandidateStorageKeys();
+        const jsonStr = JSON.stringify(updated);
+        keys.forEach(k => localStorage.setItem(k, jsonStr));
+      } catch (_) {}
+      return updated;
     });
 
     if (!textToSend) {
@@ -732,14 +844,22 @@ export default function AiAssistantModal({ userId, userEmail, userName, userAvat
       recordSentTimestamp();
       setSentTimestamps(getSentMessageTimestamps());
 
-      // Add completed message all at once (no typewriter streaming, no skip)
+      // Add completed message all at once and save to local cache
       const botMsg: Message = {
         id: (Date.now() + 1).toString(),
         role: 'assistant',
         content: cleanReply,
         timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
       };
-      setMessages(prev => [...prev, botMsg]);
+      setMessages(prev => {
+        const next = [...prev, botMsg];
+        try {
+          const keys = getCandidateStorageKeys();
+          const jsonStr = JSON.stringify(next);
+          keys.forEach(k => localStorage.setItem(k, jsonStr));
+        } catch (_) {}
+        return next;
+      });
       scrollToBottom();
     } else {
       setLoading(false);
@@ -761,17 +881,6 @@ export default function AiAssistantModal({ userId, userEmail, userName, userAvat
     setCopiedId(id);
     toast.success(copiedToast);
     setTimeout(() => setCopiedId(null), 2000);
-  };
-
-  const handleClear = () => {
-    setMessages([
-      {
-        id: Date.now().toString(),
-        role: 'assistant',
-        content: resetChatWelcome,
-        timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-      }
-    ]);
   };
 
   return (

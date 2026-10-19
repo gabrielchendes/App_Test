@@ -70,7 +70,8 @@ export function showModernToast(
         duration={duration}
       />
     ),
-    { duration, id: opts?.id }
+    // Extra safety buffer allows ModernTopToast to smoothly complete its upward glide before Sonner disposes it
+    { duration: duration + 1000, id: opts?.id }
   );
 }
 

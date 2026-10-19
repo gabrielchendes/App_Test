@@ -59,8 +59,8 @@ export const OfflineNotice: React.FC = () => {
             key="offline-banner"
             initial={{ opacity: 0, y: -16, scale: 0.96 }}
             animate={{ opacity: 1, y: 0, scale: 1 }}
-            exit={{ opacity: 0, y: -12, scale: 0.96 }}
-            transition={{ duration: 0.22, ease: 'easeOut' }}
+            exit={{ opacity: 0, y: -48, scale: 0.94 }}
+            transition={{ duration: 0.32, ease: [0.22, 1, 0.36, 1] }}
             style={{ boxSizing: 'border-box' }}
             className="pointer-events-auto flex items-center justify-between gap-2.5 px-3.5 py-2.5 rounded-2xl bg-[#0c0e16]/95 border-[3px] border-amber-400 text-amber-200 text-xs shadow-[0_0_30px_rgba(245,158,11,0.55),0_0_15px_rgba(251,191,36,0.75),0_0_60px_rgba(245,158,11,0.35)] backdrop-blur-xl w-full"
           >
@@ -92,8 +92,8 @@ export const OfflineNotice: React.FC = () => {
             key="online-banner"
             initial={{ opacity: 0, y: -16, scale: 0.96 }}
             animate={{ opacity: 1, y: 0, scale: 1 }}
-            exit={{ opacity: 0, y: -12, scale: 0.96 }}
-            transition={{ duration: 0.22, ease: 'easeOut' }}
+            exit={{ opacity: 0, y: -48, scale: 0.94 }}
+            transition={{ duration: 0.32, ease: [0.22, 1, 0.36, 1] }}
             className="pointer-events-auto flex items-center justify-between gap-2.5 px-3.5 py-2.5 rounded-2xl bg-[#0c0e16]/95 border-2 border-emerald-400/80 text-emerald-200 text-xs shadow-[0_0_24px_rgba(16,185,129,0.35),0_12px_28px_-6px_rgba(0,0,0,0.8)] backdrop-blur-xl ring-1 ring-emerald-300/40"
           >
             <div className="flex items-center gap-2 min-w-0 text-left">
