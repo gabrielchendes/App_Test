@@ -1,5 +1,6 @@
-// Standard PWA Service Worker
-const CACHE_NAME = 'pwa-app-cache-v2';
+// Service Worker PWA
+const CACHE_NAME = 'pwa-app-cache-v3';
+
 const PRECACHE_ASSETS = [
   '/',
   '/index.html',
@@ -11,8 +12,11 @@ const PRECACHE_ASSETS = [
   '/favicon.svg'
 ];
 
+const MEDIA_EXTENSIONS = /\.(mp4|webm|mov|m4v|mp3|m4a|ogg|wav)$/i;
+
 self.addEventListener('install', (event) => {
   self.skipWaiting();
+
   event.waitUntil(
     caches.open(CACHE_NAME).then((cache) => {
       return cache.addAll(PRECACHE_ASSETS).catch((err) => {
@@ -41,73 +45,92 @@ self.addEventListener('activate', (event) => {
 
 self.addEventListener('fetch', (event) => {
   const request = event.request;
-  // Ignore non-GET, chrome-extension, analytics, or Vite dev / module requests
+  const url = new URL(request.url);
+
+  // Só intercepta GET.
+  if (request.method !== 'GET') return;
+
+  // Não intercepta requisições Range (o navegador negocia direto com o servidor).
+  if (request.headers.has('range')) return;
+
+  // Não intercepta vídeo e áudio.
+  if (request.destination === 'video' || request.destination === 'audio') return;
+
+  // Não intercepta recursos de outros domínios (Cloudflare R2, Google Fonts, analytics etc.).
+  if (url.origin !== self.location.origin) return;
+
+  // Não intercepta arquivos de mídia do próprio domínio.
+  if (MEDIA_EXTENSIONS.test(url.pathname)) return;
+
+  // Ignora endpoints e recursos de desenvolvimento.
   if (
-    request.method !== 'GET' ||
-    !request.url.startsWith('http') ||
-    request.url.includes('/api/') ||
-    request.url.includes('/@vite') ||
-    request.url.includes('/@fs') ||
-    request.url.includes('/@id') ||
-    request.url.includes('/src/') ||
-    request.url.includes('node_modules') ||
-    request.url.includes('hot-update') ||
-    request.url.includes('google-analytics') ||
-    request.url.includes('googletagmanager')
+    url.pathname.startsWith('/api/') ||
+    url.pathname.startsWith('/@vite') ||
+    url.pathname.startsWith('/@fs') ||
+    url.pathname.startsWith('/@id') ||
+    url.pathname.startsWith('/src/') ||
+    url.pathname.includes('node_modules') ||
+    url.pathname.includes('hot-update')
   ) {
     return;
   }
 
-  // Network-first strategy with cache fallback for HTML pages
+  // Network-first para navegação e páginas HTML.
   if (request.mode === 'navigate') {
     event.respondWith(
       fetch(request)
         .then((response) => {
           if (response && response.status === 200) {
-            const responseClone = response.clone();
-            caches.open(CACHE_NAME).then((cache) => cache.put(request, responseClone));
+            const clone = response.clone();
+            caches.open(CACHE_NAME).then((cache) => cache.put(request, clone));
           }
           return response;
         })
-        .catch(() => caches.match(request).then((res) => res || caches.match('/index.html')))
+        .catch(async () => {
+          return (
+            (await caches.match(request)) ||
+            (await caches.match('/index.html')) ||
+            Response.error()
+          );
+        })
     );
     return;
   }
 
-  // Network-first strategy for manifest and dynamic icons so changes in AdminPanel are instantaneous
+  // Network-first para manifesto e ícones (mudanças no painel admin aparecem na hora).
   if (
-    request.url.includes('/manifest.json') ||
-    request.url.includes('/manifest.webmanifest') ||
-    request.url.includes('/icon-') ||
-    request.url.includes('/apple-touch-icon') ||
-    request.url.includes('/favicon.')
+    url.pathname.includes('/manifest.json') ||
+    url.pathname.includes('/manifest.webmanifest') ||
+    url.pathname.includes('/icon-') ||
+    url.pathname.includes('/apple-touch-icon') ||
+    url.pathname.includes('/favicon.')
   ) {
     event.respondWith(
       fetch(request)
         .then((response) => {
           if (response && response.status === 200) {
-            const responseClone = response.clone();
-            caches.open(CACHE_NAME).then((cache) => cache.put(request, responseClone));
+            const clone = response.clone();
+            caches.open(CACHE_NAME).then((cache) => cache.put(request, clone));
           }
           return response;
         })
-        .catch(() => caches.match(request))
+        .catch(async () => (await caches.match(request)) || Response.error())
     );
     return;
   }
 
-  // Stale-while-revalidate for static assets
+  // Stale-while-revalidate para os demais recursos do próprio domínio.
   event.respondWith(
     caches.match(request).then((cachedResponse) => {
       const fetchPromise = fetch(request)
-        .then((networkResponse) => {
-          if (networkResponse && networkResponse.status === 200) {
-            const responseClone = networkResponse.clone();
-            caches.open(CACHE_NAME).then((cache) => cache.put(request, responseClone));
+        .then((response) => {
+          if (response && response.status === 200) {
+            const clone = response.clone();
+            caches.open(CACHE_NAME).then((cache) => cache.put(request, clone));
           }
-          return networkResponse;
+          return response;
         })
-        .catch(() => cachedResponse);
+        .catch(() => cachedResponse || Response.error());
 
       return cachedResponse || fetchPromise;
     })
