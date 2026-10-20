@@ -463,7 +463,7 @@ async function generateWithModelFallback(
   candidateModels: string[],
   contents: any[],
   systemInstruction: string,
-  totalBudgetMs: number = 8400
+  totalBudgetMs: number = 8800
 ): Promise<{ text: string; modelUsed: string }> {
   const startTime = Date.now();
   let lastError: any = null;
@@ -477,8 +477,8 @@ async function generateWithModelFallback(
       break;
     }
 
-    // Allocate 5200ms to first model, remaining budget to fallbacks
-    const perCallTimeout = i === 0 ? Math.min(5200, remainingTime - 150) : Math.min(2800, remainingTime - 150);
+    // Allocate up to 6800ms to first model to absorb Cold Starts, remaining budget to fallbacks
+    const perCallTimeout = i === 0 ? Math.min(6800, remainingTime - 150) : Math.min(2600, remainingTime - 150);
 
     try {
       let timer: NodeJS.Timeout | null = null;
@@ -633,8 +633,8 @@ export async function handleAiChat(req: VercelRequest, res: VercelResponse) {
       });
     }
 
-    // 5. Compact context (last 8 messages for maximum generation speed and low token cost)
-    const trimmedMessages = messages.slice(-8);
+    // 5. Compact context (last 6 messages for ultra-fast generation and minimal latency)
+    const trimmedMessages = messages.slice(-6);
     const contents = trimmedMessages.map((m: { role: string; content: string }) => ({
       role: m.role === 'assistant' ? 'model' : 'user',
       parts: [{ text: m.content }],
@@ -669,7 +669,7 @@ ${userContext?.userName ? `User's Name: ${userContext.userName}` : ''}${memoryIn
       candidateModels,
       contents,
       systemInstruction,
-      8400
+      8800
     );
 
     const responseText = result.text;
