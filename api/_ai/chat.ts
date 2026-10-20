@@ -12,14 +12,6 @@ import {
   UserMemoryProfile
 } from './memory';
 
-// Vercel Free (Hobby) tier maximum execution limit is 10 seconds
-export const maxDuration = 10;
-
-const supabaseUrl = 
-  process.env.SUPABASE_URL || 
-  process.env.VITE_SUPABASE_URL || 
-  '';
-
 const isRevokedKey = (key?: string) => {
   if (!key) return true;
   const trimmed = key.trim();
@@ -30,6 +22,28 @@ const isRevokedKey = (key?: string) => {
     trimmed === 'placeholder-key'
   );
 };
+
+function cleanUrl(raw?: string): string {
+  if (!raw) return 'https://placeholder.supabase.co';
+  let clean = raw.replace(/^["']|["']$/g, '').trim();
+  if (!clean) return 'https://placeholder.supabase.co';
+  if (!clean.startsWith('http://') && !clean.startsWith('https://')) {
+    clean = `https://${clean}`;
+  }
+  try {
+    new URL(clean);
+    return clean;
+  } catch {
+    return 'https://placeholder.supabase.co';
+  }
+}
+
+function cleanKey(raw?: string): string {
+  if (!raw) return 'placeholder-key';
+  const clean = raw.replace(/^["']|["']$/g, '').trim();
+  if (isRevokedKey(clean)) return 'placeholder-key';
+  return clean;
+}
 
 const rawServiceRoleKey = 
   process.env.SUPABASE_SERVICE_ROLE_KEY || 
@@ -45,13 +59,44 @@ const supabaseAnonKey =
   process.env.VITE_SUPABASE_ANON_KEY || 
   '';
 
-const supabaseAdmin = createClient(supabaseUrl || 'https://placeholder.supabase.co', supabaseServiceRoleKey || supabaseAnonKey || 'placeholder-key', {
-  auth: { persistSession: false }
-});
+let supabaseAdminInstance: any = null;
+let supabasePublicInstance: any = null;
 
-const supabasePublic = createClient(supabaseUrl || 'https://placeholder.supabase.co', supabaseAnonKey || 'placeholder-key', {
-  auth: { persistSession: false }
-});
+export function getSupabaseAdmin() {
+  if (!supabaseAdminInstance) {
+    try {
+      const url = cleanUrl(process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL);
+      const key = cleanKey(supabaseServiceRoleKey || supabaseAnonKey);
+      supabaseAdminInstance = createClient(url, key, {
+        auth: { persistSession: false, autoRefreshToken: false, detectSessionInUrl: false }
+      });
+    } catch (e) {
+      console.warn('[AI Chat] Note initializing Supabase admin client:', e);
+      supabaseAdminInstance = createClient('https://placeholder.supabase.co', 'placeholder-key', {
+        auth: { persistSession: false }
+      });
+    }
+  }
+  return supabaseAdminInstance;
+}
+
+export function getSupabasePublic() {
+  if (!supabasePublicInstance) {
+    try {
+      const url = cleanUrl(process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL);
+      const key = cleanKey(supabaseAnonKey);
+      supabasePublicInstance = createClient(url, key, {
+        auth: { persistSession: false, autoRefreshToken: false, detectSessionInUrl: false }
+      });
+    } catch (e) {
+      console.warn('[AI Chat] Note initializing Supabase public client:', e);
+      supabasePublicInstance = createClient('https://placeholder.supabase.co', 'placeholder-key', {
+        auth: { persistSession: false }
+      });
+    }
+  }
+  return supabasePublicInstance;
+}
 
 let aiInstance: GoogleGenAI | null = null;
 
@@ -83,7 +128,17 @@ function getAiClient(): GoogleGenAI {
 }
 
 export async function handleAiChat(req: VercelRequest, res: VercelResponse) {
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Requested-With, Accept');
   res.setHeader('Content-Type', 'application/json; charset=utf-8');
+
+  if (req.method === 'OPTIONS') {
+    return res.status(200).end();
+  }
+
+  const supabaseAdmin = getSupabaseAdmin();
+  const supabasePublic = getSupabasePublic();
 
   // Handle GET request: Fetch user's stored chat history and User Memory Profile
   if (req.method === 'GET') {
@@ -100,8 +155,8 @@ export async function handleAiChat(req: VercelRequest, res: VercelResponse) {
       }
 
       const [storedMessages, storedMemory] = await Promise.all([
-        loadChatMessagesFromDb(supabaseAdmin, candidateIds, supabasePublic),
-        loadUserMemoryFromDb(supabaseAdmin, candidateIds, supabasePublic)
+        loadChatMessagesFromDb(supabaseAdmin, candidateIds, supabasePublic).catch(() => []),
+        loadUserMemoryFromDb(supabaseAdmin, candidateIds, supabasePublic).catch(() => null)
       ]);
 
       return res.status(200).json({
@@ -121,6 +176,12 @@ export async function handleAiChat(req: VercelRequest, res: VercelResponse) {
     if (typeof body === 'string') {
       try {
         body = JSON.parse(body);
+      } catch {
+        body = {};
+      }
+    } else if (Buffer.isBuffer(body)) {
+      try {
+        body = JSON.parse(body.toString('utf8'));
       } catch {
         body = {};
       }

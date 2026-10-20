@@ -5365,18 +5365,18 @@ export default function AdminPanel({ user }: AdminPanelProps) {
                         <div className="flex flex-col md:flex-row items-center gap-4">
                           <div className="relative w-20 h-20 rounded-2xl overflow-hidden bg-black border-2 border-pink-500/40 shrink-0 shadow-lg">
                             <img
-                              src={draftCustomTexts['ai_expert.avatar_url']?.trim() || settings.custom_texts?.['ai_expert.avatar_url']?.trim() || 'https://fhnmpltilhongdofnzbj.supabase.co/storage/v1/object/public/contents/Victoria.png'}
+                              src={draftCustomTexts['ai_expert.avatar_url']?.trim() || settings.custom_texts?.['ai_expert.avatar_url']?.trim() || 'https://fhnmpltilhongdofnzbj.supabase.co/storage/v1/object/public/contents/Victoria.webp'}
                               alt="Preview da Expert"
                               className="w-full h-full object-cover"
                               onError={(e) => {
-                                (e.target as HTMLImageElement).src = 'https://fhnmpltilhongdofnzbj.supabase.co/storage/v1/object/public/contents/Victoria.png';
+                                (e.target as HTMLImageElement).src = 'https://fhnmpltilhongdofnzbj.supabase.co/storage/v1/object/public/contents/Victoria.webp';
                               }}
                             />
                           </div>
                           <div className="flex-1 w-full space-y-1">
                             <input
                               type="text"
-                              value={draftCustomTexts['ai_expert.avatar_url'] ?? settings.custom_texts?.['ai_expert.avatar_url'] ?? 'https://fhnmpltilhongdofnzbj.supabase.co/storage/v1/object/public/contents/Victoria.png'}
+                              value={draftCustomTexts['ai_expert.avatar_url'] ?? settings.custom_texts?.['ai_expert.avatar_url'] ?? 'https://fhnmpltilhongdofnzbj.supabase.co/storage/v1/object/public/contents/Victoria.webp'}
                               onChange={(e) => setDraftCustomTexts({ ...draftCustomTexts, 'ai_expert.avatar_url': e.target.value })}
                               className="w-full bg-black border border-white/10 rounded-2xl px-4 py-3.5 text-white text-sm focus:border-pink-500 outline-none"
                               placeholder="https://sua-imagem.com/foto-expert.png"

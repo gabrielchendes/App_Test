@@ -27,7 +27,7 @@ interface AiAssistantModalProps {
   hasUnlimitedAi?: boolean;
 }
 
-const DEFAULT_AVATAR = 'https://fhnmpltilhongdofnzbj.supabase.co/storage/v1/object/public/contents/Victoria.png';
+const DEFAULT_AVATAR = 'https://fhnmpltilhongdofnzbj.supabase.co/storage/v1/object/public/contents/Victoria.webp';
 
 const DEFAULT_QUICK_PROMPTS = [
   'How to improve communication with my partner?',
@@ -442,10 +442,25 @@ export default function AiAssistantModal({ userId, userEmail, userName, userAvat
           if (userId) queryParams.set('userId', userId.trim());
           if (userEmail) queryParams.set('userEmail', userEmail.trim());
 
-          const res = await fetch(`/api/v1/ai-chat?${queryParams.toString()}`, {
-            method: 'GET',
-            headers: { 'Accept': 'application/json' }
-          });
+          let res: Response;
+          const queryStr = queryParams.toString();
+          try {
+            res = await fetch(`/api/v1/ai-chat?${queryStr}`, {
+              method: 'GET',
+              headers: { 'Accept': 'application/json' }
+            });
+            if (!res.ok) {
+              res = await fetch(`/api/v1/ai?action=ai-chat&${queryStr}`, {
+                method: 'GET',
+                headers: { 'Accept': 'application/json' }
+              });
+            }
+          } catch {
+            res = await fetch(`/api/v1/ai?action=ai-chat&${queryStr}`, {
+              method: 'GET',
+              headers: { 'Accept': 'application/json' }
+            });
+          }
 
           if (res.ok) {
             const data = await res.json();
@@ -671,6 +686,17 @@ export default function AiAssistantModal({ userId, userEmail, userName, userAvat
         activeFetchAbortRef.current = controller;
         const timeoutId = setTimeout(() => controller.abort(), 12000);
 
+        const requestPayload = JSON.stringify({
+          action: 'ai-chat',
+          messages: historyForApi,
+          userContext: { userName, userId, email: userEmail },
+          customSystemPrompt: systemPromptContext || undefined,
+          expertName: expertName || undefined,
+          userId: userId || undefined,
+          messagesSentCount,
+          clientAttempt: attempt,
+        });
+
         let res: Response;
         try {
           res = await fetch('/api/v1/ai-chat', {
@@ -680,17 +706,44 @@ export default function AiAssistantModal({ userId, userEmail, userName, userAvat
               'Accept': 'application/json',
             },
             signal: controller.signal,
-            body: JSON.stringify({
-              action: 'ai-chat',
-              messages: historyForApi,
-              userContext: { userName, userId, email: userEmail },
-              customSystemPrompt: systemPromptContext || undefined,
-              expertName: expertName || undefined,
-              userId: userId || undefined,
-              messagesSentCount,
-              clientAttempt: attempt,
-            })
+            body: requestPayload
           });
+
+          // If the primary endpoint returned 500/502/503/504, try the router fallback
+          if (!res.ok && res.status >= 500) {
+            try {
+              const fallbackRes = await fetch('/api/v1/ai?action=ai-chat', {
+                method: 'POST',
+                headers: {
+                  'Content-Type': 'application/json',
+                  'Accept': 'application/json',
+                },
+                signal: controller.signal,
+                body: requestPayload
+              });
+              if (fallbackRes.ok || fallbackRes.status < 500) {
+                res = fallbackRes;
+              }
+            } catch (_) {}
+          }
+        } catch (fetchErr: any) {
+          if (controller.signal.aborted && typingAbortRef.current) {
+            throw fetchErr;
+          }
+          // Try router fallback on network exception
+          try {
+            res = await fetch('/api/v1/ai?action=ai-chat', {
+              method: 'POST',
+              headers: {
+                'Content-Type': 'application/json',
+                'Accept': 'application/json',
+              },
+              signal: controller.signal,
+              body: requestPayload
+            });
+          } catch {
+            throw fetchErr;
+          }
         } finally {
           clearTimeout(timeoutId);
           activeFetchAbortRef.current = null;

@@ -274,7 +274,7 @@ export default function Dashboard({ user }: DashboardProps) {
       import('../components/Community');
       import('../components/AiAssistantModal');
       // Pre-warm Ask Victoria avatar asset
-      const victoriaAvatar = 'https://fhnmpltilhongdofnzbj.supabase.co/storage/v1/object/public/contents/Victoria.png';
+      const victoriaAvatar = 'https://fhnmpltilhongdofnzbj.supabase.co/storage/v1/object/public/contents/Victoria.webp';
       const img = new Image();
       img.src = victoriaAvatar;
     }, 200);

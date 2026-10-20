@@ -1,10 +1,25 @@
 import { createClient } from '@supabase/supabase-js';
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 
-const supabaseUrl = 
+const cleanUrl = (raw?: string) => {
+  if (!raw) return 'https://placeholder.supabase.co';
+  let clean = raw.replace(/^["']|["']$/g, '').trim();
+  if (!clean) return 'https://placeholder.supabase.co';
+  if (!clean.startsWith('http://') && !clean.startsWith('https://')) {
+    clean = `https://${clean}`;
+  }
+  try {
+    new URL(clean);
+    return clean;
+  } catch {
+    return 'https://placeholder.supabase.co';
+  }
+};
+
+const supabaseUrl = cleanUrl(
   process.env.SUPABASE_URL || 
-  process.env.VITE_SUPABASE_URL || 
-  '';
+  process.env.VITE_SUPABASE_URL
+);
 
 const isRevokedKey = (key?: string) => {
   if (!key) return true;
