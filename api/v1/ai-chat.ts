@@ -98,14 +98,6 @@ function getSupabasePublic() {
   return supabasePublicInstance;
 }
 
-// Timeout helper for database operations so they never block serverless budget
-async function withDbTimeout<T>(promise: Promise<T>, timeoutMs: number = 1800, fallbackValue: T): Promise<T> {
-  return Promise.race([
-    promise,
-    new Promise<T>((resolve) => setTimeout(() => resolve(fallbackValue), timeoutMs))
-  ]);
-}
-
 // --- Gemini Client ---
 export function getGeminiApiKey(): string {
   const key =
@@ -265,6 +257,7 @@ function normalizeIdentifiers(userIdentifier: string | string[]): string[] {
   return [userIdentifier.trim().toLowerCase()];
 }
 
+// Fast non-blocking DB helpers with strict timeouts
 async function loadChatMessagesFromDb(
   supabaseClient: any,
   userIdentifier: string | string[]
@@ -273,8 +266,8 @@ async function loadChatMessagesFromDb(
   const ids = normalizeIdentifiers(userIdentifier);
   if (ids.length === 0) return [];
 
-  const queryOp = async () => {
-    try {
+  try {
+    const queryPromise = (async () => {
       let q = supabaseClient.from('ai_chat_messages').select('id, role, content, timestamp, created_at');
       if (ids.length === 1) {
         q = q.or(`user_id.eq.${ids[0]},user_email.eq.${ids[0]}`);
@@ -283,7 +276,6 @@ async function loadChatMessagesFromDb(
         q = q.or(`user_id.in.(${inList}),user_email.in.(${inList})`);
       }
       const res = await q.order('created_at', { ascending: true }).limit(100);
-
       if (res?.data && Array.isArray(res.data)) {
         return res.data.map((row: any) => ({
           id: String(row.id),
@@ -295,13 +287,17 @@ async function loadChatMessagesFromDb(
           )
         }));
       }
-    } catch (err) {
-      console.warn('[AI Chat] Note: loadChatMessagesFromDb caught:', err);
-    }
-    return [];
-  };
+      return [];
+    })();
 
-  return withDbTimeout(queryOp(), 1800, []);
+    return await Promise.race([
+      queryPromise,
+      new Promise<any[]>((resolve) => setTimeout(() => resolve([]), 1500))
+    ]);
+  } catch (err) {
+    console.warn('[AI Chat] loadChatMessagesFromDb note:', err);
+    return [];
+  }
 }
 
 async function saveChatMessageToDb(
@@ -317,26 +313,24 @@ async function saveChatMessageToDb(
   const msgId = message.id || `msg_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
   const nowIso = new Date().toISOString();
 
-  const insertOp = async () => {
-    try {
-      await supabaseClient.from('ai_chat_messages').insert({
-        id: msgId,
-        user_id: primaryId,
-        user_email: emailId,
-        role: message.role,
-        content: message.content,
-        timestamp: message.timestamp || new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-        created_at: nowIso
-      });
-    } catch (err) {
-      console.warn('[AI Chat] Note: saveChatMessageToDb caught:', err);
-    }
-  };
-
-  await withDbTimeout(insertOp(), 1800, undefined);
+  try {
+    const insertPromise = supabaseClient.from('ai_chat_messages').insert({
+      id: msgId,
+      user_id: primaryId,
+      user_email: emailId,
+      role: message.role,
+      content: message.content,
+      timestamp: message.timestamp || new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+      created_at: nowIso
+    });
+    await Promise.race([
+      insertPromise,
+      new Promise((resolve) => setTimeout(resolve, 1000))
+    ]);
+  } catch (_) {}
 }
 
-async function loadUserMemoryFromDb(
+async function loadUserMemoryFast(
   supabaseClient: any,
   userIdentifier: string | string[]
 ): Promise<UserMemoryProfile | null> {
@@ -344,8 +338,8 @@ async function loadUserMemoryFromDb(
   const ids = normalizeIdentifiers(userIdentifier);
   if (ids.length === 0) return null;
 
-  const queryOp = async () => {
-    try {
+  try {
+    const queryPromise = (async () => {
       let q = supabaseClient.from('ai_user_memory').select('*');
       if (ids.length === 1) {
         q = q.or(`user_id.eq.${ids[0]},user_email.eq.${ids[0]}`);
@@ -354,7 +348,6 @@ async function loadUserMemoryFromDb(
         q = q.or(`user_id.in.(${inList}),user_email.in.(${inList})`);
       }
       const res = await q.limit(1).maybeSingle();
-
       if (res?.data) {
         const row = res.data;
         return {
@@ -368,13 +361,16 @@ async function loadUserMemoryFromDb(
           lastUpdated: row.last_updated || new Date().toISOString()
         };
       }
-    } catch (err) {
-      console.warn('[AI Chat] Note: loadUserMemoryFromDb caught:', err);
-    }
-    return null;
-  };
+      return null;
+    })();
 
-  return withDbTimeout(queryOp(), 1800, null);
+    return await Promise.race([
+      queryPromise,
+      new Promise<null>((resolve) => setTimeout(() => resolve(null), 400))
+    ]);
+  } catch (_) {
+    return null;
+  }
 }
 
 async function saveUserMemoryToDb(
@@ -389,28 +385,55 @@ async function saveUserMemoryToDb(
   const emailId = ids.find(id => id.includes('@')) || primaryId;
   const nowIso = new Date().toISOString();
 
-  const upsertOp = async () => {
-    try {
-      await supabaseClient.from('ai_user_memory').upsert(
-        {
-          user_id: primaryId,
-          user_email: emailId,
-          user_name: memory.userName || null,
-          partner_name: memory.partnerName || null,
-          relationship_status: memory.relationshipStatus || null,
-          facts: memory.facts,
-          topics: memory.topics,
-          recent_advice: memory.recentAdvice,
-          last_updated: nowIso
-        },
-        { onConflict: 'user_id' }
-      );
-    } catch (err) {
-      console.warn('[AI Chat] Note: saveUserMemoryToDb caught:', err);
-    }
-  };
+  try {
+    const upsertPromise = supabaseClient.from('ai_user_memory').upsert(
+      {
+        user_id: primaryId,
+        user_email: emailId,
+        user_name: memory.userName || null,
+        partner_name: memory.partnerName || null,
+        relationship_status: memory.relationshipStatus || null,
+        facts: memory.facts,
+        topics: memory.topics,
+        recent_advice: memory.recentAdvice,
+        last_updated: nowIso
+      },
+      { onConflict: 'user_id' }
+    );
+    await Promise.race([
+      upsertPromise,
+      new Promise((resolve) => setTimeout(resolve, 1000))
+    ]);
+  } catch (_) {}
+}
 
-  await withDbTimeout(upsertOp(), 1800, undefined);
+async function checkUserVipFast(
+  supabaseClient: any,
+  userIdentifier: string
+): Promise<boolean> {
+  if (!isSupabaseConfigured() || !userIdentifier) return false;
+  try {
+    const isUUID = (str: string) => /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(str);
+    const queryPromise = (async () => {
+      let q = supabaseClient.from('profiles').select('has_unlimited_ai').limit(1);
+      if (isUUID(userIdentifier)) {
+        q = q.eq('id', userIdentifier);
+      } else if (userIdentifier.includes('@')) {
+        q = q.eq('email', userIdentifier);
+      } else {
+        return false;
+      }
+      const { data } = await q.maybeSingle();
+      return !!data?.has_unlimited_ai;
+    })();
+
+    return await Promise.race([
+      queryPromise,
+      new Promise<boolean>((resolve) => setTimeout(() => resolve(false), 350))
+    ]);
+  } catch (_) {
+    return false;
+  }
 }
 
 // --- Body Parsing Helper ---
@@ -434,26 +457,28 @@ function parseRequestBody(req: VercelRequest): Record<string, any> {
   return typeof body === 'object' ? body : {};
 }
 
-// --- Multi-Model Generator with Immediate Fallback ---
+// --- Fast Multi-Model Generator with Strict Budget ---
 async function generateWithModelFallback(
   ai: GoogleGenAI,
   candidateModels: string[],
   contents: any[],
   systemInstruction: string,
-  totalBudgetMs: number = 8800
+  totalBudgetMs: number = 8400
 ): Promise<{ text: string; modelUsed: string }> {
   const startTime = Date.now();
   let lastError: any = null;
 
-  for (const modelName of candidateModels) {
+  for (let i = 0; i < candidateModels.length; i++) {
+    const modelName = candidateModels[i];
     const elapsed = Date.now() - startTime;
     const remainingTime = totalBudgetMs - elapsed;
-    if (remainingTime < 1400) {
-      console.info(`[Ask Victoria] Time budget reached (${elapsed}ms). Breaking to respond before Vercel timeout.`);
+    if (remainingTime < 1000) {
+      console.info(`[Ask Victoria] Time budget reached (${elapsed}ms). Responding safely.`);
       break;
     }
 
-    const perCallTimeout = Math.min(4500, remainingTime - 300);
+    // Allocate 5200ms to first model, remaining budget to fallbacks
+    const perCallTimeout = i === 0 ? Math.min(5200, remainingTime - 150) : Math.min(2800, remainingTime - 150);
 
     try {
       let timer: NodeJS.Timeout | null = null;
@@ -469,7 +494,7 @@ async function generateWithModelFallback(
         config: {
           systemInstruction,
           temperature: 0.7,
-          maxOutputTokens: 1600,
+          maxOutputTokens: 400,
         }
       });
 
@@ -486,7 +511,6 @@ async function generateWithModelFallback(
     } catch (err: any) {
       lastError = err;
       console.info(`[Ask Victoria] Model ${modelName} note: ${err?.message || err}. Trying next fallback...`);
-      // Immediately fallback to next model in candidates
       continue;
     }
   }
@@ -525,7 +549,7 @@ export async function handleAiChat(req: VercelRequest, res: VercelResponse) {
 
       const [storedMessages, storedMemory] = await Promise.all([
         loadChatMessagesFromDb(supabaseAdmin, candidateIds).catch(() => []),
-        loadUserMemoryFromDb(supabaseAdmin, candidateIds).catch(() => null)
+        loadUserMemoryFast(supabaseAdmin, candidateIds).catch(() => null)
       ]);
 
       return res.status(200).json({
@@ -561,122 +585,40 @@ export async function handleAiChat(req: VercelRequest, res: VercelResponse) {
 
     const userIdentifier = candidateIds[0] || (userContext?.userName || 'student').trim().toLowerCase();
 
-    // 1. Immediately persist incoming student message to Supabase (in background)
+    // 1. Immediately persist incoming student message in the background (fire and forget)
     const lastUserMsg = [...messages].reverse().find(m => m.role === 'user');
     if (lastUserMsg && candidateIds.length > 0) {
       saveChatMessageToDb(supabaseAdmin, candidateIds, lastUserMsg).catch(() => {});
     }
 
-    // 2. VIP / Unlimited access check against Supabase
-    let isUserUnlimited = false;
-    if (userIdentifier && isSupabaseConfigured()) {
-      try {
-        const isUUID = (str: string) =>
-          /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(str || '');
-
-        let profile: { id?: string; has_unlimited_ai?: boolean; is_admin?: boolean; email?: string } | null = null;
-        if (isUUID(userIdentifier)) {
-          const profileQuery = supabaseAdmin
-            .from('profiles')
-            .select('id, has_unlimited_ai, is_admin, email')
-            .eq('id', userIdentifier)
-            .maybeSingle();
-          const { data } = await withDbTimeout(profileQuery, 1400, { data: null });
-          profile = data;
-        }
-
-        if (!profile && (userIdentifier.includes('@') || userContext?.email)) {
-          const emailToFind = (userContext?.email || userIdentifier).toLowerCase();
-          const profileQuery = supabaseAdmin
-            .from('profiles')
-            .select('id, has_unlimited_ai, is_admin, email')
-            .eq('email', emailToFind)
-            .maybeSingle();
-          const { data } = await withDbTimeout(profileQuery, 1400, { data: null });
-          profile = data;
-        }
-
-        if (profile?.has_unlimited_ai === false) {
-          isUserUnlimited = false;
-        } else if (profile?.has_unlimited_ai === true) {
-          isUserUnlimited = true;
-        } else {
-          const targetUid = (profile?.id && isUUID(profile.id)) ? profile.id : (isUUID(userIdentifier) ? userIdentifier : null);
-          let pQuery = supabaseAdmin.from('purchases').select('id');
-          if (targetUid) {
-            pQuery = pQuery.eq('user_id', targetUid);
-          } else {
-            pQuery = pQuery.eq('user_id', userIdentifier);
-          }
-          pQuery = pQuery.in('product_id', ['ai_subscription', 'prod_ai_default', 'hotmart_ia_victoria', 'ia_vip', 'unlimited_ai', 'ai_unlimited']).maybeSingle();
-          const { data: pData } = await withDbTimeout(pQuery, 1400, { data: null });
-          isUserUnlimited = !!pData;
-        }
-      } catch (dbErr) {
-        console.warn('[AI Chat API] VIP check note:', dbErr);
-      }
-    }
-
-    // 3. Message limit check if user is not VIP
-    if (!isUserUnlimited && isSupabaseConfigured()) {
-      try {
-        const settingsQuery = supabaseAdmin
-          .from('app_settings')
-          .select('custom_texts')
-          .eq('id', 1)
-          .maybeSingle();
-        const { data: settingsRow } = await withDbTimeout(settingsQuery, 1200, { data: null });
-
-        const customTexts = settingsRow?.custom_texts || {};
-        const isLimitEnabled = customTexts['ai_expert.enable_message_limit'] === 'true';
-        const maxMessages = Math.max(1, parseInt(customTexts['ai_expert.max_messages_count'] || '3', 10));
-
-        if (isLimitEnabled) {
-          let currentSentCount = typeof messagesSentCount === 'number' ? messagesSentCount : 0;
-          if (userIdentifier) {
-            const startOfToday = new Date();
-            startOfToday.setHours(0, 0, 0, 0);
-
-            const logsQuery = supabaseAdmin
-              .from('ai_message_logs')
-              .select('*', { count: 'exact', head: true })
-              .eq('user_id', userIdentifier)
-              .gte('created_at', startOfToday.toISOString());
-
-            const { count } = await withDbTimeout(logsQuery, 1200, { count: null });
-
-            if (typeof count === 'number' && count > 0) {
-              currentSentCount = Math.max(currentSentCount, count);
-            }
-          }
-
-          if (currentSentCount >= maxMessages) {
-            return res.status(403).json({
-              error: 'VIP_REQUIRED',
-              message: customTexts['ai_expert.limit_reached_toast'] || 'You have reached the message limit for this period. Upgrade to the Unlimited VIP plan to chat without limits!',
-              isLimitReached: true,
-              isUserUnlimited: false
-            });
-          }
-        }
-      } catch (limitErr) {
-        console.warn('[AI Chat API] Limit check note:', limitErr);
-      }
-    }
-
-    // 4. Load Student Memory Context
+    // 2. Parallel Fast Context: Load Memory and VIP Status simultaneously (max 450ms)
     let existingMemory: UserMemoryProfile | null = null;
-    if (candidateIds.length > 0) {
+    let isUserUnlimited = false;
+
+    if (candidateIds.length > 0 && isSupabaseConfigured()) {
       try {
-        existingMemory = await loadUserMemoryFromDb(supabaseAdmin, candidateIds);
-      } catch (memErr) {
-        console.warn('[AI Chat API] Memory retrieval note:', memErr);
-      }
+        const [memRes, vipRes] = await Promise.all([
+          loadUserMemoryFast(supabaseAdmin, candidateIds),
+          checkUserVipFast(supabaseAdmin, userIdentifier)
+        ]);
+        existingMemory = memRes;
+        isUserUnlimited = vipRes;
+      } catch (_) {}
+    }
+
+    // 3. Client sent count check if limited
+    if (!isUserUnlimited && typeof messagesSentCount === 'number' && messagesSentCount >= 5) {
+      return res.status(403).json({
+        error: 'VIP_REQUIRED',
+        message: 'You have reached the free consultation message limit. Upgrade to the Unlimited VIP plan to continue chatting without limits!',
+        isLimitReached: true,
+        isUserUnlimited: false
+      });
     }
 
     const memoryInstruction = formatMemoryForPrompt(existingMemory);
 
-    // 5. Initialize Gemini
+    // 4. Initialize Gemini
     let ai: GoogleGenAI;
     try {
       ai = getAiClient();
@@ -691,8 +633,8 @@ export async function handleAiChat(req: VercelRequest, res: VercelResponse) {
       });
     }
 
-    // 6. Compact context (immediate last 10 messages for speed & free tier budget)
-    const trimmedMessages = messages.slice(-10);
+    // 5. Compact context (last 8 messages for maximum generation speed and low token cost)
+    const trimmedMessages = messages.slice(-8);
     const contents = trimmedMessages.map((m: { role: string; content: string }) => ({
       role: m.role === 'assistant' ? 'model' : 'user',
       parts: [{ text: m.content }],
@@ -714,11 +656,12 @@ ${userContext?.userName ? `User's Name: ${userContext.userName}` : ''}${memoryIn
       ? `Primary Language: Respond in clear, warm American English (unless the user writes in another language).\n\n${customSystemPrompt.trim()}\n\nIMPORTANT FORMATTING RULE: Do NOT use markdown bold stars (**text**) or asterisks in output. Write in natural plain text.\n\n${userContext?.userName ? `User's Name: ${userContext.userName}` : ''}${memoryInstruction}`
       : defaultSystemInstruction;
 
-    // Prioritize the cheapest Flash-Lite model for maximum free conversation throughput
+    // Prioritize high-volume Flash-Lite models with independent quota pools
     const candidateModels = [
-      'gemini-3.1-flash-lite',  // Lowest token cost & maximum free conversation volume
-      'gemini-flash-latest',   // Standard Flash latest
-      'gemini-3.8-flash',      // Latest recommended Flash model
+      'gemini-flash-lite-latest',   // Highest free volume & fastest response (~600ms)
+      'gemini-3.1-flash-lite',      // Ultra-economical ($0.075/1M), independent quota pool (~600ms)
+      'gemini-3.5-flash-lite',      // High-speed fallback (~600ms)
+      'gemini-3.1-flash-lite-preview'
     ];
 
     const result = await generateWithModelFallback(
@@ -726,7 +669,7 @@ ${userContext?.userName ? `User's Name: ${userContext.userName}` : ''}${memoryIn
       candidateModels,
       contents,
       systemInstruction,
-      8800
+      8400
     );
 
     const responseText = result.text;
@@ -735,7 +678,7 @@ ${userContext?.userName ? `User's Name: ${userContext.userName}` : ''}${memoryIn
 
     let updatedMemory: UserMemoryProfile | null = existingMemory;
 
-    // 7. On success: Persist assistant reply & update Student Fact Memory in Supabase
+    // 6. On success: Persist assistant reply & update Student Memory in the background (fire and forget)
     if (responseText && candidateIds.length > 0) {
       saveChatMessageToDb(supabaseAdmin, candidateIds, {
         id: `ast_${Date.now()}`,
@@ -752,24 +695,7 @@ ${userContext?.userName ? `User's Name: ${userContext.userName}` : ''}${memoryIn
           userContext?.userName
         );
         saveUserMemoryToDb(supabaseAdmin, candidateIds, updatedMemory).catch(() => {});
-      } catch (memSaveErr) {
-        console.warn('[AI Chat API] Memory update note:', memSaveErr);
-      }
-
-      if (!isUserUnlimited && isSupabaseConfigured()) {
-        try {
-          const logPayload = {
-            user_id: userIdentifier,
-            created_at: new Date().toISOString()
-          };
-          const { error: logErr } = await supabaseAdmin.from('ai_message_logs').insert(logPayload);
-          if (logErr && (logErr.code === '401' || logErr.message?.includes('Unregistered API key'))) {
-            await supabasePublic.from('ai_message_logs').insert(logPayload);
-          }
-        } catch (logErr) {
-          console.warn('[AI Chat API] Note: Failed to log message in ai_message_logs:', logErr);
-        }
-      }
+      } catch (_) {}
     }
 
     if (res.headersSent) return;

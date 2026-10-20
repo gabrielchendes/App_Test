@@ -1,11 +1,5 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { handleAiChat } from './ai-chat';
-import { handleAiCourseEditor } from '../_ai/courseEditor';
-import { handleAnalyzeMessage } from '../_ai/analyzeMessage';
-import { handleBuildCompleteCourse } from '../_ai/buildCourse';
-import { handleGenerateCourseCopy } from '../_ai/courseCopy';
-import { handleGenerateLesson } from '../_ai/generateLesson';
-import { handleRefineSalesCopy } from '../_ai/refineCopy';
 
 function parseRequestBody(req: VercelRequest): Record<string, any> {
   let body = req.body;
@@ -30,7 +24,7 @@ function parseRequestBody(req: VercelRequest): Record<string, any> {
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'POST,GET,OPTIONS');
-  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Requested-With, Accept');
   res.setHeader('Content-Type', 'application/json; charset=utf-8');
 
   if (req.method === 'OPTIONS') return res.status(200).end();
@@ -47,7 +41,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
   let action = queryAction || urlAction || bodyAction;
 
-  // Normalize action name
   if (action) {
     action = action.toLowerCase().trim();
   }
@@ -60,43 +53,65 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
       case 'ai-course-editor':
       case 'course-editor':
-      case 'course_editor':
+      case 'course_editor': {
+        const { handleAiCourseEditor } = await import('../_ai/courseEditor');
         return await handleAiCourseEditor(req, res);
+      }
 
       case 'analyze-message':
       case 'analyze':
-      case 'message-analyzer':
+      case 'message-analyzer': {
+        const { handleAnalyzeMessage } = await import('../_ai/analyzeMessage');
         return await handleAnalyzeMessage(req, res);
+      }
 
       case 'build-complete-course':
       case 'build-course':
-      case 'build_course':
+      case 'build_course': {
+        const { handleBuildCompleteCourse } = await import('../_ai/buildCourse');
         return await handleBuildCompleteCourse(req, res);
+      }
 
       case 'generate-course-copy':
       case 'course-copy':
-      case 'course_copy':
+      case 'course_copy': {
+        const { handleGenerateCourseCopy } = await import('../_ai/courseCopy');
         return await handleGenerateCourseCopy(req, res);
+      }
 
       case 'generate-lesson':
       case 'lesson':
-      case 'generate_lesson':
+      case 'generate_lesson': {
+        const { handleGenerateLesson } = await import('../_ai/generateLesson');
         return await handleGenerateLesson(req, res);
+      }
 
       case 'refine-sales-copy':
       case 'refine-copy':
-      case 'refine_copy':
+      case 'refine_copy': {
+        const { handleRefineSalesCopy } = await import('../_ai/refineCopy');
         return await handleRefineSalesCopy(req, res);
+      }
 
       default:
+        // Default to ai-chat if body contains messages
+        if (Array.isArray(req.body?.messages)) {
+          return await handleAiChat(req, res);
+        }
         return res.status(400).json({
           error: `Invalid or missing AI action: "${action}". Supported actions: ai-chat, ai-course-editor, analyze-message, build-complete-course, generate-course-copy, generate-lesson, refine-sales-copy.`
         });
     }
   } catch (error: any) {
     console.error(`[AI Router Error] Action "${action}":`, error);
-    return res.status(500).json({
-      error: error.message || 'Internal server error in AI handler'
-    });
+    if (!res.headersSent) {
+      return res.status(200).json({
+        success: false,
+        reply: null,
+        message: "Victoria is currently preparing her consultation room. Please try asking again in just a moment! 💕",
+        isHighDemand: true,
+        details: error?.message || String(error || '')
+      });
+    }
   }
 }

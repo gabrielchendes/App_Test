@@ -659,7 +659,7 @@ export default function AiAssistantModal({ userId, userEmail, userName, userAvat
       content: m.content
     }));
 
-    const MAX_CLIENT_ATTEMPTS = 5;
+    const MAX_CLIENT_ATTEMPTS = 3;
     let finalSuccessReply: string | null = null;
     let finalErrorMessage: string = errorMessage;
 
@@ -674,17 +674,13 @@ export default function AiAssistantModal({ userId, userEmail, userName, userAvat
           setStatusText(`${expertName} is reading your message and writing...`);
         } else if (attempt === 2) {
           setStatusText(`${expertName} is connecting and consulting...`);
-        } else if (attempt === 3) {
-          setStatusText(`${expertName} is preparing detailed guidance for you...`);
-        } else if (attempt === 4) {
-          setStatusText(`${expertName} is gathering relationship insights for you...`);
         } else {
-          setStatusText(`${expertName} is finalizing your personal advice...`);
+          setStatusText(`${expertName} is preparing detailed guidance for you...`);
         }
 
         const controller = new AbortController();
         activeFetchAbortRef.current = controller;
-        const timeoutId = setTimeout(() => controller.abort(), 12000);
+        const timeoutId = setTimeout(() => controller.abort(), 9500);
 
         const requestPayload = JSON.stringify({
           action: 'ai-chat',
