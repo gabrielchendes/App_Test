@@ -37,7 +37,14 @@ export default defineConfig(({mode}) => {
           maximumFileSizeToCacheInBytes: 4000000,
           runtimeCaching: [
             {
-              urlPattern: /^https:\/\/.*\.supabase\.co\/storage\/v1\/object\/public\/.*/,
+              // Imagens e arquivos do Supabase Storage.
+              // NÃO inclui vídeo/áudio: o Safari exige respostas 206 (Range) reais do servidor,
+              // e o cache do Workbox não consegue montá-las a partir de respostas opacas.
+              urlPattern: ({ url, request }) =>
+                /^https:\/\/.*\.supabase\.co\/storage\/v1\/object\/public\/.*/.test(url.href) &&
+                request.destination !== 'video' &&
+                request.destination !== 'audio' &&
+                !/\.(mp4|webm|mov|m4v|mp3|m4a|ogg|wav|m3u8|ts)$/i.test(url.pathname),
               handler: 'CacheFirst',
               options: {
                 cacheName: 'supabase-storage',
@@ -50,21 +57,9 @@ export default defineConfig(({mode}) => {
                 },
               },
             },
-            {
-              urlPattern: /^https:\/\/.*\.r2\.dev\/.*/,
-              handler: 'CacheFirst',
-              options: {
-                cacheName: 'media-assets',
-                expiration: {
-                  maxEntries: 50,
-                  maxAgeSeconds: 60 * 60 * 24 * 7, // 7 days
-                },
-                cacheableResponse: {
-                  statuses: [0, 200],
-                },
-                rangeRequests: true // Support for video streaming parts
-              },
-            },
+            // REMOVIDO: regra do Cloudflare R2 (r2.dev) com CacheFirst + rangeRequests.
+            // Ela causava o erro 416 no Safari. Sem regra, o Service Worker não intercepta
+            // os vídeos do R2 e o navegador fala direto com o servidor.
             {
               urlPattern: /^https:\/\/images\.unsplash\.com\/.*/,
               handler: 'CacheFirst',
