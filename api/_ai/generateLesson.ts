@@ -191,13 +191,9 @@ Additional Instructions: ${aiInstructions || 'Make it interactive and engaging'}
     contents.push(promptText);
 
     const candidateModels = [
-      'gemini-3-flash-preview',
-      'gemini-3.5-flash-lite',
-      'gemini-3.5-flash',
-      'gemini-3.6-flash',
-      'gemini-3.8-flash',
       'gemini-3.1-flash-lite',
-      'gemini-flash-latest'
+      'gemini-flash-latest',
+      'gemini-3.8-flash'
     ];
 
     const result = await generateContentWithRetry({

@@ -2733,9 +2733,7 @@ async function handleSalesList(req: VercelRequest, res: VercelResponse) {
 
     const client = getScopedClient(req);
     let salesData: any[] = [];
-    let isFromEventsFallback = false;
-
-    // 1. Check sales table safely without throwing warning if table does not exist in schema cache
+    // 1. Query sales table directly
     try {
       let query = client.from('sales').select('*').order('purchase_date', { ascending: false });
 
@@ -2748,98 +2746,25 @@ async function handleSalesList(req: VercelRequest, res: VercelResponse) {
 
       const { data, error } = await query;
 
-      if (!error && data && data.length > 0) {
+      if (!error && data) {
         salesData = data;
-      } else {
-        isFromEventsFallback = true;
+      } else if (error) {
+        console.warn('[Admin API] Error querying sales table:', error.message || error);
+        // Retry with supabaseAdmin if scoped client lacked RLS permission
+        try {
+          let adminQuery = supabaseAdmin.from('sales').select('*').order('purchase_date', { ascending: false });
+          if (startDate) adminQuery = adminQuery.gte('purchase_date', startDate);
+          if (endDate) adminQuery = adminQuery.lte('purchase_date', endDate);
+          if (productId && productId !== 'all') adminQuery = adminQuery.eq('product_id', productId);
+          if (productType && productType !== 'all') adminQuery = adminQuery.eq('product_type', productType);
+          if (status && status !== 'all') adminQuery = adminQuery.eq('status', status);
+          if (paymentType && paymentType !== 'all') adminQuery = adminQuery.eq('payment_type', paymentType.toUpperCase());
+          const { data: adminData } = await adminQuery;
+          if (adminData) salesData = adminData;
+        } catch (_) {}
       }
-    } catch {
-      isFromEventsFallback = true;
-    }
-
-    // 2. Primary fallback: hotmart_events table (which records all real incoming webhooks)
-    if (isFromEventsFallback) {
-      let configuredMainId = '';
-      try {
-        const settingsRow = await getAppSettingsSafe();
-        configuredMainId = settingsRow?.custom_texts?.['hotmart.main_product_id'] || settingsRow?.custom_texts?.['main_course_hotmart_id'] || '';
-      } catch (err) {}
-
-      let events: any[] = [];
-      try {
-        let eventsQuery = client
-          .from('hotmart_events')
-          .select('*')
-          .order('processed_at', { ascending: false });
-
-        if (startDate) eventsQuery = eventsQuery.gte('processed_at', startDate);
-        if (endDate) eventsQuery = eventsQuery.lte('processed_at', endDate);
-        eventsQuery = eventsQuery.limit(1000);
-
-        const { data: eventsData, error: evErr } = await eventsQuery;
-        if (!evErr && eventsData) {
-          events = eventsData;
-        } else {
-          // Fallback to supabaseAdmin if scoped client lacked specific table privileges
-          let adminQuery = supabaseAdmin
-            .from('hotmart_events')
-            .select('*')
-            .order('processed_at', { ascending: false });
-
-          if (startDate) adminQuery = adminQuery.gte('processed_at', startDate);
-          if (endDate) adminQuery = adminQuery.lte('processed_at', endDate);
-          const { data: adminEvData } = await adminQuery.limit(1000);
-          events = adminEvData || [];
-        }
-      } catch (err) {}
-
-      const mappedFromEvents: Map<string, any> = new Map();
-
-      events.forEach((ev: any) => {
-        const payload = ev.payload || {};
-        const trxId = ev.transaction_id || payload.data?.purchase?.transaction || ('TRX_' + ev.id);
-        const eventName = ev.event || payload.event || 'PURCHASE_APPROVED';
-
-        const isAppr = eventName.includes('APPROVED') || eventName.includes('COMPLETE') || eventName.includes('ACTIVATED') || eventName.includes('APROVAD') || eventName === 'SUBSCRIPTION_RENEWAL';
-        const isRef = eventName.includes('REFUND') || eventName.includes('REEMBOLS');
-        const isCanc = eventName.includes('CANCEL');
-        const isCb = eventName.includes('CHARGEBACK');
-
-        const saleStatus = isAppr ? 'approved' : isRef ? 'refunded' : isCanc ? 'canceled' : isCb ? 'chargeback' : 'approved';
-        const hProdId = ev.hotmart_product_id || configuredMainId;
-        const pName = payload.data?.product?.name || (hProdId ? ('Produto Hotmart (' + hProdId + ')') : 'Produto Principal');
-        const val = Number(payload.data?.purchase?.price?.value ?? payload.data?.purchase?.full_price?.value ?? payload.price ?? 97) || 0;
-        const cur = String(payload.data?.purchase?.price?.currency_value ?? payload.currency ?? 'BRL').toUpperCase();
-        const payType = String(payload.data?.purchase?.payment?.type ?? payload.payment_type ?? 'PIX').toUpperCase();
-
-        const pType = (configuredMainId && String(ev.hotmart_product_id) === String(configuredMainId)) || !ev.hotmart_product_id ? 'main_product' : 'course';
-
-        if (productId && productId !== 'all' && hProdId !== productId) return;
-        if (productType && productType !== 'all' && pType !== productType) return;
-        if (status && status !== 'all' && saleStatus !== status) return;
-        if (paymentType && paymentType !== 'all' && payType !== paymentType.toUpperCase()) return;
-
-        mappedFromEvents.set(trxId, {
-          id: ev.id,
-          transaction_id: trxId,
-          buyer_name: payload.data?.buyer?.name || payload.data?.buyer?.first_name || 'Comprador Hotmart',
-          buyer_email: ev.buyer_email || payload.data?.buyer?.email || 'aluno@email.com',
-          buyer_phone: payload.data?.buyer?.checkout_phone || null,
-          product_id: hProdId || 'main_product',
-          product_name: pName,
-          product_type: pType,
-          amount: val,
-          currency: cur,
-          payment_type: payType,
-          status: saleStatus,
-          event_type: eventName,
-          purchase_date: ev.processed_at || new Date().toISOString(),
-          raw_payload: payload,
-          created_at: ev.processed_at || new Date().toISOString()
-        });
-      });
-
-      salesData = Array.from(mappedFromEvents.values());
+    } catch (e: any) {
+      console.warn('[Admin API] Unexpected error reading sales:', e?.message || e);
     }
 
     // Filter in-memory for search query

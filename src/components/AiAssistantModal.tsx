@@ -762,6 +762,14 @@ export default function AiAssistantModal({ userId, userEmail, userName, userAvat
           data = {};
         }
 
+        // Missing key check
+        if (data.missingKey === true) {
+          finalErrorMessage = data.message || `${expertName} is currently preparing her consultation room.`;
+          toast.error(finalErrorMessage);
+          setLoading(false);
+          return;
+        }
+
         // Limit reached check
         if (res.status === 403 || data.error === 'VIP_REQUIRED' || data.isLimitReached || (data.error && data.error.code === 'VIP_REQUIRED')) {
           setIsUserUnlimited(false);
@@ -803,7 +811,7 @@ export default function AiAssistantModal({ userId, userEmail, userName, userAvat
                              rawMsg.toLowerCase().includes('timed out');
 
         if (isQuotaOrRateLimit || isRetryableStatus || isExplicitRetryable || isBusySignal) {
-          finalErrorMessage = `${expertName} is currently helping other students. Please try again in a few moments.`;
+          finalErrorMessage = (typeof data.message === 'string' && data.message) ? data.message : `${expertName} is currently helping other students. Please try again in a few moments.`;
           if (attempt < MAX_CLIENT_ATTEMPTS) {
             const delayMs = isQuotaOrRateLimit 
               ? (data.retryAfterMs || (1800 + attempt * 1000))

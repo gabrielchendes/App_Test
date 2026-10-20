@@ -1,5 +1,5 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
-import { handleAiChat } from '../_ai/chat';
+import { handleAiChat } from './ai-chat';
 import { handleAiCourseEditor } from '../_ai/courseEditor';
 import { handleAnalyzeMessage } from '../_ai/analyzeMessage';
 import { handleBuildCompleteCourse } from '../_ai/buildCourse';
