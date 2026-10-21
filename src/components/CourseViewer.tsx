@@ -57,19 +57,40 @@ interface CourseViewerProps {
   userId: string;
   onClose: () => void;
   initialCourse?: Course | null;
+  initialProgress?: UserProgress[];
   isProfessor?: boolean;
 }
 
-export default function CourseViewer({ courseId, userId, onClose, initialCourse, isProfessor = false }: CourseViewerProps) {
+export default function CourseViewer({ courseId, userId, onClose, initialCourse, initialProgress, isProfessor = false }: CourseViewerProps) {
   const { t } = useI18n();
   const { settings } = useSettings();
-  const [course, setCourse] = useState<Course | null>(initialCourse ? (parseCourseHtmlFunnel(initialCourse) as Course) : null);
-  const [modules, setModules] = useState<Module[]>([]);
-  const [chapters, setChapters] = useState<Chapter[]>([]);
-  const [progress, setProgress] = useState<UserProgress[]>([]);
-  const [viewMode, setViewMode] = useState<'grid' | 'player'>('grid');
-  const [activeChapter, setActiveChapter] = useState<Chapter | null>(null);
-  const [loading, setLoading] = useState(true);
+
+  // Instant 0ms synchronous cache retrieval from memory & storage
+  const cacheKey = `course_full_${courseId}`;
+  const cachedData = useMemo(() => {
+    return courseId ? dataCache.getSync<any>(cacheKey, null) : null;
+  }, [courseId, cacheKey]);
+
+  const [course, setCourse] = useState<Course | null>(() => {
+    if (cachedData?.course) return cachedData.course;
+    return initialCourse ? (parseCourseHtmlFunnel(initialCourse) as Course) : null;
+  });
+  const [modules, setModules] = useState<Module[]>(() => cachedData?.modules || []);
+  const [chapters, setChapters] = useState<Chapter[]>(() => cachedData?.chapters || []);
+  const [progress, setProgress] = useState<UserProgress[]>(() => {
+    if (cachedData?.progress && Array.isArray(cachedData.progress)) return cachedData.progress;
+    if (initialProgress && Array.isArray(initialProgress)) return initialProgress;
+    return [];
+  });
+  const [viewMode, setViewMode] = useState<'grid' | 'player'>(() => {
+    if (cachedData?.chapters?.length === 1) return 'player';
+    return 'grid';
+  });
+  const [activeChapter, setActiveChapter] = useState<Chapter | null>(() => {
+    if (cachedData?.chapters?.length === 1) return cachedData.chapters[0];
+    return null;
+  });
+  const [loading, setLoading] = useState<boolean>(() => !cachedData?.chapters?.length);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [pdfViewerMode, setPdfViewerMode] = useState<'google' | 'direct'>('google');
   const [pdfReloadCount, setPdfReloadCount] = useState(0);
@@ -126,7 +147,6 @@ export default function CourseViewer({ courseId, userId, onClose, initialCourse,
   const fetchCourseData = async () => {
     try {
       setErrorMessage(null);
-      const cacheKey = `course_full_${courseId}`;
       const cached = dataCache.get(cacheKey);
 
       if (cached) {
@@ -134,15 +154,13 @@ export default function CourseViewer({ courseId, userId, onClose, initialCourse,
         if (cached.modules) setModules(cached.modules);
         if (cached.chapters) {
           setChapters(cached.chapters);
-          if (cached.chapters.length === 1) {
+          if (cached.chapters.length === 1 && viewModeRef.current !== 'player') {
             setActiveChapter(cached.chapters[0]);
             setViewMode('player');
           }
         }
         if (cached.progress) setProgress(cached.progress);
         setLoading(false);
-      } else {
-        setLoading(true);
       }
 
       // Safe UUID verification to prevent Postgres type errors on user_progress
@@ -151,33 +169,32 @@ export default function CourseViewer({ courseId, userId, onClose, initialCourse,
         return;
       }
 
-      // Execute queries in parallel for high speed and fault tolerance
-      const courseQuery = supabase
-        .from('courses')
-        .select('*')
-        .eq('id', courseId)
-        .maybeSingle();
-
-      const modulesQuery = supabase
+      // High-performance single consolidated parallel fetch:
+      // PostgREST retrieves all modules AND all their nested chapters in a SINGLE round-trip!
+      const modulesWithChaptersQuery = supabase
         .from('modules')
-        .select('*')
+        .select('*, chapters(*)')
         .eq('course_id', courseId)
         .order('order_index');
 
-      const progressQuery = isUUID(userId)
-        ? supabase.from('user_progress').select('*').eq('user_id', userId)
-        : Promise.resolve({ data: [], error: null });
+      const courseQuery = (!initialCourse && !course)
+        ? supabase.from('courses').select('*').eq('id', courseId).maybeSingle()
+        : Promise.resolve({ data: initialCourse || course });
 
-      const [courseRes, modulesRes, progressRes] = await Promise.allSettled([
+      const progressQuery = (progress.length > 0)
+        ? Promise.resolve({ data: progress })
+        : (isUUID(userId) ? supabase.from('user_progress').select('*').eq('user_id', userId) : Promise.resolve({ data: [] }));
+
+      const [modulesRes, courseRes, progressRes] = await Promise.allSettled([
+        modulesWithChaptersQuery,
         courseQuery,
-        modulesQuery,
         progressQuery
       ]);
 
       // 1. Process course
       let currentCourse = initialCourse || course;
-      if (courseRes.status === 'fulfilled' && courseRes.value?.data) {
-        currentCourse = courseRes.value.data;
+      if (courseRes.status === 'fulfilled' && (courseRes.value as any)?.data) {
+        currentCourse = (courseRes.value as any).data;
       }
       if (currentCourse) {
         currentCourse = parseCourseHtmlFunnel(currentCourse) as Course;
@@ -190,17 +207,40 @@ export default function CourseViewer({ courseId, userId, onClose, initialCourse,
         setCourse(currentCourse);
       }
 
-      // 2. Process modules
+      // 2. Process modules & unpack nested chapters directly
       let modulesData: Module[] = [];
-      if (modulesRes.status === 'fulfilled' && modulesRes.value?.data) {
-        modulesData = modulesRes.value.data;
+      let finalChapters: Chapter[] = [];
+
+      if (modulesRes.status === 'fulfilled' && (modulesRes.value as any)?.data && Array.isArray((modulesRes.value as any).data)) {
+        modulesData = (modulesRes.value as any).data.map((m: any) => {
+          const { chapters: rawChapters, ...moduleProps } = m;
+          if (Array.isArray(rawChapters)) {
+            const sortedChs = [...rawChapters].sort((a, b) => (a.order_index ?? 0) - (b.order_index ?? 0));
+            finalChapters.push(...sortedChs.map(fromDbChapter));
+          }
+          return moduleProps as Module;
+        });
         setModules(modulesData);
+      }
+
+      // Fallback: If chapters were not attached via foreign key in modules, query chapters table directly
+      if (finalChapters.length === 0 && modulesData.length > 0) {
+        const moduleIds = modulesData.map(m => m.id);
+        const { data: chaptersData } = await supabase
+          .from('chapters')
+          .select('*')
+          .in('module_id', moduleIds)
+          .order('order_index');
+
+        if (chaptersData && chaptersData.length > 0) {
+          finalChapters = chaptersData.map(fromDbChapter);
+        }
       }
 
       // 3. Process progress (merge DB progress with local backup)
       let progressData: UserProgress[] = [];
-      if (progressRes.status === 'fulfilled' && progressRes.value?.data) {
-        progressData = progressRes.value.data;
+      if (progressRes.status === 'fulfilled' && (progressRes.value as any)?.data) {
+        progressData = (progressRes.value as any).data;
       }
 
       try {
@@ -222,20 +262,6 @@ export default function CourseViewer({ courseId, userId, onClose, initialCourse,
       } catch (_) {}
 
       setProgress(progressData);
-
-      // 4. Process chapters
-      const moduleIds = modulesData.map(m => m.id);
-      let finalChapters: Chapter[] = [];
-
-      if (moduleIds.length > 0) {
-        const { data: chaptersData } = await supabase
-          .from('chapters')
-          .select('*')
-          .in('module_id', moduleIds)
-          .order('order_index');
-
-        finalChapters = (chaptersData || []).map(fromDbChapter);
-      }
 
       const effectivePdfUrl = currentCourse?.pdf_url || currentCourse?.preview_pdf_url;
 
@@ -269,13 +295,13 @@ export default function CourseViewer({ courseId, userId, onClose, initialCourse,
 
       setChapters(finalChapters);
 
-      // Save to memory cache for instantaneous subsequent views (5 minutes)
+      // Save to memory cache for instantaneous subsequent views (10 minutes)
       dataCache.set(cacheKey, {
         course: currentCourse,
         modules: modulesData,
         chapters: finalChapters,
         progress: progressData
-      }, 300000);
+      }, 600000);
 
       // Setup initial view without overwriting an active chapter or kicking user out of player mode
       if (activeChapterRef.current) {

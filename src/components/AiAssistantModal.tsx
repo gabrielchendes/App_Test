@@ -1,6 +1,6 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { Send, X, User as UserIcon, RefreshCw, Copy, Check, AlertCircle, Loader2, GraduationCap, ArrowLeft, Clock, Lock, ExternalLink, ShoppingBag, Sparkles, Infinity as InfinityIcon, Info, HelpCircle } from 'lucide-react';
+import { Send, X, User as UserIcon, RefreshCw, Copy, Check, AlertCircle, Loader2, GraduationCap, ArrowLeft, Clock, Lock, ExternalLink, ShoppingBag, Sparkles, Infinity as InfinityIcon, Info, HelpCircle, History } from 'lucide-react';
 import { GlowingSpinner } from './GlowingSpinner';
 import { toast } from '../lib/customToast';
 import { useSettings } from '../contexts/SettingsContext';
@@ -13,6 +13,7 @@ interface Message {
   role: 'user' | 'assistant';
   content: string;
   timestamp: string;
+  createdAt?: string;
   isError?: boolean;
   retryQuery?: string;
 }
@@ -182,30 +183,80 @@ export default function AiAssistantModal({ userId, userEmail, userName, userAvat
 
   const [sentTimestamps, setSentTimestamps] = useState<number[]>(getSentMessageTimestamps);
 
-  // VIP Unlimited Status Check
+  // VIP Unlimited Status Cache Helpers (Instant 0ms UI load without network delay)
+  const getCachedVipStatus = (uid?: string, uemail?: string): boolean => {
+    try {
+      if (uid) {
+        const cleanUid = uid.trim();
+        if (localStorage.getItem(`unlimited_ai_user_${cleanUid}`) === 'true') return true;
+        if (localStorage.getItem(`ai_expert_vip_unlimited_${cleanUid}`) === 'true') return true;
+      }
+      if (uemail) {
+        const cleanEmail = uemail.trim().toLowerCase();
+        if (localStorage.getItem(`unlimited_ai_user_${cleanEmail}`) === 'true') return true;
+        if (localStorage.getItem(`ai_expert_vip_unlimited_${cleanEmail}`) === 'true') return true;
+      }
+    } catch (_) {}
+    return false;
+  };
+
+  const setCachedVipStatus = (uid?: string, uemail?: string, isUnlimited: boolean = true) => {
+    try {
+      if (isUnlimited) {
+        if (uid) {
+          localStorage.setItem(`unlimited_ai_user_${uid.trim()}`, 'true');
+          localStorage.setItem(`ai_expert_vip_unlimited_${uid.trim()}`, 'true');
+        }
+        if (uemail) {
+          localStorage.setItem(`unlimited_ai_user_${uemail.trim().toLowerCase()}`, 'true');
+          localStorage.setItem(`ai_expert_vip_unlimited_${uemail.trim().toLowerCase()}`, 'true');
+        }
+      } else {
+        if (uid) {
+          localStorage.removeItem(`unlimited_ai_user_${uid.trim()}`);
+          localStorage.removeItem(`ai_expert_vip_unlimited_${uid.trim()}`);
+        }
+        if (uemail) {
+          localStorage.removeItem(`unlimited_ai_user_${uemail.trim().toLowerCase()}`);
+          localStorage.removeItem(`ai_expert_vip_unlimited_${uemail.trim().toLowerCase()}`);
+        }
+      }
+    } catch (_) {}
+  };
+
+  // VIP Unlimited Status Check: Defaults immediately to true if props or localStorage cache say so!
   const [isUserUnlimited, setIsUserUnlimited] = useState<boolean>(() => {
     if (hasUnlimitedAi) return true;
-    return false;
+    return getCachedVipStatus(userId, userEmail);
   });
   const [isCheckingVip, setIsCheckingVip] = useState<boolean>(false);
+
+  // Sync state if hasUnlimitedAi prop updates
+  useEffect(() => {
+    if (hasUnlimitedAi) {
+      setIsUserUnlimited(true);
+      setCachedVipStatus(userId, userEmail, true);
+    }
+  }, [hasUnlimitedAi, userId, userEmail]);
 
   useEffect(() => {
     if (userId && isSupabaseConfigured && supabase) {
       checkUserVipStatus(false);
     } else if (hasUnlimitedAi) {
       setIsUserUnlimited(true);
-    } else {
-      setIsUserUnlimited(false);
+      setCachedVipStatus(userId, userEmail, true);
     }
   }, [hasUnlimitedAi, userId]);
 
   const checkUserVipStatus = async (showToastOnCheck = false) => {
     if (!userId || !userId.trim()) {
-      setIsUserUnlimited(false);
-      if (showToastOnCheck) toast.info('No account detected. Unlock your VIP access!');
-      return;
+      if (!userEmail) {
+        setIsUserUnlimited(false);
+        if (showToastOnCheck) toast.info('No account detected. Unlock your VIP access!');
+        return;
+      }
     }
-    const cleanId = userId.trim();
+    const cleanId = (userId || '').trim();
     if (showToastOnCheck) setIsCheckingVip(true);
 
     try {
@@ -216,7 +267,7 @@ export default function AiAssistantModal({ userId, userEmail, userName, userAvat
 
         let profileData: { id?: string; has_unlimited_ai?: boolean; is_admin?: boolean; email?: string } | null = null;
 
-        if (isUUID(cleanId)) {
+        if (cleanId && isUUID(cleanId)) {
           const { data } = await supabase
             .from('profiles')
             .select('id, has_unlimited_ai, is_admin, email')
@@ -240,7 +291,7 @@ export default function AiAssistantModal({ userId, userEmail, userName, userAvat
         if (profileData) {
           if (profileData.has_unlimited_ai === false) {
             isUnlimited = false;
-          } else if (profileData.has_unlimited_ai === true) {
+          } else if (profileData.has_unlimited_ai === true || profileData.is_admin === true) {
             isUnlimited = true;
           } else {
             let q = supabase.from('purchases').select('id');
@@ -254,17 +305,18 @@ export default function AiAssistantModal({ userId, userEmail, userName, userAvat
             isUnlimited = !!pRes;
           }
         } else {
-          isUnlimited = Boolean(hasUnlimitedAi);
+          isUnlimited = Boolean(hasUnlimitedAi) || getCachedVipStatus(cleanId, userEmail);
+        }
+
+        // If previously verified or props say unlimited, never downgrade due to null/transient network lag
+        if (!isUnlimited && (hasUnlimitedAi || getCachedVipStatus(cleanId, userEmail))) {
+          if (profileData?.has_unlimited_ai !== false) {
+            isUnlimited = true;
+          }
         }
 
         setIsUserUnlimited(isUnlimited);
-
-        try {
-          localStorage.removeItem(`unlimited_ai_user_${cleanId}`);
-          if (profileData?.email) {
-            localStorage.removeItem(`unlimited_ai_user_${profileData.email}`);
-          }
-        } catch (e) {}
+        setCachedVipStatus(cleanId, profileData?.email || userEmail, isUnlimited);
 
         if (showToastOnCheck) {
           if (isUnlimited) {
@@ -274,7 +326,8 @@ export default function AiAssistantModal({ userId, userEmail, userName, userAvat
           }
         }
       } else {
-        setIsUserUnlimited(hasUnlimitedAi || false);
+        const fallbackStatus = Boolean(hasUnlimitedAi) || getCachedVipStatus(userId, userEmail);
+        setIsUserUnlimited(fallbackStatus);
       }
     } catch (err) {
       console.warn('VIP Check Note:', err);
@@ -431,7 +484,12 @@ export default function AiAssistantModal({ userId, userEmail, userName, userAvat
     } catch (_) {}
   }, [userIdentifier, getCandidateStorageKeys]);
 
-  // Fetch real chat history from Supabase database when modal opens
+  // Fast message pagination states & refs
+  const [hasMoreMessages, setHasMoreMessages] = useState<boolean>(false);
+  const [isLoadingEarlier, setIsLoadingEarlier] = useState<boolean>(false);
+  const chatContainerRef = useRef<HTMLDivElement>(null);
+
+  // Fetch real chat history from Supabase database when modal opens (limit=15 for fastest opening!)
   useEffect(() => {
     let isMounted = true;
 
@@ -441,6 +499,7 @@ export default function AiAssistantModal({ userId, userEmail, userName, userAvat
           const queryParams = new URLSearchParams();
           if (userId) queryParams.set('userId', userId.trim());
           if (userEmail) queryParams.set('userEmail', userEmail.trim());
+          queryParams.set('limit', '15'); // Rapid initial fetch for instant responsiveness
 
           let res: Response;
           const queryStr = queryParams.toString();
@@ -464,28 +523,39 @@ export default function AiAssistantModal({ userId, userEmail, userName, userAvat
 
           if (res.ok) {
             const data = await res.json();
-            if (data?.success && Array.isArray(data.messages) && data.messages.length > 0 && isMounted) {
-              // Ensure welcoming greeting is present at the beginning of the consultation
-              let fullHistory: Message[] = data.messages;
-              const hasWelcome = fullHistory.some(m => m.id === 'welcome' || (m.role === 'assistant' && m.content.includes(expertName)));
-              if (!hasWelcome) {
-                fullHistory = [
-                  {
-                    id: 'welcome',
-                    role: 'assistant',
-                    content: defaultWelcomeText,
-                    timestamp: fullHistory[0]?.timestamp || new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-                  },
-                  ...fullHistory
-                ];
+            if (data?.success && isMounted) {
+              // Update VIP status from server if confirmed
+              if (data.isUserUnlimited === true) {
+                setIsUserUnlimited(true);
+                setCachedVipStatus(userId, userEmail, true);
               }
 
-              setMessages(fullHistory);
-              try {
-                const keys = getCandidateStorageKeys();
-                const jsonStr = JSON.stringify(fullHistory);
-                keys.forEach(k => localStorage.setItem(k, jsonStr));
-              } catch (_) {}
+              if (typeof data.hasMore === 'boolean') {
+                setHasMoreMessages(data.hasMore);
+              }
+
+              if (Array.isArray(data.messages) && data.messages.length > 0) {
+                let fullHistory: Message[] = data.messages;
+                const hasWelcome = fullHistory.some(m => m.id === 'welcome' || (m.role === 'assistant' && m.content.includes(expertName)));
+                if (!hasWelcome) {
+                  fullHistory = [
+                    {
+                      id: 'welcome',
+                      role: 'assistant',
+                      content: defaultWelcomeText,
+                      timestamp: fullHistory[0]?.timestamp || new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+                    },
+                    ...fullHistory
+                  ];
+                }
+
+                setMessages(fullHistory);
+                try {
+                  const keys = getCandidateStorageKeys();
+                  const jsonStr = JSON.stringify(fullHistory.slice(-20)); // Keep cache compact and quick
+                  keys.forEach(k => localStorage.setItem(k, jsonStr));
+                } catch (_) {}
+              }
             }
           }
         } catch (err) {
@@ -500,6 +570,83 @@ export default function AiAssistantModal({ userId, userEmail, userName, userAvat
       isMounted = false;
     };
   }, [isOpen, userIdentifier, userId, userEmail, chatStorageKey, defaultWelcomeText, expertName, getCandidateStorageKeys]);
+
+  // Load earlier messages on demand
+  const loadEarlierMessages = async () => {
+    if (isLoadingEarlier || !hasMoreMessages) return;
+
+    // Find the oldest message that has a createdAt
+    const oldestRealMsg = messages.find(m => m.id !== 'welcome' && (m.createdAt || m.id.startsWith('msg_') || m.id.startsWith('ast_')));
+    const beforeTimestamp = oldestRealMsg?.createdAt || undefined;
+
+    setIsLoadingEarlier(true);
+    const container = chatContainerRef.current;
+    const prevScrollHeight = container?.scrollHeight || 0;
+
+    try {
+      const queryParams = new URLSearchParams();
+      if (userId) queryParams.set('userId', userId.trim());
+      if (userEmail) queryParams.set('userEmail', userEmail.trim());
+      queryParams.set('limit', '20');
+      if (beforeTimestamp) {
+        queryParams.set('before', beforeTimestamp);
+      }
+
+      const queryStr = queryParams.toString();
+      let res: Response;
+      try {
+        res = await fetch(`/api/v1/ai-chat?${queryStr}`, {
+          method: 'GET',
+          headers: { 'Accept': 'application/json' }
+        });
+        if (!res.ok) {
+          res = await fetch(`/api/v1/ai?action=ai-chat&${queryStr}`, {
+            method: 'GET',
+            headers: { 'Accept': 'application/json' }
+          });
+        }
+      } catch {
+        res = await fetch(`/api/v1/ai?action=ai-chat&${queryStr}`, {
+          method: 'GET',
+          headers: { 'Accept': 'application/json' }
+        });
+      }
+
+      if (res.ok) {
+        const data = await res.json();
+        if (data?.success && Array.isArray(data.messages) && data.messages.length > 0) {
+          const olderBatch: Message[] = data.messages;
+          setMessages(prev => {
+            const welcomeMsg = prev.find(m => m.id === 'welcome');
+            const otherMsgs = prev.filter(m => m.id !== 'welcome');
+            const existingIds = new Set(otherMsgs.map(m => m.id));
+            const newOlder = olderBatch.filter(m => !existingIds.has(m.id));
+            
+            return welcomeMsg 
+              ? [welcomeMsg, ...newOlder, ...otherMsgs]
+              : [...newOlder, ...otherMsgs];
+          });
+
+          setHasMoreMessages(Boolean(data.hasMore));
+          toast.success(`${olderBatch.length} earlier messages loaded!`);
+
+          setTimeout(() => {
+            if (container) {
+              container.scrollTop = container.scrollHeight - prevScrollHeight;
+            }
+          }, 60);
+        } else {
+          setHasMoreMessages(false);
+          toast.info('All earlier messages have been loaded.');
+        }
+      }
+    } catch (err) {
+      console.warn('[AI Assistant Modal] Error loading earlier messages:', err);
+      toast.error('Unable to load earlier messages. Please try again.');
+    } finally {
+      setIsLoadingEarlier(false);
+    }
+  };
 
   // Sync welcome message if settings change and conversation has no user messages yet
   useEffect(() => {
@@ -682,13 +829,24 @@ export default function AiAssistantModal({ userId, userEmail, userName, userAvat
         activeFetchAbortRef.current = controller;
         const timeoutId = setTimeout(() => controller.abort(), 9500);
 
+        const isUnlimitedNow = Boolean(isUserUnlimited || hasUnlimitedAi || getCachedVipStatus(userId, userEmail));
+
         const requestPayload = JSON.stringify({
           action: 'ai-chat',
           messages: historyForApi,
-          userContext: { userName, userId, email: userEmail },
+          userContext: {
+            userName,
+            userId,
+            email: userEmail,
+            hasUnlimitedAi: isUnlimitedNow,
+            isUserUnlimited: isUnlimitedNow
+          },
           customSystemPrompt: systemPromptContext || undefined,
           expertName: expertName || undefined,
           userId: userId || undefined,
+          email: userEmail || undefined,
+          hasUnlimitedAi: isUnlimitedNow,
+          isUserUnlimited: isUnlimitedNow,
           messagesSentCount,
           clientAttempt: attempt,
         });
@@ -768,9 +926,16 @@ export default function AiAssistantModal({ userId, userEmail, userName, userAvat
 
         // Limit reached check
         if (res.status === 403 || data.error === 'VIP_REQUIRED' || data.isLimitReached || (data.error && data.error.code === 'VIP_REQUIRED')) {
-          setIsUserUnlimited(false);
-          const limitMsg = typeof data.message === 'string' ? data.message : (data.error?.message || limitToast);
-          toast.error(limitMsg);
+          const userIsReallyUnlimited = Boolean(isUserUnlimited || hasUnlimitedAi || getCachedVipStatus(userId, userEmail));
+          if (!userIsReallyUnlimited) {
+            setIsUserUnlimited(false);
+            const limitMsg = typeof data.message === 'string' ? data.message : (data.error?.message || limitToast);
+            toast.error(limitMsg);
+          } else {
+            // User is truly VIP! A 403 or server quota surge must NEVER strip their VIP status!
+            const friendlyVipMsg = `${expertName} is experiencing a surge in consultations right now. As a VIP student, your access remains completely unlimited! Please try asking again in a few moments. 💕`;
+            toast.info(friendlyVipMsg);
+          }
           setLoading(false);
           return;
         }
@@ -982,7 +1147,7 @@ export default function AiAssistantModal({ userId, userEmail, userName, userAvat
                     {expertName}
                   </h3>
                   {isUserUnlimited ? (
-                    <span className="inline-flex items-center gap-1 sm:gap-1.5 px-2 py-0.5 rounded-full text-[10px] sm:text-[11px] font-extrabold bg-gradient-to-r from-amber-500/20 via-pink-500/20 to-purple-500/20 text-amber-300 border border-amber-500/30 shadow-[0_0_12px_rgba(245,158,11,0.2)] shrink-0 animate-pulse">
+                    <span className="inline-flex items-center gap-1 sm:gap-1.5 px-2 py-0.5 rounded-full text-[10px] sm:text-[11px] font-extrabold bg-gradient-to-r from-amber-500/20 via-pink-500/20 to-purple-500/20 text-amber-300 border border-amber-500/30 shadow-[0_0_12px_rgba(245,158,11,0.2)] shrink-0">
                       <Sparkles size={11} className="text-amber-400" />
                       <span>VIP Unlimited</span>
                     </span>
@@ -1021,7 +1186,31 @@ export default function AiAssistantModal({ userId, userEmail, userName, userAvat
           </div>
 
           {/* Chat Body - Max Width Centered for Large Screens */}
-          <div className="flex-1 overflow-y-auto p-4 sm:p-6 md:p-8 space-y-4 max-w-4xl mx-auto w-full">
+          <div ref={chatContainerRef} className="flex-1 overflow-y-auto p-4 sm:p-6 md:p-8 space-y-4 max-w-4xl mx-auto w-full">
+            {/* Load Earlier Messages Button */}
+            {hasMoreMessages && (
+              <div className="flex justify-center pt-1 pb-2">
+                <button
+                  type="button"
+                  onClick={loadEarlierMessages}
+                  disabled={isLoadingEarlier}
+                  className="group inline-flex items-center gap-2 px-4 py-2 rounded-xl text-xs sm:text-sm font-semibold bg-zinc-800/90 hover:bg-zinc-700/90 active:scale-95 text-zinc-300 hover:text-white border border-white/10 hover:border-pink-500/40 transition-all shadow-md cursor-pointer disabled:opacity-50"
+                  title="Load earlier messages"
+                >
+                  {isLoadingEarlier ? (
+                    <>
+                      <Loader2 size={14} className="animate-spin text-pink-400" />
+                      <span>Loading earlier messages...</span>
+                    </>
+                  ) : (
+                    <>
+                      <History size={14} className="text-pink-400 group-hover:rotate-[-30deg] transition-transform" />
+                      <span>Load earlier messages</span>
+                    </>
+                  )}
+                </button>
+              </div>
+            )}
             {messages.map((msg) => (
               <motion.div
                 key={msg.id}

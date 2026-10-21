@@ -257,14 +257,19 @@ function normalizeIdentifiers(userIdentifier: string | string[]): string[] {
   return [userIdentifier.trim().toLowerCase()];
 }
 
-// Fast non-blocking DB helpers with strict timeouts
+// Fast non-blocking DB helpers with strict timeouts & pagination
 async function loadChatMessagesFromDb(
   supabaseClient: any,
-  userIdentifier: string | string[]
-): Promise<Array<{ id: string; role: 'user' | 'assistant'; content: string; timestamp: string }>> {
-  if (!isSupabaseConfigured()) return [];
+  userIdentifier: string | string[],
+  limit: number = 20,
+  beforeTimestamp?: string
+): Promise<{
+  messages: Array<{ id: string; role: 'user' | 'assistant'; content: string; timestamp: string; createdAt?: string }>;
+  hasMore: boolean;
+}> {
+  if (!isSupabaseConfigured()) return { messages: [], hasMore: false };
   const ids = normalizeIdentifiers(userIdentifier);
-  if (ids.length === 0) return [];
+  if (ids.length === 0) return { messages: [], hasMore: false };
 
   try {
     const queryPromise = (async () => {
@@ -275,28 +280,43 @@ async function loadChatMessagesFromDb(
         const inList = ids.join(',');
         q = q.or(`user_id.in.(${inList}),user_email.in.(${inList})`);
       }
-      const res = await q.order('created_at', { ascending: true }).limit(100);
+
+      if (beforeTimestamp) {
+        q = q.lt('created_at', beforeTimestamp);
+      }
+
+      // Order newest first so we get the most recent messages up to limit + 1
+      const res = await q.order('created_at', { ascending: false }).limit(limit + 1);
+
       if (res?.data && Array.isArray(res.data)) {
-        return res.data.map((row: any) => ({
+        const hasMore = res.data.length > limit;
+        const pageRows = res.data.slice(0, limit);
+        // Reverse so chronological order (oldest to newest) is restored for display
+        pageRows.reverse();
+
+        const mapped = pageRows.map((row: any) => ({
           id: String(row.id),
           role: row.role === 'assistant' ? 'assistant' : 'user',
           content: String(row.content),
+          createdAt: String(row.created_at || ''),
           timestamp: String(
             row.timestamp ||
             (row.created_at ? new Date(row.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '')
           )
         }));
+
+        return { messages: mapped, hasMore };
       }
-      return [];
+      return { messages: [], hasMore: false };
     })();
 
     return await Promise.race([
       queryPromise,
-      new Promise<any[]>((resolve) => setTimeout(() => resolve([]), 1500))
+      new Promise<{ messages: any[]; hasMore: boolean }>((resolve) => setTimeout(() => resolve({ messages: [], hasMore: false }), 1800))
     ]);
   } catch (err) {
     console.warn('[AI Chat] loadChatMessagesFromDb note:', err);
-    return [];
+    return { messages: [], hasMore: false };
   }
 }
 
@@ -409,27 +429,53 @@ async function saveUserMemoryToDb(
 
 async function checkUserVipFast(
   supabaseClient: any,
-  userIdentifier: string
+  userIdentifier: string,
+  candidateIds: string[] = []
 ): Promise<boolean> {
   if (!isSupabaseConfigured() || !userIdentifier) return false;
   try {
     const isUUID = (str: string) => /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(str);
+    const allIds = Array.from(new Set([userIdentifier, ...candidateIds].filter(Boolean)));
+    const uuidIds = allIds.filter(id => isUUID(id));
+    const emailIds = allIds.filter(id => id.includes('@'));
+
     const queryPromise = (async () => {
-      let q = supabaseClient.from('profiles').select('has_unlimited_ai').limit(1);
-      if (isUUID(userIdentifier)) {
-        q = q.eq('id', userIdentifier);
-      } else if (userIdentifier.includes('@')) {
-        q = q.eq('email', userIdentifier);
+      // 1. Check profiles table for has_unlimited_ai or is_admin
+      let q = supabaseClient.from('profiles').select('id, has_unlimited_ai, is_admin').limit(1);
+      if (uuidIds.length > 0) {
+        q = q.in('id', uuidIds);
+      } else if (emailIds.length > 0) {
+        q = q.in('email', emailIds);
       } else {
+        q = q.eq('id', userIdentifier);
+      }
+      const { data: profile } = await q.maybeSingle();
+      if (profile?.has_unlimited_ai === true || profile?.is_admin === true) {
+        return true;
+      }
+      if (profile?.has_unlimited_ai === false) {
         return false;
       }
-      const { data } = await q.maybeSingle();
-      return !!data?.has_unlimited_ai;
+
+      // 2. Check purchases table for active VIP subscription / unlimited products
+      const vipProductIds = ['ai_subscription', 'prod_ai_default', 'hotmart_ia_victoria', 'ia_vip', 'unlimited_ai', 'ai_unlimited'];
+      let pQuery = supabaseClient.from('purchases').select('id').in('product_id', vipProductIds).limit(1);
+      if (uuidIds.length > 0) {
+        pQuery = pQuery.in('user_id', uuidIds);
+      } else {
+        pQuery = pQuery.eq('user_id', userIdentifier);
+      }
+      const { data: purchase } = await pQuery.maybeSingle();
+      if (purchase?.id) {
+        return true;
+      }
+
+      return false;
     })();
 
     return await Promise.race([
       queryPromise,
-      new Promise<boolean>((resolve) => setTimeout(() => resolve(false), 350))
+      new Promise<boolean>((resolve) => setTimeout(() => resolve(false), 1200))
     ]);
   } catch (_) {
     return false;
@@ -544,22 +590,28 @@ export async function handleAiChat(req: VercelRequest, res: VercelResponse) {
       ].map(id => (id || '').toString().trim().toLowerCase()).filter(Boolean);
 
       if (candidateIds.length === 0) {
-        return res.status(200).json({ success: true, messages: [], userMemory: null });
+        return res.status(200).json({ success: true, messages: [], hasMore: false, userMemory: null, isUserUnlimited: false });
       }
 
-      const [storedMessages, storedMemory] = await Promise.all([
-        loadChatMessagesFromDb(supabaseAdmin, candidateIds).catch(() => []),
-        loadUserMemoryFast(supabaseAdmin, candidateIds).catch(() => null)
+      const limit = Math.min(50, Math.max(1, parseInt((req.query?.limit as string) || '20', 10)));
+      const before = (req.query?.before as string || '').trim();
+
+      const [storedData, storedMemory, isVip] = await Promise.all([
+        loadChatMessagesFromDb(supabaseAdmin, candidateIds, limit, before || undefined).catch(() => ({ messages: [], hasMore: false })),
+        loadUserMemoryFast(supabaseAdmin, candidateIds).catch(() => null),
+        checkUserVipFast(supabaseAdmin, candidateIds[0], candidateIds).catch(() => false)
       ]);
 
       return res.status(200).json({
         success: true,
-        messages: storedMessages || [],
-        userMemory: storedMemory || null
+        messages: storedData.messages || [],
+        hasMore: storedData.hasMore || false,
+        userMemory: storedMemory || null,
+        isUserUnlimited: isVip
       });
     } catch (getErr: any) {
       console.warn('[AI Chat API GET Error]:', getErr?.message || getErr);
-      return res.status(200).json({ success: true, messages: [], userMemory: null });
+      return res.status(200).json({ success: true, messages: [], hasMore: false, userMemory: null, isUserUnlimited: false });
     }
   }
 
@@ -591,18 +643,29 @@ export async function handleAiChat(req: VercelRequest, res: VercelResponse) {
       saveChatMessageToDb(supabaseAdmin, candidateIds, lastUserMsg).catch(() => {});
     }
 
-    // 2. Parallel Fast Context: Load Memory and VIP Status simultaneously (max 450ms)
+    // Check if client explicitly sent that user is VIP (e.g. from authenticated session/profile)
+    const clientSaysUnlimited = 
+      body?.hasUnlimitedAi === true || 
+      body?.hasUnlimitedAi === 'true' ||
+      userContext?.hasUnlimitedAi === true || 
+      userContext?.hasUnlimitedAi === 'true' ||
+      body?.isUserUnlimited === true ||
+      body?.isUserUnlimited === 'true' ||
+      userContext?.isUserUnlimited === true ||
+      userContext?.isUserUnlimited === 'true';
+
+    // 2. Parallel Fast Context: Load Memory and VIP Status simultaneously
     let existingMemory: UserMemoryProfile | null = null;
-    let isUserUnlimited = false;
+    let isUserUnlimited = clientSaysUnlimited;
 
     if (candidateIds.length > 0 && isSupabaseConfigured()) {
       try {
         const [memRes, vipRes] = await Promise.all([
           loadUserMemoryFast(supabaseAdmin, candidateIds),
-          checkUserVipFast(supabaseAdmin, userIdentifier)
+          !isUserUnlimited ? checkUserVipFast(supabaseAdmin, userIdentifier, candidateIds) : Promise.resolve(true)
         ]);
         existingMemory = memRes;
-        isUserUnlimited = vipRes;
+        isUserUnlimited = isUserUnlimited || vipRes;
       } catch (_) {}
     }
 

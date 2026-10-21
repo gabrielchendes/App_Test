@@ -55,7 +55,7 @@ export function showModernToast(
   optionsInput?: ToastOptions | string | React.ReactNode
 ) {
   const { title, opts } = normalizeTitleAndOptions(titleInput, optionsInput);
-  const duration = opts?.duration || 4500;
+  const duration = opts?.duration || 4000;
 
   return sonnerToast.custom(
     (id) => (
@@ -65,13 +65,10 @@ export function showModernToast(
         description={opts?.description}
         variant={variant}
         icon={opts?.icon}
-        badge={opts?.badge}
         action={opts?.action}
-        duration={duration}
       />
     ),
-    // Extra safety buffer allows ModernTopToast to smoothly complete its upward glide before Sonner disposes it
-    { duration: duration + 1000, id: opts?.id }
+    { duration, id: opts?.id }
   );
 }
 

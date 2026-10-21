@@ -21,7 +21,8 @@ import { motion, AnimatePresence } from 'motion/react';
 import { createNotification } from '../lib/notifications';
 import { useSettings } from '../contexts/SettingsContext';
 import { useI18n } from '../contexts/I18nContext';
-import { Course } from '../types/lms';
+import { Course, Chapter, Module } from '../types/lms';
+import { fromDbChapter } from '../utils/htmlAppHelper';
 import { dataCache } from '../lib/cache';
 import { cn } from '../lib/utils';
 import { lazyWithRetry } from '../lib/lazyWithRetry';
@@ -269,7 +270,13 @@ export default function Dashboard({ user }: DashboardProps) {
     }
 
     // Prioritized preloading of chunks and assets according to user frequency:
-    // 1. High Priority: Comunidade and IA Expert (Ask Victoria) - Warm up early
+    // 1. High Priority: CourseViewer and CoursePreviewViewer (ensures 0ms delay on course click)
+    const courseViewerTimer = setTimeout(() => {
+      import('../components/CourseViewer');
+      import('../components/CoursePreviewViewer');
+    }, 250);
+
+    // 2. High Priority: Comunidade and IA Expert (Ask Victoria) - Warm up early
     const highPriorityTimer = setTimeout(() => {
       import('../components/Community');
       import('../components/AiAssistantModal');
@@ -277,16 +284,17 @@ export default function Dashboard({ user }: DashboardProps) {
       const victoriaAvatar = 'https://fhnmpltilhongdofnzbj.supabase.co/storage/v1/object/public/contents/Victoria.webp';
       const img = new Image();
       img.src = victoriaAvatar;
-    }, 200);
+    }, 600);
 
-    // 2. Medium Priority: Profile tab
+    // 3. Medium Priority: Profile tab
     const profileTimer = setTimeout(() => {
       import('../components/Profile');
     }, 2000);
 
-    // 3. Admin Panel is strictly on-demand (only loaded when an admin clicks the admin tab)
+    // 4. Admin Panel is strictly on-demand (only loaded when an admin clicks the admin tab)
 
     return () => {
+      clearTimeout(courseViewerTimer);
       clearTimeout(highPriorityTimer);
       clearTimeout(profileTimer);
       unsubscribe();
@@ -678,6 +686,54 @@ export default function Dashboard({ user }: DashboardProps) {
     return Math.min(100, Math.round((completedCount / chaptersInCourse.length) * 100));
   }, [courseChapters, userProgress]);
 
+  // High-performance course prefetching: fetches modules and chapters into cache ahead of time
+  const prefetchCourse = useCallback(async (courseOrId: Course | string) => {
+    const cId = typeof courseOrId === 'string' ? courseOrId : courseOrId?.id;
+    if (!cId || dataCache.get(`course_full_${cId}`)) return;
+    try {
+      // Pre-warm CourseViewer chunk
+      import('../components/CourseViewer');
+
+      const { data: modulesData } = await supabase
+        .from('modules')
+        .select('*, chapters(*)')
+        .eq('course_id', cId)
+        .order('order_index');
+
+      if (modulesData && Array.isArray(modulesData)) {
+        const chaptersList: Chapter[] = [];
+        const cleanModules: Module[] = modulesData.map((m: any) => {
+          const { chapters: rawChs, ...modProps } = m;
+          if (Array.isArray(rawChs)) {
+            const sorted = [...rawChs].sort((a, b) => (a.order_index ?? 0) - (b.order_index ?? 0));
+            chaptersList.push(...sorted.map(fromDbChapter));
+          }
+          return modProps as Module;
+        });
+
+        const targetCourse = typeof courseOrId === 'object' ? courseOrId : courses.find(c => c.id === cId);
+        dataCache.set(`course_full_${cId}`, {
+          course: targetCourse || null,
+          modules: cleanModules,
+          chapters: chaptersList,
+          progress: userProgress || []
+        }, 600000);
+      }
+    } catch (_) {}
+  }, [courses, userProgress]);
+
+  // Silently warm up the first 3 unlocked courses in background for 0ms open latency
+  useEffect(() => {
+    if (courses.length > 0) {
+      const unlocked = courses.filter(c => isUnlocked(c)).slice(0, 3);
+      unlocked.forEach((c, idx) => {
+        setTimeout(() => {
+          prefetchCourse(c);
+        }, 500 + idx * 300);
+      });
+    }
+  }, [courses, isUnlocked, prefetchCourse]);
+
   const unlockedCourses = useMemo(() => {
     return courses.filter(p => isUnlocked(p) && !p.is_bonus);
   }, [courses, isUnlocked]);
@@ -885,6 +941,7 @@ export default function Dashboard({ user }: DashboardProps) {
             <CourseViewer 
               courseId={viewingCourseId} 
               initialCourse={viewingCourse}
+              initialProgress={userProgress}
               userId={user.id} 
               onClose={() => {
                 setViewingCourseId(null);
@@ -1043,6 +1100,7 @@ className="w-full py-3 text-[10px] text-gray-600 font-bold uppercase tracking-[0
                             stats={courseStats[course.id]}
                             settings={settings}
                             onOpen={handleOpenCourse}
+                            onPrefetch={prefetchCourse}
                           />
                         ))
                       ) : hasInitialFetchCompleted ? (
@@ -1075,6 +1133,7 @@ className="w-full py-3 text-[10px] text-gray-600 font-bold uppercase tracking-[0
                             stats={courseStats[course.id]}
                             settings={settings}
                             onOpen={handleOpenCourse}
+                            onPrefetch={prefetchCourse}
                           />
                         ))}
                       </Carousel>
@@ -1099,6 +1158,7 @@ className="w-full py-3 text-[10px] text-gray-600 font-bold uppercase tracking-[0
                             stats={courseStats[course.id]}
                             settings={settings}
                             onOpen={handleOpenCourse}
+                            onPrefetch={prefetchCourse}
                           />
                         ))
                       ) : hasInitialFetchCompleted ? (
@@ -1202,7 +1262,8 @@ className="w-full py-3 text-[10px] text-gray-600 font-bold uppercase tracking-[0
               : Boolean(
                   userProfile?.has_unlimited_ai === true || 
                   userProfile?.is_admin === true ||
-                  user?.user_metadata?.has_unlimited_ai === true
+                  user?.user_metadata?.has_unlimited_ai === true ||
+                  (Array.isArray(purchases) && purchases.some(p => ['ai_subscription', 'prod_ai_default', 'hotmart_ia_victoria', 'ia_vip', 'unlimited_ai', 'ai_unlimited'].includes(p.product_id)))
                 )
           }
         />

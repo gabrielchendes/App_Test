@@ -12,9 +12,10 @@ interface ProductCardProps {
   stats?: { lessons: number, materials: number };
   settings?: any;
   onOpen: (product: Course) => void;
+  onPrefetch?: (product: Course) => void;
 }
 
-const ProductCard = memo(({ product, isUnlocked, progress = 0, stats, settings, onOpen }: ProductCardProps) => {
+const ProductCard = memo(({ product, isUnlocked, progress = 0, stats, settings, onOpen, onPrefetch }: ProductCardProps) => {
   const { t } = useI18n();
 
   // State calculations
@@ -60,6 +61,8 @@ const ProductCard = memo(({ product, isUnlocked, progress = 0, stats, settings, 
         "relative flex-shrink-0 w-[140px] sm:w-[190px] cursor-pointer group rounded-2xl overflow-hidden shadow-2xl bg-zinc-950 transition-all duration-300 snap-start flex flex-col p-[1.5px] touch-pan-x touch-pan-y",
         stateConfig.bgGlow
       )}
+      onMouseEnter={() => onPrefetch?.(product)}
+      onTouchStart={() => onPrefetch?.(product)}
       onClick={() => onOpen(product)}
     >
       {/* Precision Uniform Border Glow Effect */}

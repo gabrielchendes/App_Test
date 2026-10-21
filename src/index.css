@@ -243,7 +243,7 @@ body {
 [data-sonner-toaster],
 [data-sonner-toaster] > ol,
 [data-sonner-toaster] > * {
-  top: max(24px, calc(env(safe-area-inset-top, 0px) + 16px)) !important;
+  top: max(20px, calc(env(safe-area-inset-top, 0px) + 12px)) !important;
   z-index: 999999 !important;
   pointer-events: none !important;
 }
@@ -254,17 +254,16 @@ body {
   box-shadow: none !important;
   padding: 0 !important;
   pointer-events: auto !important;
-  touch-action: pan-x pan-y !important;
   overflow: visible !important;
 }
 
-/* Ensure Sonner's internal fade on removed vanishes cleanly with the same elegant upward glide without freezing */
+/* Subtle, smooth dismiss: clean fade and micro-scale without shifting up into the status bar or freezing */
 [data-sonner-toast][data-removed="true"],
 [data-sonner-toast][data-dismissed="true"] {
   opacity: 0 !important;
   pointer-events: none !important;
-  transform: translateY(-56px) scale(0.94) !important;
-  transition: opacity 0.32s cubic-bezier(0.22, 1, 0.36, 1), transform 0.32s cubic-bezier(0.22, 1, 0.36, 1) !important;
+  transform: scale(0.96) translateY(-6px) !important;
+  transition: opacity 0.22s ease-out, transform 0.22s ease-out !important;
 }
 
 [data-sonner-toast]:not(:has(.group)) {
