@@ -239,42 +239,51 @@ body {
   }
 }
 
-/* Modern Sonner Toast styling */
-[data-sonner-toaster],
-[data-sonner-toaster] > ol,
-[data-sonner-toaster] > * {
-  top: max(20px, calc(env(safe-area-inset-top, 0px) + 12px)) !important;
+/* Notice Banner ("Quadro de Avisos") & Sonner Styling */
+@keyframes noticeSlideIn {
+  from {
+    opacity: 0;
+    transform: translate3d(0, -12px, 0) scale(0.97);
+  }
+  to {
+    opacity: 1;
+    transform: translate3d(0, 0, 0) scale(1);
+  }
+}
+
+.animate-notice-in {
+  animation: noticeSlideIn 0.22s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+  will-change: transform, opacity;
+}
+
+[data-sonner-toaster] {
+  top: max(16px, calc(env(safe-area-inset-top, 0px) + 12px)) !important;
   z-index: 999999 !important;
   pointer-events: none !important;
 }
 
+[data-sonner-toaster] > ol,
+[data-sonner-toaster] > * {
+  pointer-events: none !important;
+}
+
+/* Ensure completely transparent outer Sonner shell with zero borders or nested paddings */
 [data-sonner-toast] {
   background: transparent !important;
   border: none !important;
   box-shadow: none !important;
   padding: 0 !important;
+  margin: 0 !important;
   pointer-events: auto !important;
   overflow: visible !important;
 }
 
-/* Subtle, smooth dismiss: clean fade and micro-scale without shifting up into the status bar or freezing */
+/* Smooth, silky dismiss without coordinate jumping or hanging */
 [data-sonner-toast][data-removed="true"],
 [data-sonner-toast][data-dismissed="true"] {
   opacity: 0 !important;
   pointer-events: none !important;
-  transform: scale(0.96) translateY(-6px) !important;
-  transition: opacity 0.22s ease-out, transform 0.22s ease-out !important;
-}
-
-[data-sonner-toast]:not(:has(.group)) {
-  background: rgba(15, 17, 24, 0.95) !important;
-  backdrop-filter: blur(16px) !important;
-  -webkit-backdrop-filter: blur(16px) !important;
-  border: 1px solid rgba(245, 158, 11, 0.35) !important;
-  border-radius: 18px !important;
-  box-shadow: 0 14px 40px -8px rgba(0, 0, 0, 0.7), 0 0 24px rgba(245, 158, 11, 0.2) !important;
-  color: #ffffff !important;
-  padding: 12px 16px !important;
+  transition: opacity 0.18s cubic-bezier(0.16, 1, 0.3, 1) !important;
 }
 
 @keyframes goldShimmerSweep {

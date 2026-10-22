@@ -1,5 +1,4 @@
-import React from 'react';
-import { motion } from 'motion/react';
+import React, { useState, useCallback } from 'react';
 import { CheckCircle2, AlertCircle, AlertTriangle, Info, Bell, X, Trophy, Loader2 } from 'lucide-react';
 import { toast } from 'sonner';
 
@@ -10,79 +9,58 @@ export interface ModernTopToastProps {
   title: string | React.ReactNode;
   description?: string | React.ReactNode;
   variant?: ToastVariant;
+  category?: string;
+  badge?: string;
   icon?: React.ReactNode;
   action?: {
     label: string;
     onClick: () => void;
   };
+  onClose?: () => void;
 }
 
 interface VariantConfig {
-  iconBg: string;
-  iconBorder: string;
-  iconNode: React.ReactNode;
-  glowShadow: string;
-  borderColor: string;
-  accentBar: string;
+  icon: React.ReactNode;
+  iconColor: string;
+  badgeColor: string;
 }
 
 const variantConfigs: Record<ToastVariant, VariantConfig> = {
   success: {
-    iconBg: 'bg-emerald-500/15',
-    iconBorder: 'border-emerald-500/30',
-    iconNode: <CheckCircle2 size={15} className="text-emerald-400" />,
-    glowShadow: 'shadow-[0_12px_28px_-8px_rgba(16,185,129,0.22),0_4px_16px_rgba(0,0,0,0.5)]',
-    borderColor: 'border-emerald-500/30',
-    accentBar: 'from-emerald-400/80 via-teal-400/40 to-transparent',
+    icon: <CheckCircle2 size={16} strokeWidth={2.2} className="text-emerald-400" />,
+    iconColor: 'text-emerald-400',
+    badgeColor: 'text-emerald-400',
   },
   error: {
-    iconBg: 'bg-rose-500/15',
-    iconBorder: 'border-rose-500/30',
-    iconNode: <AlertCircle size={15} className="text-rose-400" />,
-    glowShadow: 'shadow-[0_12px_28px_-8px_rgba(244,63,94,0.22),0_4px_16px_rgba(0,0,0,0.5)]',
-    borderColor: 'border-rose-500/30',
-    accentBar: 'from-rose-500/80 via-red-400/40 to-transparent',
+    icon: <AlertCircle size={16} strokeWidth={2.2} className="text-rose-400" />,
+    iconColor: 'text-rose-400',
+    badgeColor: 'text-rose-400',
   },
   warning: {
-    iconBg: 'bg-amber-500/15',
-    iconBorder: 'border-amber-400/40',
-    iconNode: <AlertTriangle size={15} className="text-amber-300" />,
-    glowShadow: 'shadow-[0_12px_28px_-8px_rgba(245,158,11,0.22),0_4px_16px_rgba(0,0,0,0.5)]',
-    borderColor: 'border-amber-400/40',
-    accentBar: 'from-amber-400/80 via-yellow-400/40 to-transparent',
+    icon: <AlertTriangle size={16} strokeWidth={2.2} className="text-amber-400" />,
+    iconColor: 'text-amber-400',
+    badgeColor: 'text-amber-400',
   },
   info: {
-    iconBg: 'bg-sky-500/15',
-    iconBorder: 'border-sky-500/30',
-    iconNode: <Info size={15} className="text-sky-400" />,
-    glowShadow: 'shadow-[0_12px_28px_-8px_rgba(56,189,248,0.2),0_4px_16px_rgba(0,0,0,0.5)]',
-    borderColor: 'border-sky-500/30',
-    accentBar: 'from-sky-400/80 via-blue-400/40 to-transparent',
+    icon: <Info size={16} strokeWidth={2.2} className="text-sky-400" />,
+    iconColor: 'text-sky-400',
+    badgeColor: 'text-sky-400',
   },
   achievement: {
-    iconBg: 'bg-amber-400/15',
-    iconBorder: 'border-amber-400/40',
-    iconNode: <Trophy size={15} className="text-amber-300" />,
-    glowShadow: 'shadow-[0_12px_28px_-8px_rgba(251,191,36,0.25),0_4px_16px_rgba(0,0,0,0.5)]',
-    borderColor: 'border-amber-400/40',
-    accentBar: 'from-amber-400/80 via-yellow-400/40 to-transparent',
+    icon: <Trophy size={16} strokeWidth={2.2} className="text-amber-300" />,
+    iconColor: 'text-amber-300',
+    badgeColor: 'text-amber-300',
   },
   loading: {
-    iconBg: 'bg-white/10',
-    iconBorder: 'border-white/15',
-    iconNode: <Loader2 size={15} className="text-amber-400 animate-spin" />,
-    glowShadow: 'shadow-[0_10px_25px_-8px_rgba(0,0,0,0.6)]',
-    borderColor: 'border-white/15',
-    accentBar: 'from-amber-400/60 via-white/15 to-transparent',
+    icon: <Loader2 size={16} strokeWidth={2.2} className="text-amber-400 animate-spin" />,
+    iconColor: 'text-amber-400',
+    badgeColor: 'text-amber-400',
   },
   default: {
-    iconBg: 'bg-white/10',
-    iconBorder: 'border-white/15',
-    iconNode: <Bell size={15} className="text-zinc-300" />,
-    glowShadow: 'shadow-[0_10px_25px_-8px_rgba(0,0,0,0.6)]',
-    borderColor: 'border-white/15',
-    accentBar: 'from-white/30 via-white/10 to-transparent',
-  }
+    icon: <Bell size={16} strokeWidth={2.2} className="text-zinc-300" />,
+    iconColor: 'text-zinc-300',
+    badgeColor: 'text-zinc-400',
+  },
 };
 
 export const ModernTopToast: React.FC<ModernTopToastProps> = ({
@@ -90,78 +68,119 @@ export const ModernTopToast: React.FC<ModernTopToastProps> = ({
   title,
   description,
   variant = 'default',
+  category,
+  badge,
   icon,
   action,
+  onClose,
 }) => {
+  const [isExiting, setIsExiting] = useState(false);
   const cfg = variantConfigs[variant] || variantConfigs.default;
 
+  const handleDismiss = useCallback(
+    (e?: React.SyntheticEvent) => {
+      if (e) {
+        e.preventDefault();
+        e.stopPropagation();
+        if ('nativeEvent' in e && (e.nativeEvent as any)?.stopImmediatePropagation) {
+          (e.nativeEvent as any).stopImmediatePropagation();
+        }
+      }
+      setIsExiting(true);
+      if (onClose) onClose();
+      setTimeout(() => {
+        toast.dismiss(id);
+      }, 100);
+    },
+    [id, onClose]
+  );
+
+  const kickerText = badge || category;
+
+  // Render icon node properly whether string emoji or React element
+  const renderedIcon = React.isValidElement(icon) ? (
+    icon
+  ) : typeof icon === 'string' ? (
+    <span className="text-base leading-none select-none">{icon}</span>
+  ) : (
+    cfg.icon
+  );
+
   return (
-    <motion.div
-      initial={{ opacity: 0, y: -16, scale: 0.96 }}
-      animate={{ opacity: 1, y: 0, scale: 1 }}
-      exit={{ opacity: 0, y: -8, scale: 0.96 }}
-      transition={{ duration: 0.24, ease: [0.16, 1, 0.3, 1] }}
-      className="relative w-full max-w-[90vw] sm:max-w-[350px] mx-auto select-none pointer-events-auto"
+    <div
+      className={`group relative w-full max-w-[92vw] sm:max-w-[380px] mx-auto pointer-events-auto transition-all duration-150 ease-out ${
+        isExiting ? 'opacity-0 -translate-y-2 scale-98 pointer-events-none' : 'animate-notice-in'
+      }`}
+      style={{ touchAction: 'manipulation' }}
     >
-      {/* Sleek, Compact Luxury Glass Capsule with Unified Balanced Sizing */}
-      <div 
-        style={{ boxSizing: 'border-box' }}
-        className={`relative rounded-2xl bg-[#0c0d14]/95 backdrop-blur-2xl border ${cfg.borderColor} ${cfg.glowShadow} transition-all duration-200 overflow-hidden`}
-      >
-        {/* Compact, clean horizontal layout */}
-        <div className="flex items-center gap-3 px-3.5 py-3 text-white">
-          {/* Refined Icon Frame */}
-          <div className={`relative w-7 h-7 rounded-xl shrink-0 ${cfg.iconBg} border ${cfg.iconBorder} flex items-center justify-center shadow-sm shadow-black/40`}>
-            {icon || cfg.iconNode}
-          </div>
-
-          {/* Typography Content */}
-          <div className="flex-1 min-w-0 pr-1 text-left">
-            <div className="text-[13px] font-semibold text-zinc-100 tracking-[-0.01em] leading-snug break-words line-clamp-2">
-              {title}
-            </div>
-            {description && (
-              <div className="mt-0.5 text-[11.5px] text-zinc-400 font-normal leading-normal break-words line-clamp-2">
-                {description}
-              </div>
-            )}
-            {action && (
-              <div className="mt-1.5">
-                <button
-                  type="button"
-                  onClick={(e) => {
-                    e.preventDefault();
-                    e.stopPropagation();
-                    action.onClick();
-                    toast.dismiss(id);
-                  }}
-                  className="px-2.5 py-1 bg-white/10 hover:bg-white/20 active:scale-95 border border-white/15 text-white font-medium text-[10.5px] tracking-wide rounded-lg transition-all cursor-pointer"
-                >
-                  {action.label}
-                </button>
-              </div>
-            )}
-          </div>
-
-          {/* Minimalist Close Button */}
-          <button
-            type="button"
-            onClick={(e) => {
-              e.preventDefault();
-              e.stopPropagation();
-              toast.dismiss(id);
-            }}
-            className="shrink-0 w-6 h-6 flex items-center justify-center text-zinc-400 hover:text-white rounded-full hover:bg-white/10 active:scale-90 transition-all cursor-pointer"
-            title="Dismiss notice"
-            aria-label="Dismiss notice"
-          >
-            <X size={13} strokeWidth={2.2} />
-          </button>
+      {/* 
+        Zero-Nesting Single Surface:
+        One seamless, elegant card container with subtle hairline border,
+        airy padding, and soft shadow without any inner nested boxes or double borders.
+      */}
+      <div className="relative flex items-start gap-3.5 px-4 py-3.5 rounded-2xl bg-[#0f111a]/95 backdrop-blur-xl border border-white/[0.08] shadow-[0_12px_32px_-8px_rgba(0,0,0,0.65),0_2px_8px_rgba(0,0,0,0.4)] text-white">
+        {/* Subtle, unboxed semantic icon */}
+        <div className="shrink-0 mt-0.5 flex items-center justify-center w-8 h-8 rounded-xl bg-white/[0.04] text-zinc-300">
+          {renderedIcon}
         </div>
 
-        {/* Micro accent highlight line at bottom */}
-        <div className={`absolute bottom-0 left-0 right-0 h-[1.5px] bg-gradient-to-r ${cfg.accentBar}`} />
+        {/* Content Flow */}
+        <div className="flex-1 min-w-0 pr-1 text-left">
+          {/* Integrated quiet kicker (badge/category) */}
+          {kickerText && (
+            <div className="text-[11px] font-medium tracking-wide mb-0.5">
+              <span className={cfg.badgeColor}>{kickerText}</span>
+            </div>
+          )}
+
+          {/* Title */}
+          <div className="text-[13.5px] font-semibold text-zinc-100 tracking-[-0.01em] leading-snug break-words">
+            {title}
+          </div>
+
+          {/* Description */}
+          {description && (
+            <div className="mt-1 text-[12px] text-zinc-400 font-normal leading-relaxed break-words">
+              {description}
+            </div>
+          )}
+
+          {/* Action button */}
+          {action && (
+            <div className="mt-2.5">
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  action.onClick();
+                  handleDismiss(e);
+                }}
+                className="inline-flex items-center px-3 py-1.5 rounded-lg text-xs font-medium text-zinc-200 bg-white/[0.07] hover:bg-white/[0.12] active:scale-95 border border-white/[0.08] transition-all cursor-pointer touch-manipulation"
+              >
+                {action.label}
+              </button>
+            </div>
+          )}
+        </div>
+
+        {/* 
+          Ergonomic Close Button:
+          Large 36x36px comfortable touch zone, stops event propagation to prevent
+          swiping/drag gestures from intercepting tap, with smooth micro-interaction.
+        */}
+        <button
+          type="button"
+          onClick={handleDismiss}
+          onPointerDown={(e) => e.stopPropagation()}
+          onTouchStart={(e) => e.stopPropagation()}
+          className="shrink-0 -mr-1.5 -mt-1 w-9 h-9 flex items-center justify-center rounded-xl text-zinc-400 hover:text-zinc-100 hover:bg-white/[0.08] active:bg-white/[0.14] active:scale-90 transition-all cursor-pointer touch-manipulation relative z-20 focus:outline-none focus-visible:ring-1 focus-visible:ring-white/20"
+          title="Fechar aviso"
+          aria-label="Fechar aviso"
+        >
+          <X size={15} strokeWidth={2.2} />
+        </button>
       </div>
-    </motion.div>
+    </div>
   );
 };

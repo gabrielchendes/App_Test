@@ -41,12 +41,15 @@ if (typeof window !== 'undefined') {
   }, true);
 }
 
+import { NoticeBoard } from './components/NoticeBoard';
+
 createRoot(document.getElementById('root')!).render(
   <ErrorBoundary>
     <TenantProvider>
       <SettingsProvider>
         <I18nProvider>
           <App />
+          <NoticeBoard />
           <Toaster 
             position="top-center" 
             theme="dark" 
