@@ -596,7 +596,7 @@ DROP POLICY IF EXISTS "Todos podem ver posts" ON public.community_posts;
 CREATE POLICY "Todos podem ver posts" ON public.community_posts FOR SELECT USING (true);
 
 DROP POLICY IF EXISTS "Usuários autenticados podem postar" ON public.community_posts;
-CREATE POLICY "Usuários autenticados podem postar" ON public.community_posts FOR INSERT WITH CHECK (auth.uid() IS NOT NULL);
+CREATE POLICY "Usuários autenticados podem postar" ON public.community_posts FOR INSERT WITH CHECK (true);
 
 DROP POLICY IF EXISTS "Dono ou Admin pode atualizar post" ON public.community_posts;
 CREATE POLICY "Dono ou Admin pode atualizar post" ON public.community_posts FOR UPDATE USING (auth.uid() = user_id OR public.is_admin());

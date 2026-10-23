@@ -532,6 +532,12 @@ async function startServer() {
         req.query.action = subAction;
       }
 
+      if (apiPath.startsWith('v1/community/')) {
+        const subAction = apiPath.replace('v1/community/', '');
+        apiPath = 'v1/community';
+        req.query.action = subAction;
+      }
+
       if (rewrites[apiPath]) {
         const [newPath, newQuery] = rewrites[apiPath].split('?');
         apiPath = newPath;

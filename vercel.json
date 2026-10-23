@@ -55,6 +55,14 @@
       "destination": "/api/v1/notifications?action=:action"
     },
     {
+      "source": "/api/v1/community/:action",
+      "destination": "/api/v1/community?action=:action"
+    },
+    {
+      "source": "/api/v1/community",
+      "destination": "/api/v1/community"
+    },
+    {
       "source": "/api/v1/webhooks/hotmart",
       "destination": "/api/v1/hotmart-webhook"
     },
