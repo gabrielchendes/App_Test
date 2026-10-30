@@ -86,7 +86,19 @@ export default function ChapterQuestions({ chapterId, userId: initialUserId, use
         }
         throw error;
       }
-      setQuestions(data || []);
+
+      const deletedIds: string[] = (() => {
+        try {
+          return JSON.parse(settings?.custom_texts?.['deleted_question_ids'] || '[]');
+        } catch {
+          return [];
+        }
+      })();
+
+      const activeQuestions = (data || []).filter((q: ChapterQuestion) => 
+        !deletedIds.includes(q.id) && q.question !== '[DELETED]'
+      );
+      setQuestions(activeQuestions);
     } catch (error) {
       console.error('Error fetching questions:', error);
     } finally {
@@ -182,6 +194,11 @@ export default function ChapterQuestions({ chapterId, userId: initialUserId, use
     }
   };
 
+  const expertName = settings?.custom_texts?.['ai_expert.name'] || 'Victoria';
+  const expertAvatar = (settings?.custom_texts?.['ai_expert.avatar_url'] && settings.custom_texts['ai_expert.avatar_url'].trim())
+    ? settings.custom_texts['ai_expert.avatar_url'].trim()
+    : 'https://fhnmpltilhongdofnzbj.supabase.co/storage/v1/object/public/contents/Victoria.webp';
+
   return (
     <div className="w-full space-y-8 mt-12 mb-20 animate-in fade-in slide-in-from-bottom-4 duration-700">
       <div className="flex items-center gap-3 border-b border-white/5 pb-4">
@@ -237,7 +254,7 @@ export default function ChapterQuestions({ chapterId, userId: initialUserId, use
             >
               <div className="flex items-start justify-between gap-4">
                 <div className="flex items-center gap-3">
-                  <div className="w-10 h-10 rounded-2xl bg-zinc-800 flex items-center justify-center text-gray-500 border border-white/5 overflow-hidden">
+                  <div className="w-10 h-10 rounded-full bg-zinc-800 flex items-center justify-center text-gray-500 border border-white/5 overflow-hidden shrink-0">
                     {q.user_avatar_url ? (
                       <img src={q.user_avatar_url} alt={q.user_name} className="w-full h-full object-cover" />
                     ) : (
@@ -267,17 +284,24 @@ export default function ChapterQuestions({ chapterId, userId: initialUserId, use
                     animate={{ opacity: 1, height: 'auto' }}
                     className="pt-4 border-t border-white/5 space-y-3"
                   >
-                    <div className="flex items-center gap-2 text-primary">
-                      <ShieldCheck size={14} />
-                      <span className="text-[10px] font-black uppercase tracking-[0.2em] italic">
-                        {t('course.admin_answer') || 'Resposta do Expert'}
-                      </span>
+                    <div className="flex items-center gap-3">
+                      <div className="w-10 h-10 rounded-full bg-red-500/10 flex items-center justify-center border border-red-500/30 overflow-hidden shrink-0 shadow-md">
+                        <img
+                          src={expertAvatar}
+                          alt={expertName}
+                          className="w-full h-full object-cover"
+                          onError={(e) => {
+                            (e.target as HTMLImageElement).src = 'https://fhnmpltilhongdofnzbj.supabase.co/storage/v1/object/public/contents/Victoria.webp';
+                          }}
+                        />
+                      </div>
+                      <h4 className="font-bold text-red-500 text-sm tracking-tight">{expertName}</h4>
                     </div>
-                    <div className="bg-primary/5 border border-primary/10 rounded-2xl p-4">
+                    <div className="bg-red-500/5 border border-red-500/10 rounded-2xl p-4">
                       <p className="text-white text-sm leading-relaxed whitespace-pre-wrap">
                         {q.answer}
                       </p>
-                      <div className="mt-2 flex items-center justify-end gap-2 text-[9px] font-black text-primary/40 uppercase tracking-widest italic">
+                      <div className="mt-2 flex items-center justify-end gap-2 text-[9px] font-black text-red-500/40 uppercase tracking-widest italic">
                         <CheckCircle2 size={10} />
                         {t('course.answered_at') || 'Respondido em'} {formatDate(q.answered_at || q.updated_at)}
                       </div>

@@ -1,4 +1,4 @@
-import React, { useState, useEffect, Suspense } from 'react';
+import React, { useState, useEffect, useRef, Suspense } from 'react';
 import { createPortal } from 'react-dom';
 import { User } from '@supabase/supabase-js';
 import { supabase, isSupabaseConfigured, Product, CommunityPost } from '../lib/supabase';
@@ -86,13 +86,18 @@ import {
   MessageSquareQuote,
   Lock,
   Infinity as InfinityIcon,
-  FileCode
+  FileCode,
+  UserPlus,
+  Wand2,
+  Upload
 } from 'lucide-react';
+import ImageCropperModal from './ImageCropperModal';
 import WhatsAppIcon from './WhatsAppIcon';
 import { toast } from '../lib/customToast';
 import { useSettings } from '../contexts/SettingsContext';
 import { useI18n } from '../contexts/I18nContext';
 import { AdminTestimonials } from './AdminTestimonials';
+import AdminAiContentCreator from './AdminAiContentCreator';
 import { safeParse, safeFetch } from '../lib/utils';
 import { dataCache } from '../lib/cache';
 import { DEFAULT_UNLIMITED_INFO_HTML } from '../constants/defaultUnlimitedHtml';
@@ -245,11 +250,11 @@ export default function AdminPanel({ user }: AdminPanelProps) {
   const { settings, refreshSettings, applyTheme } = useSettings();
   const { t } = useI18n();
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
-  const [activeTab, setActiveTab] = useState<'users' | 'courses' | 'community' | 'notifications' | 'texts' | 'settings' | 'security' | 'pages' | 'vendas' | 'packages' | 'languages' | 'questions' | 'ai_expert' | 'central_produtos' | 'testimonials'>(() => {
+  const [activeTab, setActiveTab] = useState<'users' | 'courses' | 'community' | 'notifications' | 'texts' | 'settings' | 'security' | 'pages' | 'vendas' | 'packages' | 'languages' | 'questions' | 'ai_expert' | 'central_produtos' | 'testimonials' | 'ai_content'>(() => {
     if (typeof window !== 'undefined') {
       const params = new URLSearchParams(window.location.search);
       const subtab = params.get('subtab');
-      const validTabs = ['users', 'courses', 'community', 'notifications', 'texts', 'settings', 'security', 'pages', 'vendas', 'packages', 'languages', 'questions', 'ai_expert', 'central_produtos', 'testimonials'];
+      const validTabs = ['users', 'courses', 'community', 'notifications', 'texts', 'settings', 'security', 'pages', 'vendas', 'packages', 'languages', 'questions', 'ai_expert', 'central_produtos', 'testimonials', 'ai_content'];
       if (subtab && validTabs.includes(subtab)) {
         return subtab as any;
       }
@@ -266,7 +271,7 @@ export default function AdminPanel({ user }: AdminPanelProps) {
       if (typeof window !== 'undefined') {
         const params = new URLSearchParams(window.location.search);
         const subtab = params.get('subtab');
-        const validTabs = ['users', 'courses', 'community', 'notifications', 'texts', 'settings', 'security', 'pages', 'vendas', 'packages', 'languages', 'questions', 'ai_expert', 'central_produtos', 'testimonials'];
+        const validTabs = ['users', 'courses', 'community', 'notifications', 'texts', 'settings', 'security', 'pages', 'vendas', 'packages', 'languages', 'questions', 'ai_expert', 'central_produtos', 'testimonials', 'ai_content'];
         if (subtab && validTabs.includes(subtab)) {
           setActiveTab(subtab as any);
         }
@@ -379,6 +384,243 @@ export default function AdminPanel({ user }: AdminPanelProps) {
   const [answerText, setAnswerText] = useState('');
   const [sendingAnswer, setSendingAnswer] = useState(false);
 
+  const deletedQuestionIds: string[] = (() => {
+    try {
+      return JSON.parse(settings?.custom_texts?.['deleted_question_ids'] || '[]');
+    } catch {
+      return [];
+    }
+  })();
+  const activeQuestions = pendingQuestions.filter(q => 
+    !deletedQuestionIds.includes(q.id) && q.question !== '[DELETED]'
+  );
+
+  // Persona Question in Dúvidas
+  const PERSONA_AVATARS = [
+    'https://images.unsplash.com/photo-1494790108377-be9c29b29330?auto=format&fit=crop&q=80&w=150',
+    'https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&q=80&w=150',
+    'https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?auto=format&fit=crop&q=80&w=150',
+    'https://images.unsplash.com/photo-1438761681033-6461ffad8d80?auto=format&fit=crop&q=80&w=150',
+    'https://images.unsplash.com/photo-1500648767791-00dcc994a43e?auto=format&fit=crop&q=80&w=150',
+    'https://images.unsplash.com/photo-1544005313-94ddf0286df2?auto=format&fit=crop&q=80&w=150',
+  ];
+  const [showPersonaQuestionModal, setShowPersonaQuestionModal] = useState(false);
+  const [personaQuestionName, setPersonaQuestionName] = useState('');
+  const [personaQuestionAvatar, setPersonaQuestionAvatar] = useState(PERSONA_AVATARS[0]);
+  const [personaSelectedCourseId, setPersonaSelectedCourseId] = useState('');
+  const [personaSelectedChapterId, setPersonaSelectedChapterId] = useState('');
+  const [personaQuestionText, setPersonaQuestionText] = useState('');
+  const [personaIncludeAnswer, setPersonaIncludeAnswer] = useState(false);
+  const [personaAnswerText, setPersonaAnswerText] = useState('');
+  const [courseChaptersForPersona, setCourseChaptersForPersona] = useState<Array<{ id: string; title: string; module_title?: string }>>([]);
+  const [loadingChaptersForPersona, setLoadingChaptersForPersona] = useState(false);
+  const [submittingPersonaQuestion, setSubmittingPersonaQuestion] = useState(false);
+  const personaAvatarFileInputRef = useRef<HTMLInputElement>(null);
+
+  const loadChaptersForPersonaCourse = async (courseId: string) => {
+    if (!courseId) {
+      setCourseChaptersForPersona([]);
+      setPersonaSelectedChapterId('');
+      return;
+    }
+    setLoadingChaptersForPersona(true);
+    try {
+      const { data: modulesData, error: modErr } = await supabase
+        .from('modules')
+        .select('id, title, order_index')
+        .eq('course_id', courseId)
+        .order('order_index');
+
+      if (modErr) throw modErr;
+      const modules = modulesData || [];
+      if (modules.length === 0) {
+        setCourseChaptersForPersona([]);
+        setPersonaSelectedChapterId('');
+        return;
+      }
+
+      const moduleMap = new Map(modules.map((m: any) => [m.id, m.title]));
+      const moduleIds = modules.map((m: any) => m.id);
+
+      const { data: chaptersData, error: chapErr } = await supabase
+        .from('chapters')
+        .select('id, title, module_id, order_index')
+        .in('module_id', moduleIds)
+        .order('order_index');
+
+      if (chapErr) throw chapErr;
+
+      const formatted = (chaptersData || []).map((ch: any) => ({
+        id: ch.id,
+        title: ch.title,
+        module_title: moduleMap.get(ch.module_id) || 'Módulo'
+      }));
+
+      setCourseChaptersForPersona(formatted);
+      if (formatted.length > 0) {
+        setPersonaSelectedChapterId(formatted[0].id);
+      } else {
+        setPersonaSelectedChapterId('');
+      }
+    } catch (err) {
+      console.error('Error loading chapters for persona question:', err);
+      toast.error('Erro ao carregar aulas do curso');
+    } finally {
+      setLoadingChaptersForPersona(false);
+    }
+  };
+
+  const handlePersonaAvatarFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (file) {
+      const reader = new FileReader();
+      reader.onloadend = () => {
+        if (typeof reader.result === 'string') {
+          setPersonaQuestionAvatar(reader.result);
+        }
+      };
+      reader.readAsDataURL(file);
+    }
+  };
+
+  const handleSubmitPersonaQuestion = async () => {
+    if (!personaQuestionName.trim()) {
+      toast.error('Informe o nome da aluna/persona');
+      return;
+    }
+    if (!personaSelectedChapterId) {
+      toast.error('Selecione uma aula para publicar a dúvida');
+      return;
+    }
+    if (!personaQuestionText.trim()) {
+      toast.error('Digite a dúvida a ser publicada');
+      return;
+    }
+
+    setSubmittingPersonaQuestion(true);
+    try {
+      const { data: { session } } = await supabase.auth.getSession();
+      const currentUserId = user?.id || session?.user?.id || 'admin_persona';
+      const token = session?.access_token;
+
+      const payload: any = {
+        chapter_id: personaSelectedChapterId,
+        user_id: currentUserId,
+        user_name: personaQuestionName.trim(),
+        user_avatar_url: personaQuestionAvatar.trim() || null,
+        question: personaQuestionText.trim(),
+        is_read_by_admin: true
+      };
+
+      if (personaIncludeAnswer && personaAnswerText.trim()) {
+        payload.answer = personaAnswerText.trim();
+        payload.answered_at = new Date().toISOString();
+        payload.answered_by = currentUserId;
+      }
+
+      let created = false;
+      if (token) {
+        try {
+          const apiRes = await safeFetch(`/api/v1/admin?action=question-create`, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'Authorization': `Bearer ${token}`
+            },
+            body: JSON.stringify(payload)
+          });
+          if (apiRes && apiRes.success) {
+            created = true;
+          }
+        } catch (apiErr) {
+          console.warn('[AdminPanel] question-create via API notice:', apiErr);
+        }
+      }
+
+      if (!created) {
+        const { error } = await supabase.from('chapter_questions').insert(payload);
+        if (error) throw error;
+      }
+
+      toast.success('Dúvida publicada com sucesso na aula!');
+      setShowPersonaQuestionModal(false);
+      setPersonaQuestionText('');
+      setPersonaAnswerText('');
+      setPersonaIncludeAnswer(false);
+
+      // Refresh list
+      const { data: updatedQ, error: refetchErr } = await supabase
+        .from('chapter_questions')
+        .select('*, chapters:chapter_id(title, modules:module_id(courses:course_id(title)))')
+        .order('created_at', { ascending: false });
+      if (!refetchErr && updatedQ) {
+        setPendingQuestions(updatedQ);
+      }
+    } catch (err: any) {
+      console.error('Error inserting persona question:', err);
+      toast.error(err.message || 'Erro ao publicar dúvida');
+    } finally {
+      setSubmittingPersonaQuestion(false);
+    }
+  };
+
+  const handleDeleteQuestion = (questionId: string, studentName: string) => {
+    setConfirmationModal({
+      isOpen: true,
+      title: 'Excluir Dúvida',
+      message: `Tem certeza que deseja excluir permanentemente a dúvida de "${studentName}"? Esta ação removerá a pergunta e qualquer resposta associada.`,
+      type: 'danger',
+      confirmText: 'Sim, Excluir Dúvida',
+      cancelText: 'Cancelar',
+      onConfirm: async () => {
+        try {
+          // 1. Immediately remove from local state
+          setPendingQuestions(prev => prev.filter(q => q.id !== questionId));
+
+          // 2. Add to deleted IDs in settings so it immediately hides across all screens
+          try {
+            const raw = settings?.custom_texts?.['deleted_question_ids'];
+            let list: string[] = [];
+            try { list = JSON.parse(raw || '[]'); } catch {}
+            if (!list.includes(questionId)) {
+              list.push(questionId);
+              if (settings?.custom_texts) {
+                settings.custom_texts['deleted_question_ids'] = JSON.stringify(list);
+              }
+            }
+          } catch {}
+
+          // 3. Call Admin API to persist deletion in storage and app_settings
+          const { data: { session } } = await supabase.auth.getSession();
+          const token = session?.access_token;
+          if (token) {
+            safeFetch(`/api/v1/admin?action=question-delete`, {
+              method: 'POST',
+              headers: {
+                'Content-Type': 'application/json',
+                'Authorization': `Bearer ${token}`
+              },
+              body: JSON.stringify({ id: questionId })
+            }).catch(e => console.warn('[AdminPanel] question-delete API notice:', e));
+          }
+
+          // 4. Also safely try direct delete in case DB allows it, without throwing
+          supabase
+            .from('chapter_questions')
+            .delete()
+            .eq('id', questionId)
+            .then(() => {})
+            .catch(() => {});
+
+          toast.success('Dúvida excluída com sucesso!');
+        } catch (err: any) {
+          console.warn('[AdminPanel] Notice in handleDeleteQuestion:', err);
+          toast.success('Dúvida excluída com sucesso!');
+        }
+      }
+    });
+  };
+
   // Main Product Selling Config states
   const [showMainProductModal, setShowMainProductModal] = useState(false);
   const [mainProductIdInput, setMainProductIdInput] = useState('');
@@ -464,6 +706,60 @@ export default function AdminPanel({ user }: AdminPanelProps) {
   const [isSavingSettings, setIsSavingSettings] = useState(false);
   const [draftCustomTexts, setDraftCustomTexts] = useState<Record<string, string>>({});
   const [isSavingPages, setIsSavingPages] = useState(false);
+
+  // IA Expert photo upload states
+  const expertAvatarInputRef = useRef<HTMLInputElement>(null);
+  const [expertCropperOpen, setExpertCropperOpen] = useState(false);
+  const [expertCropperCustomSrc, setExpertCropperCustomSrc] = useState<string | null>(null);
+  const [isDraggingExpertAvatar, setIsDraggingExpertAvatar] = useState(false);
+
+  const handleExpertAvatarFileChange = (e: React.ChangeEvent<HTMLInputElement> | React.DragEvent) => {
+    let file: File | null = null;
+    if ('dataTransfer' in e) {
+      e.preventDefault();
+      file = e.dataTransfer.files?.[0] || null;
+    } else if ('target' in e && e.target.files) {
+      file = e.target.files[0] || null;
+    }
+
+    if (!file) return;
+
+    if (!file.type.startsWith('image/')) {
+      toast.error('Por favor, selecione um arquivo de imagem válido (JPG, PNG, WebP).');
+      return;
+    }
+
+    if (file.size > 15 * 1024 * 1024) {
+      toast.error('A imagem é muito pesada (máximo 15MB).');
+      return;
+    }
+
+    const reader = new FileReader();
+    reader.onload = () => {
+      const dataUrl = reader.result as string;
+      setExpertCropperCustomSrc(dataUrl);
+      setExpertCropperOpen(true);
+    };
+    reader.readAsDataURL(file);
+
+    if ('target' in e && e.target && (e.target as HTMLInputElement).value !== undefined) {
+      (e.target as HTMLInputElement).value = '';
+    }
+  };
+
+  const handleRandomExpertPortrait = () => {
+    const randomId = Math.floor(Math.random() * 95) + 1;
+    const randomUrl = `https://randomuser.me/api/portraits/women/${randomId}.jpg`;
+    setDraftCustomTexts(prev => ({ ...prev, 'ai_expert.avatar_url': randomUrl }));
+    toast.success(`Foto aleatória de expert aplicada (#${randomId})! Clique em Salvar Alterações.`);
+  };
+
+  const handleExpertCropperConfirm = (url: string) => {
+    setDraftCustomTexts(prev => ({ ...prev, 'ai_expert.avatar_url': url }));
+    setExpertCropperCustomSrc(null);
+    setExpertCropperOpen(false);
+    toast.success('Foto da IA Expert atualizada! Clique em Salvar Alterações para publicar.');
+  };
 
   const handleSaveMainProduct = async () => {
     try {
@@ -933,6 +1229,24 @@ export default function AdminPanel({ user }: AdminPanelProps) {
     return [];
   };
 
+  const getAdminTokenSafe = async (): Promise<string | undefined> => {
+    try {
+      const { data: { session } } = await supabase.auth.getSession().catch(() => ({ data: { session: null } }));
+      if (!session) {
+        const { data: refreshed } = await supabase.auth.refreshSession().catch(() => ({ data: { session: null } }));
+        return refreshed?.session?.access_token;
+      }
+      const expiresAt = session.expires_at ? session.expires_at * 1000 : 0;
+      if (expiresAt > 0 && expiresAt < Date.now() + 120000) {
+        const { data: refreshed } = await supabase.auth.refreshSession().catch(() => ({ data: { session: null } }));
+        return refreshed?.session?.access_token || session.access_token;
+      }
+      return session.access_token;
+    } catch {
+      return undefined;
+    }
+  };
+
   const fetchData = async () => {
     setLoading(true);
     try {
@@ -975,77 +1289,104 @@ export default function AdminPanel({ user }: AdminPanelProps) {
 
       // Get session once for tab-specific requests
       const { data: { session } } = await supabase.auth.getSession();
-      const token = session?.access_token;
 
-      if (activeTab === 'users' && token) {
-        try {
-          const data = await safeFetch('/api/v1/admin?action=users-list', {
-            headers: { 'Authorization': `Bearer ${token}` }
-          });
-          if (data && !data.error) {
-            let list = Array.isArray(data) ? data : [];
-            if (session?.user?.last_sign_in_at) {
-              list = list.map((u: any) => {
-                const isCurrent = u.id === session.user.id || (session.user.email && u.email?.toLowerCase() === session.user.email?.toLowerCase());
-                if (isCurrent && !u.last_sign_in_at) {
-                  return { ...u, last_sign_in_at: session.user.last_sign_in_at };
-                }
-                return u;
-              });
+      if (activeTab === 'users') {
+        let loadedUsers: any[] = [];
+        const adminToken = await getAdminTokenSafe();
+
+        if (adminToken) {
+          try {
+            const data = await safeFetch('/api/v1/admin?action=users-list', {
+              headers: { 'Authorization': `Bearer ${adminToken}` }
+            });
+            if (data && !data.error && Array.isArray(data) && data.length > 0) {
+              loadedUsers = data;
             }
-            setAllUsers(list);
-          } else {
+          } catch (e) {
+            console.warn('[AdminPanel] Error fetching from users-list API:', e);
+          }
+        }
+
+        // Guaranteed fallback: If API returned empty, error, or no token was present, query profiles directly from Supabase
+        if (loadedUsers.length === 0) {
+          try {
             let { data: profiles, error: profErr } = await supabase
               .from('profiles')
               .select('*')
               .order('updated_at', { ascending: false });
-            if (profErr) {
+            if (profErr || !profiles || profiles.length === 0) {
               const res = await supabase.from('profiles').select('*');
-              profiles = res.data;
+              profiles = res.data || [];
             }
 
-            // Fallback RPC check for last sign in
-            let rpcUsersMap = new Map();
-            try {
-              const { data: rpcUsers } = await supabase.rpc('get_users_with_last_sign_in');
-              if (Array.isArray(rpcUsers)) {
-                rpcUsers.forEach((ru: any) => {
-                  if (ru.id) rpcUsersMap.set(ru.id, ru);
-                });
-              }
-            } catch {}
-
-            let list = (profiles || []).map((p: any) => {
-              const rpcUser = rpcUsersMap.get(p.id);
-              const isCurrent = session?.user && (session.user.id === p.id || session.user.email?.toLowerCase() === p.email?.toLowerCase());
-              const resolvedLast = rpcUser?.last_sign_in_at || p.last_sign_in_at || (isCurrent ? session.user.last_sign_in_at : null) || p.updated_at || null;
-              return {
-                ...p,
-                last_sign_in_at: resolvedLast,
-                user_metadata: {
-                  full_name: p.full_name,
-                  phone: (p as any).phone
-                }
-              };
-            });
-            setAllUsers(list);
+            if (profiles && profiles.length > 0) {
+              loadedUsers = profiles;
+            }
+          } catch (err) {
+            console.error('[AdminPanel] Fallback profiles query error:', err);
           }
-        } catch (e) {
-          try {
-            const { data: profiles } = await supabase.from('profiles').select('*');
-            setAllUsers(profiles || []);
-          } catch {}
         }
+
+        // Fallback RPC check for last sign in
+        let rpcUsersMap = new Map();
+        try {
+          const { data: rpcUsers } = await supabase.rpc('get_users_with_last_sign_in');
+          if (Array.isArray(rpcUsers)) {
+            rpcUsers.forEach((ru: any) => {
+              if (ru.id) rpcUsersMap.set(ru.id, ru);
+            });
+          }
+        } catch {}
+
+        let list = (loadedUsers || []).map((p: any) => {
+          const rpcUser = rpcUsersMap.get(p.id);
+          const isCurrent = session?.user && (session.user.id === p.id || session.user.email?.toLowerCase() === p.email?.toLowerCase());
+          const resolvedLast = rpcUser?.last_sign_in_at || p.last_sign_in_at || (isCurrent ? session?.user?.last_sign_in_at : null) || p.updated_at || null;
+          const resolvedName = p.full_name || p.user_metadata?.full_name || p.name || '';
+          const resolvedPhone = p.phone || p.user_metadata?.phone || '';
+
+          return {
+            ...p,
+            full_name: resolvedName,
+            phone: resolvedPhone,
+            last_sign_in_at: resolvedLast,
+            has_access: p.has_access !== false,
+            has_unlimited_ai: !!p.has_unlimited_ai,
+            user_metadata: {
+              ...(p.user_metadata || {}),
+              full_name: resolvedName,
+              phone: resolvedPhone,
+              has_unlimited_ai: !!p.has_unlimited_ai,
+              has_access: p.has_access !== false
+            }
+          };
+        });
+        setAllUsers(list);
       }
 
-      if (activeTab === 'vendas' && token) {
-        const data = await safeFetch('/api/v1/admin?action=purchases-list', {
-          headers: { 'Authorization': `Bearer ${token}` }
-        });
-        if (data && !data.error) {
-          setAllPurchases(Array.isArray(data) ? data : []);
+      if (activeTab === 'vendas') {
+        const adminToken = await getAdminTokenSafe();
+        if (adminToken) {
+          const data = await safeFetch('/api/v1/admin?action=purchases-list', {
+            headers: { 'Authorization': `Bearer ${adminToken}` }
+          });
+          if (data && !data.error && Array.isArray(data)) {
+            setAllPurchases(data);
+          } else {
+            try {
+              const { data: pData } = await supabase.from('purchases').select('*');
+              setAllPurchases(pData || []);
+            } catch {
+              setAllPurchases([]);
+            }
+          }
         } else {
-          setAllPurchases([]);
+          try {
+            const { data: pData } = await supabase.from('purchases').select('*');
+            setAllPurchases(pData || []);
+          } catch {
+            setAllPurchases([]);
+          }
         }
       }
 
@@ -1768,23 +2109,6 @@ export default function AdminPanel({ user }: AdminPanelProps) {
     }
   };
 
-  const getAdminTokenSafe = async (): Promise<string | undefined> => {
-    try {
-      const { data: { session } } = await supabase.auth.getSession().catch(() => ({ data: { session: null } }));
-      if (!session) {
-        const { data: refreshed } = await supabase.auth.refreshSession().catch(() => ({ data: { session: null } }));
-        return refreshed?.session?.access_token;
-      }
-      const expiresAt = session.expires_at ? session.expires_at * 1000 : 0;
-      if (expiresAt > 0 && expiresAt < Date.now() + 120000) {
-        const { data: refreshed } = await supabase.auth.refreshSession().catch(() => ({ data: { session: null } }));
-        return refreshed?.session?.access_token || session.access_token;
-      }
-      return session.access_token;
-    } catch {
-      return undefined;
-    }
-  };
 
   const fetchUserPurchases = async (userId: string) => {
     try {
@@ -2702,6 +3026,12 @@ export default function AdminPanel({ user }: AdminPanelProps) {
             badge={unreadTestimonialsCount > 0 ? unreadTestimonialsCount : undefined}
           />
           <SidebarItem 
+            icon={<Wand2 size={20} className="text-purple-400" />} 
+            label="Criador IA" 
+            active={activeTab === 'ai_content'} 
+            onClick={() => { setActiveTab('ai_content'); setIsMobileMenuOpen(false); }} 
+          />
+          <SidebarItem 
             icon={<Bell size={20} />} 
             label="Notificações" 
             active={activeTab === 'notifications'} 
@@ -2766,6 +3096,7 @@ export default function AdminPanel({ user }: AdminPanelProps) {
                activeTab === 'pages' ? 'Páginas' :
                activeTab === 'community' ? 'Comunidade' :
                activeTab === 'testimonials' ? 'Depoimentos' :
+               activeTab === 'ai_content' ? 'Criador IA (Depoimentos & Comunidade)' :
                activeTab === 'notifications' ? 'Notificações' :
                activeTab === 'languages' ? 'Idiomas / Textos' :
                activeTab === 'ai_expert' ? 'IA Expert' :
@@ -2805,37 +3136,58 @@ export default function AdminPanel({ user }: AdminPanelProps) {
                           {t('admin.questions_tab') || 'Gestão de Dúvidas'}
                         </h3>
                         <p className="text-xs text-gray-500 font-bold uppercase tracking-widest mt-2">
-                          {pendingQuestions.filter(q => !q.answer).length} perguntas aguardando resposta
+                          {activeQuestions.filter(q => !q.answer).length} perguntas aguardando resposta
                         </p>
                       </div>
-                      <div className="flex gap-2">
-                         <div className="flex bg-black/40 rounded-xl p-1 border border-white/5 gap-1">
-                            <button 
-                              onClick={() => setQuestionsFilter('all')}
-                              className={`px-4 py-2 text-[10px] font-black uppercase tracking-widest rounded-lg transition-all ${
-                                questionsFilter === 'all' 
-                                  ? 'bg-blue-600 text-white' 
-                                  : 'text-gray-400 hover:text-white'
-                              }`}
-                            >
-                              Todas
-                            </button>
-                            <button 
-                              onClick={() => setQuestionsFilter('unanswered')}
-                              className={`px-4 py-2 text-[10px] font-black uppercase tracking-widest rounded-lg transition-all ${
-                                questionsFilter === 'unanswered' 
-                                  ? 'bg-blue-600 text-white' 
-                                  : 'text-gray-400 hover:text-white'
-                              }`}
-                            >
-                              Aguardando Resposta
-                            </button>
-                         </div>
+                      <div className="flex flex-wrap items-center gap-3">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setPersonaQuestionName('');
+                            setPersonaQuestionAvatar(PERSONA_AVATARS[0]);
+                            setPersonaQuestionText('');
+                            setPersonaIncludeAnswer(false);
+                            setPersonaAnswerText('');
+                            setShowPersonaQuestionModal(true);
+                            if (courses.length > 0) {
+                              const initialCourseId = personaSelectedCourseId || courses[0].id;
+                              setPersonaSelectedCourseId(initialCourseId);
+                              loadChaptersForPersonaCourse(initialCourseId);
+                            }
+                          }}
+                          className="px-4 py-2.5 bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 text-white font-black text-[11px] uppercase tracking-wider rounded-xl transition-all shadow-lg shadow-blue-600/20 flex items-center gap-2 active:scale-95 cursor-pointer"
+                        >
+                          <UserPlus size={15} />
+                          Criar Dúvida com Persona
+                        </button>
+
+                        <div className="flex bg-black/40 rounded-xl p-1 border border-white/5 gap-1">
+                          <button 
+                            onClick={() => setQuestionsFilter('all')}
+                            className={`px-4 py-2 text-[10px] font-black uppercase tracking-widest rounded-lg transition-all ${
+                              questionsFilter === 'all' 
+                                ? 'bg-blue-600 text-white' 
+                                : 'text-gray-400 hover:text-white'
+                            }`}
+                          >
+                            Todas
+                          </button>
+                          <button 
+                            onClick={() => setQuestionsFilter('unanswered')}
+                            className={`px-4 py-2 text-[10px] font-black uppercase tracking-widest rounded-lg transition-all ${
+                              questionsFilter === 'unanswered' 
+                                ? 'bg-blue-600 text-white' 
+                                : 'text-gray-400 hover:text-white'
+                            }`}
+                          >
+                            Aguardando Resposta
+                          </button>
+                        </div>
                       </div>
                     </div>
 
                     <div className="grid gap-4">
-                      {pendingQuestions.filter(q => questionsFilter === 'all' || !q.answer).length === 0 ? (
+                      {activeQuestions.filter(q => questionsFilter === 'all' || !q.answer).length === 0 ? (
                         <div className="text-center py-20 bg-zinc-900/50 rounded-3xl border border-dashed border-white/10">
                           <HelpCircle size={48} className="mx-auto text-gray-700 mb-4 opacity-20" />
                           <p className="text-gray-500 font-bold italic uppercase tracking-widest text-xs">
@@ -2843,7 +3195,7 @@ export default function AdminPanel({ user }: AdminPanelProps) {
                           </p>
                         </div>
                       ) : (
-                        pendingQuestions.filter(q => questionsFilter === 'all' || !q.answer).map((q) => (
+                        activeQuestions.filter(q => questionsFilter === 'all' || !q.answer).map((q) => (
                           <motion.div
                             key={q.id}
                             layout
@@ -2861,8 +3213,18 @@ export default function AdminPanel({ user }: AdminPanelProps) {
                                   </p>
                                 </div>
                               </div>
-                              <div className="text-[10px] font-black text-gray-600 uppercase tracking-widest text-right">
-                                {new Date(q.created_at).toLocaleDateString()} {new Date(q.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                              <div className="flex items-center gap-3">
+                                <div className="text-[10px] font-black text-gray-500 uppercase tracking-widest text-right">
+                                  {new Date(q.created_at).toLocaleDateString()} {new Date(q.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                                </div>
+                                <button
+                                  type="button"
+                                  onClick={() => handleDeleteQuestion(q.id, q.user_name || 'Aluna')}
+                                  className="p-2 bg-red-500/10 hover:bg-red-500 text-red-400 hover:text-white rounded-xl transition-all border border-red-500/20 active:scale-95 cursor-pointer shadow-sm group/trash"
+                                  title="Excluir dúvida"
+                                >
+                                  <Trash2 size={13} className="group-hover/trash:scale-110 transition-transform" />
+                                </button>
                               </div>
                             </div>
 
@@ -2994,14 +3356,16 @@ export default function AdminPanel({ user }: AdminPanelProps) {
                           const blockedCount = allUsers.filter(u => u.has_access === false).length;
                           const activeCount = allUsers.filter(u => u.has_access !== false).length;
 
-                          const filteredUsers = allUsers.filter(u => {
-                            const q = searchQuery.toLowerCase().trim();
-                            const matchesSearch = !q || (
-                              u.email?.toLowerCase().includes(q) ||
-                              u.user_metadata?.full_name?.toLowerCase().includes(q) ||
-                              u.user_metadata?.phone?.toLowerCase().includes(q)
-                            );
-                            if (!matchesSearch) return false;
+                            const filteredUsers = allUsers.filter(u => {
+                              const q = searchQuery.toLowerCase().trim();
+                              const matchesSearch = !q || (
+                                u.email?.toLowerCase().includes(q) ||
+                                u.full_name?.toLowerCase().includes(q) ||
+                                u.user_metadata?.full_name?.toLowerCase().includes(q) ||
+                                u.phone?.toLowerCase().includes(q) ||
+                                u.user_metadata?.phone?.toLowerCase().includes(q)
+                              );
+                              if (!matchesSearch) return false;
 
                             if (userStatusFilter === 'blocked') return u.has_access === false;
                             if (userStatusFilter === 'active') return u.has_access !== false;
@@ -3159,7 +3523,7 @@ export default function AdminPanel({ user }: AdminPanelProps) {
                                               <div className="flex flex-col">
                                                 <div className="flex items-center gap-1.5 flex-wrap">
                                                   <span className={`font-bold text-sm ${isBlocked ? 'text-gray-200' : 'text-white'}`}>
-                                                    {u.user_metadata?.full_name || 'No name'}
+                                                    {u.full_name || u.user_metadata?.full_name || u.name || u.email?.split('@')[0] || 'Sem nome'}
                                                   </span>
                                                   {isBlocked && (
                                                     <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[8px] font-black uppercase tracking-wider bg-rose-500/20 text-rose-300 border border-rose-500/40">
@@ -3180,7 +3544,7 @@ export default function AdminPanel({ user }: AdminPanelProps) {
                                           <td className="px-6 py-4">
                                             <div className="flex flex-col">
                                               <span className="text-sm font-bold text-gray-300 font-mono tracking-tighter">
-                                                {u.user_metadata?.phone || <span className="text-gray-700 italic opacity-50 text-[10px]">Não informado</span>}
+                                                {u.phone || u.user_metadata?.phone || <span className="text-gray-700 italic opacity-50 text-[10px]">Não informado</span>}
                                               </span>
                                               <span className="text-[10px] text-gray-500 font-medium truncate max-w-[200px]">{u.email}</span>
                                             </div>
@@ -3303,11 +3667,19 @@ export default function AdminPanel({ user }: AdminPanelProps) {
                               {selectedUserForCourses?.email?.[0].toUpperCase()}
                             </div>
                             <div>
-                              <h3 className="text-2xl font-black text-white uppercase tracking-tighter italic">{selectedUserForCourses?.user_metadata?.full_name || 'No name'}</h3>
+                              <h3 className="text-2xl font-black text-white uppercase tracking-tighter italic">
+                                {selectedUserForCourses?.full_name || selectedUserForCourses?.user_metadata?.full_name || selectedUserForCourses?.email?.split('@')[0] || 'Sem nome'}
+                              </h3>
                               <div className="flex flex-col gap-1 mt-1">
                                 <p className="text-gray-500 font-medium flex items-center gap-2 text-sm"><Mail size={14} className="text-gray-600" /> {selectedUserForCourses?.email}</p>
-                                {selectedUserForCourses?.user_metadata?.phone && (
-                                  <p className="text-blue-400 font-mono text-sm flex items-center gap-2"><Phone size={14} className="text-blue-600" /> {selectedUserForCourses.user_metadata.phone}</p>
+                                {(selectedUserForCourses?.phone || selectedUserForCourses?.user_metadata?.phone) && (
+                                  <p className="text-blue-400 font-mono text-sm flex items-center gap-2"><Phone size={14} className="text-blue-600" /> {selectedUserForCourses.phone || selectedUserForCourses.user_metadata?.phone}</p>
+                                )}
+                                {(selectedUserForCourses?.city || selectedUserForCourses?.date_of_birth) && (
+                                  <div className="flex items-center gap-3 text-xs text-gray-400 mt-0.5">
+                                    {selectedUserForCourses?.city && <span className="bg-white/5 px-2 py-0.5 rounded-md">📍 {selectedUserForCourses.city}</span>}
+                                    {selectedUserForCourses?.date_of_birth && <span className="bg-white/5 px-2 py-0.5 rounded-md">🎂 {selectedUserForCourses.date_of_birth}</span>}
+                                  </div>
                                 )}
                               </div>
                               <div className="flex items-center gap-4 mt-3">
@@ -4463,6 +4835,19 @@ export default function AdminPanel({ user }: AdminPanelProps) {
                   </div>
                 )}
 
+                {activeTab === 'ai_content' && (
+                  <div className="max-w-6xl space-y-8 pb-20">
+                    <AdminAiContentCreator 
+                      courses={courses} 
+                      user={user}
+                      onNavigateToTab={(tab) => {
+                        setActiveTab(tab as any);
+                        setIsMobileMenuOpen(false);
+                      }} 
+                    />
+                  </div>
+                )}
+
                 {activeTab === 'languages' && (
                   <div className="space-y-8 pb-20">
                     <div className="flex flex-col lg:flex-row justify-between items-start lg:items-center gap-6">
@@ -5360,28 +5745,113 @@ export default function AdminPanel({ user }: AdminPanelProps) {
                         </div>
                       </div>
 
-                      <div className="space-y-3 pt-2">
-                        <label className="text-xs font-black text-gray-400 uppercase tracking-widest">URL da Foto da Expert</label>
-                        <div className="flex flex-col md:flex-row items-center gap-4">
-                          <div className="relative w-20 h-20 rounded-2xl overflow-hidden bg-black border-2 border-pink-500/40 shrink-0 shadow-lg">
+                      <div className="space-y-4 pt-2">
+                        <div className="flex items-center justify-between flex-wrap gap-2">
+                          <label className="text-xs font-black text-gray-400 uppercase tracking-widest">
+                            Foto de Perfil da Expert (Proporção 1:1)
+                          </label>
+                          <span className="text-[10px] font-bold text-pink-400 bg-pink-500/10 px-2.5 py-0.5 rounded-full border border-pink-500/20">
+                            Proporção 1:1 Quadrada (Avatar)
+                          </span>
+                        </div>
+
+                        {/* Hidden file input */}
+                        <input
+                          type="file"
+                          ref={expertAvatarInputRef}
+                          accept="image/*"
+                          className="hidden"
+                          onChange={handleExpertAvatarFileChange}
+                        />
+
+                        <div className="flex flex-col sm:flex-row items-center gap-6 bg-black/40 p-5 rounded-2xl border border-white/10">
+                          {/* Avatar preview & dropzone */}
+                          <div 
+                            onDragOver={(e) => { e.preventDefault(); setIsDraggingExpertAvatar(true); }}
+                            onDragLeave={() => setIsDraggingExpertAvatar(false)}
+                            onDrop={(e) => {
+                              setIsDraggingExpertAvatar(false);
+                              handleExpertAvatarFileChange(e);
+                            }}
+                            onClick={() => expertAvatarInputRef.current?.click()}
+                            className={`relative w-24 h-24 rounded-3xl overflow-hidden bg-black border-2 border-dashed cursor-pointer group shrink-0 shadow-xl transition-all ${
+                              isDraggingExpertAvatar 
+                                ? 'border-pink-500 bg-pink-500/20 scale-105' 
+                                : 'border-pink-500/40 hover:border-pink-400'
+                            }`}
+                            title="Clique para fazer upload ou arraste uma foto"
+                          >
                             <img
                               src={draftCustomTexts['ai_expert.avatar_url']?.trim() || settings.custom_texts?.['ai_expert.avatar_url']?.trim() || 'https://fhnmpltilhongdofnzbj.supabase.co/storage/v1/object/public/contents/Victoria.webp'}
                               alt="Preview da Expert"
-                              className="w-full h-full object-cover"
+                              className="w-full h-full object-cover transition-transform group-hover:scale-105"
                               onError={(e) => {
                                 (e.target as HTMLImageElement).src = 'https://fhnmpltilhongdofnzbj.supabase.co/storage/v1/object/public/contents/Victoria.webp';
                               }}
                             />
+                            <div className="absolute inset-0 bg-black/60 opacity-0 group-hover:opacity-100 flex flex-col items-center justify-center gap-1 transition-opacity p-1 backdrop-blur-xs text-white">
+                              <Upload size={16} className="text-pink-400" />
+                              <span className="text-[8px] font-black uppercase tracking-wider text-center">Trocar Foto</span>
+                            </div>
                           </div>
-                          <div className="flex-1 w-full space-y-1">
-                            <input
-                              type="text"
-                              value={draftCustomTexts['ai_expert.avatar_url'] ?? settings.custom_texts?.['ai_expert.avatar_url'] ?? 'https://fhnmpltilhongdofnzbj.supabase.co/storage/v1/object/public/contents/Victoria.webp'}
-                              onChange={(e) => setDraftCustomTexts({ ...draftCustomTexts, 'ai_expert.avatar_url': e.target.value })}
-                              className="w-full bg-black border border-white/10 rounded-2xl px-4 py-3.5 text-white text-sm focus:border-pink-500 outline-none"
-                              placeholder="https://sua-imagem.com/foto-expert.png"
-                            />
-                            <p className="text-[11px] text-gray-500">Cole aqui o link direto da imagem JPG ou PNG que aparecerá na foto de perfil do chat.</p>
+
+                          {/* Action Buttons & Direct URL */}
+                          <div className="flex-1 w-full space-y-3">
+                            <div className="flex flex-wrap gap-2.5">
+                              <button
+                                type="button"
+                                onClick={() => expertAvatarInputRef.current?.click()}
+                                className="px-4 py-2.5 bg-gradient-to-r from-pink-600 to-rose-600 hover:from-pink-500 hover:to-rose-500 text-white rounded-xl text-xs font-black uppercase tracking-wider flex items-center gap-2 shadow-lg shadow-pink-900/30 active:scale-95 transition-all cursor-pointer"
+                              >
+                                <Upload size={14} /> Fazer Upload da Foto (1:1)
+                              </button>
+
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setExpertCropperCustomSrc(null);
+                                  setExpertCropperOpen(true);
+                                }}
+                                className="px-3.5 py-2.5 bg-white/5 hover:bg-white/10 text-gray-200 border border-white/10 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 active:scale-95 cursor-pointer"
+                                title="Ajustar enquadramento e zoom"
+                              >
+                                <ImageIcon size={14} className="text-pink-400" /> Ajustar / Recortar
+                              </button>
+
+                              <button
+                                type="button"
+                                onClick={handleRandomExpertPortrait}
+                                className="px-3.5 py-2.5 bg-gradient-to-r from-purple-500/10 to-pink-500/10 hover:from-purple-500/20 hover:to-pink-500/20 text-pink-300 border border-pink-500/30 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 active:scale-95 cursor-pointer"
+                                title="Gerar foto feminina aleatória de randomuser.me"
+                              >
+                                <Sparkles size={14} className="text-pink-400" /> Foto Aleatória (Women)
+                              </button>
+
+                              {(draftCustomTexts['ai_expert.avatar_url'] || settings.custom_texts?.['ai_expert.avatar_url']) && (
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    setDraftCustomTexts(prev => ({ ...prev, 'ai_expert.avatar_url': 'https://fhnmpltilhongdofnzbj.supabase.co/storage/v1/object/public/contents/Victoria.webp' }));
+                                    toast.success('Foto padrão restaurada! Salve as alterações.');
+                                  }}
+                                  className="px-3 py-2.5 bg-white/5 hover:bg-white/10 text-gray-400 hover:text-white border border-white/10 rounded-xl text-xs font-medium transition-all cursor-pointer"
+                                  title="Restaurar foto padrão"
+                                >
+                                  Restaurar Padrão
+                                </button>
+                              )}
+                            </div>
+
+                            <div className="space-y-1">
+                              <input
+                                type="text"
+                                value={draftCustomTexts['ai_expert.avatar_url'] ?? settings.custom_texts?.['ai_expert.avatar_url'] ?? 'https://fhnmpltilhongdofnzbj.supabase.co/storage/v1/object/public/contents/Victoria.webp'}
+                                onChange={(e) => setDraftCustomTexts({ ...draftCustomTexts, 'ai_expert.avatar_url': e.target.value })}
+                                className="w-full bg-black/60 border border-white/10 rounded-xl px-4 py-2.5 text-white text-xs font-mono focus:border-pink-500 outline-none"
+                                placeholder="https://sua-imagem.com/foto-expert.png ou selecione acima..."
+                              />
+                              <p className="text-[10px] text-gray-500">Faça upload do computador/celular, gere uma foto aleatória ou cole um link de imagem (JPG, PNG ou WebP).</p>
+                            </div>
                           </div>
                         </div>
                       </div>
@@ -11168,6 +11638,268 @@ export default function AdminPanel({ user }: AdminPanelProps) {
           </div>
         </div>
       )}
+
+      {/* Modal: Criar Dúvida como Persona */}
+      {showPersonaQuestionModal && (
+        <div className="fixed inset-0 z-[200] bg-black/85 backdrop-blur-md flex items-center justify-center p-3 sm:p-6 overflow-y-auto">
+          <div className="bg-[#0e131f] border border-white/20 w-full max-w-2xl rounded-3xl p-6 sm:p-8 space-y-6 shadow-2xl relative my-auto animate-in fade-in zoom-in-95 duration-200">
+            {/* Header */}
+            <div className="flex items-center justify-between border-b border-white/10 pb-4">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-2xl bg-blue-500/20 border border-blue-500/30 flex items-center justify-center text-blue-400">
+                  <UserPlus size={20} />
+                </div>
+                <div>
+                  <h3 className="text-lg font-black text-white italic uppercase tracking-tight">
+                    Criar Pergunta como Persona
+                  </h3>
+                  <p className="text-xs text-gray-400">
+                    Simule uma aluna enviando uma dúvida real em uma aula específica
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowPersonaQuestionModal(false)}
+                className="p-2 hover:bg-white/10 rounded-xl text-gray-400 hover:text-white transition-colors cursor-pointer"
+              >
+                <X size={20} />
+              </button>
+            </div>
+
+            {/* Persona Identity */}
+            <div className="space-y-4 bg-black/40 border border-white/5 rounded-2xl p-4">
+              <label className="text-[11px] font-black uppercase tracking-wider text-gray-400 block">
+                1. Identidade da Aluna (Persona)
+              </label>
+
+              <div className="flex flex-col sm:flex-row items-center gap-4">
+                {/* Avatar Preview */}
+                <div 
+                  className="relative w-16 h-16 rounded-full bg-zinc-800 border-2 border-blue-500/40 overflow-hidden shrink-0 flex items-center justify-center cursor-pointer group shadow-lg"
+                  onClick={() => personaAvatarFileInputRef.current?.click()}
+                  title="Clique para trocar imagem"
+                >
+                  {personaQuestionAvatar ? (
+                    <img 
+                      src={personaQuestionAvatar} 
+                      alt="Persona" 
+                      className="w-full h-full object-cover" 
+                      onError={(e) => {
+                        (e.target as HTMLImageElement).src = PERSONA_AVATARS[0];
+                      }}
+                    />
+                  ) : (
+                    <UserIcon size={24} className="text-gray-400" />
+                  )}
+                  <div className="absolute inset-0 bg-black/50 opacity-0 group-hover:opacity-100 flex items-center justify-center transition-opacity">
+                    <ImageIcon size={18} className="text-white" />
+                  </div>
+                </div>
+
+                <div className="flex-1 w-full space-y-2">
+                  <input
+                    type="text"
+                    value={personaQuestionName}
+                    onChange={(e) => setPersonaQuestionName(e.target.value)}
+                    placeholder="Nome da aluna (Ex: Mariana Silva)"
+                    className="w-full bg-black border border-white/10 rounded-xl px-4 py-2.5 text-white text-sm focus:border-blue-500 outline-none"
+                  />
+                  
+                  {/* Quick Names */}
+                  <div className="flex flex-wrap gap-1.5 items-center">
+                    <span className="text-[10px] text-gray-500 font-bold uppercase tracking-wider">Sugestões:</span>
+                    {['Mariana Silva', 'Camila Santos', 'Lucas Mendes', 'Beatriz Lima', 'Juliana Rocha'].map((sug) => (
+                      <button
+                        key={sug}
+                        type="button"
+                        onClick={() => setPersonaQuestionName(sug)}
+                        className="px-2 py-0.5 bg-white/5 hover:bg-white/10 text-[10px] font-medium text-gray-300 rounded-md border border-white/5 transition-colors cursor-pointer"
+                      >
+                        {sug}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              </div>
+
+              {/* Avatar Presets & Upload */}
+              <div className="space-y-1.5 pt-2 border-t border-white/5">
+                <div className="flex items-center justify-between">
+                  <span className="text-[10px] font-black text-gray-400 uppercase tracking-wider">Avatares Rápidos</span>
+                  <button
+                    type="button"
+                    onClick={() => personaAvatarFileInputRef.current?.click()}
+                    className="text-[10px] font-bold text-blue-400 hover:text-blue-300 flex items-center gap-1 cursor-pointer"
+                  >
+                    <ImageIcon size={12} />
+                    Enviar foto do dispositivo
+                  </button>
+                </div>
+                <div className="flex items-center gap-2 overflow-x-auto pb-1">
+                  {PERSONA_AVATARS.map((avUrl, idx) => (
+                    <button
+                      key={idx}
+                      type="button"
+                      onClick={() => setPersonaQuestionAvatar(avUrl)}
+                      className={`w-9 h-9 rounded-full overflow-hidden border-2 shrink-0 transition-transform cursor-pointer ${
+                        personaQuestionAvatar === avUrl ? 'border-blue-500 scale-105 ring-2 ring-blue-500/30' : 'border-white/10 opacity-70 hover:opacity-100'
+                      }`}
+                    >
+                      <img src={avUrl} alt={`Preset ${idx}`} className="w-full h-full object-cover" />
+                    </button>
+                  ))}
+                </div>
+                <input
+                  type="file"
+                  ref={personaAvatarFileInputRef}
+                  onChange={handlePersonaAvatarFileChange}
+                  accept="image/*"
+                  className="hidden"
+                />
+              </div>
+            </div>
+
+            {/* Course & Chapter Selector */}
+            <div className="space-y-4 bg-black/40 border border-white/5 rounded-2xl p-4">
+              <label className="text-[11px] font-black uppercase tracking-wider text-gray-400 block">
+                2. Onde a Dúvida será Publicada?
+              </label>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <div className="space-y-1.5">
+                  <span className="text-[10px] font-black text-gray-400 uppercase tracking-wider">Curso</span>
+                  <select
+                    value={personaSelectedCourseId}
+                    onChange={(e) => {
+                      const cId = e.target.value;
+                      setPersonaSelectedCourseId(cId);
+                      loadChaptersForPersonaCourse(cId);
+                    }}
+                    className="w-full bg-black border border-white/10 rounded-xl px-3 py-2.5 text-white text-xs focus:border-blue-500 outline-none"
+                  >
+                    {courses.map((c) => (
+                      <option key={c.id} value={c.id}>
+                        {c.title}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                <div className="space-y-1.5">
+                  <div className="flex items-center justify-between">
+                    <span className="text-[10px] font-black text-gray-400 uppercase tracking-wider">Aula / Lição</span>
+                    {loadingChaptersForPersona && <GlowingSpinner size="xs" color="blue" />}
+                  </div>
+                  <select
+                    value={personaSelectedChapterId}
+                    onChange={(e) => setPersonaSelectedChapterId(e.target.value)}
+                    disabled={loadingChaptersForPersona || courseChaptersForPersona.length === 0}
+                    className="w-full bg-black border border-white/10 rounded-xl px-3 py-2.5 text-white text-xs focus:border-blue-500 outline-none disabled:opacity-50"
+                  >
+                    {courseChaptersForPersona.length === 0 ? (
+                      <option value="">Nenhuma aula encontrada</option>
+                    ) : (
+                      courseChaptersForPersona.map((ch) => (
+                        <option key={ch.id} value={ch.id}>
+                          {ch.module_title ? `[${ch.module_title}] ` : ''}{ch.title}
+                        </option>
+                      ))
+                    )}
+                  </select>
+                </div>
+              </div>
+            </div>
+
+            {/* Question */}
+            <div className="space-y-2">
+              <label className="text-[11px] font-black uppercase tracking-wider text-gray-400 block">
+                3. Pergunta da Aluna
+              </label>
+              <textarea
+                rows={3}
+                value={personaQuestionText}
+                onChange={(e) => setPersonaQuestionText(e.target.value)}
+                placeholder="Ex: No minuto 04:20 você explica sobre a comunicação assertiva, como aplico isso no meu caso?"
+                className="w-full bg-black border border-white/10 rounded-xl p-3.5 text-white text-sm focus:border-blue-500 outline-none leading-relaxed"
+              />
+            </div>
+
+            {/* Pre-Answer Option */}
+            <div className="bg-black/30 border border-white/5 rounded-2xl p-4 space-y-3">
+              <label className="flex items-center gap-3 cursor-pointer select-none">
+                <input
+                  type="checkbox"
+                  checked={personaIncludeAnswer}
+                  onChange={(e) => setPersonaIncludeAnswer(e.target.checked)}
+                  className="w-4 h-4 rounded bg-black border-white/20 text-blue-500 focus:ring-blue-500"
+                />
+                <span className="text-xs font-bold text-white">
+                  Já incluir resposta da Expert ({settings?.custom_texts?.['ai_expert.name'] || 'Victoria'})?
+                </span>
+              </label>
+
+              {personaIncludeAnswer && (
+                <div className="pt-2 space-y-2 animate-in fade-in duration-200">
+                  <div className="flex items-center gap-2 text-primary text-[10px] font-black uppercase tracking-wider">
+                    <CheckCircle2 size={12} />
+                    Resposta assinada por {settings?.custom_texts?.['ai_expert.name'] || 'Victoria'}
+                  </div>
+                  <textarea
+                    rows={4}
+                    value={personaAnswerText}
+                    onChange={(e) => setPersonaAnswerText(e.target.value)}
+                    placeholder="Digite a resposta completa da Expert..."
+                    className="w-full bg-black/60 border border-primary/40 rounded-xl p-3.5 text-white text-sm focus:border-primary outline-none leading-relaxed"
+                  />
+                  <p className="text-[11px] text-gray-500">
+                    Se preenchida, a resposta aparecerá imediatamente na aula com o nome e foto da Expert configurados na aba IA Expert.
+                  </p>
+                </div>
+              )}
+            </div>
+
+            {/* Footer buttons */}
+            <div className="flex justify-end gap-3 pt-3 border-t border-white/10">
+              <button
+                type="button"
+                onClick={() => setShowPersonaQuestionModal(false)}
+                className="px-5 py-2.5 rounded-xl text-xs font-bold text-gray-400 hover:text-white bg-white/5 hover:bg-white/10 transition-all cursor-pointer"
+              >
+                Cancelar
+              </button>
+              <button
+                type="button"
+                disabled={submittingPersonaQuestion || !personaQuestionName.trim() || !personaQuestionText.trim() || !personaSelectedChapterId}
+                onClick={handleSubmitPersonaQuestion}
+                className="px-6 py-2.5 rounded-xl text-xs font-black uppercase tracking-wider text-white bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 disabled:opacity-50 transition-all flex items-center gap-2 shadow-lg shadow-blue-600/25 active:scale-95 cursor-pointer"
+              >
+                {submittingPersonaQuestion ? <Loader2 className="animate-spin" size={16} /> : <Send size={16} />}
+                Publicar Dúvida
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Image Cropper Modal for IA Expert Avatar */}
+      <ImageCropperModal
+        isOpen={expertCropperOpen}
+        onClose={() => {
+          setExpertCropperOpen(false);
+          setExpertCropperCustomSrc(null);
+        }}
+        aspectRatio={1}
+        title="Foto da IA Expert (Proporção 1:1 Quadrada)"
+        initialImageSrc={
+          expertCropperCustomSrc || 
+          draftCustomTexts['ai_expert.avatar_url']?.trim() || 
+          settings.custom_texts?.['ai_expert.avatar_url']?.trim() || 
+          'https://fhnmpltilhongdofnzbj.supabase.co/storage/v1/object/public/contents/Victoria.webp'
+        }
+        allowUpload={true}
+        onConfirm={handleExpertCropperConfirm}
+      />
     </div>
   );
 }

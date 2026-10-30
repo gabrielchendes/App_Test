@@ -487,41 +487,67 @@ export default function AiAssistantModal({ userId, userEmail, userName, userAvat
   // Fast message pagination states & refs
   const [hasMoreMessages, setHasMoreMessages] = useState<boolean>(false);
   const [isLoadingEarlier, setIsLoadingEarlier] = useState<boolean>(false);
+  const [isInitialLoadingHistory, setIsInitialLoadingHistory] = useState<boolean>(true);
   const chatContainerRef = useRef<HTMLDivElement>(null);
+  const prevIsOpenRef = useRef<boolean>(false);
 
-  // Fetch real chat history from Supabase database when modal opens (limit=15 for fastest opening!)
+  // Fetch real chat history from Supabase database when modal opens (loads history FIRST before revealing)
   useEffect(() => {
     let isMounted = true;
 
-    if (isOpen && userIdentifier && userIdentifier !== 'guest') {
+    if (isOpen) {
+      const isJustOpened = !prevIsOpenRef.current;
+      prevIsOpenRef.current = true;
+
+      if (!userIdentifier || userIdentifier === 'guest') {
+        setIsInitialLoadingHistory(false);
+        return;
+      }
+
+      if (isJustOpened) {
+        setIsInitialLoadingHistory(true);
+      }
+
       const loadHistory = async () => {
         try {
           const queryParams = new URLSearchParams();
           if (userId) queryParams.set('userId', userId.trim());
           if (userEmail) queryParams.set('userEmail', userEmail.trim());
-          queryParams.set('limit', '15'); // Rapid initial fetch for instant responsiveness
+          queryParams.set('limit', '25');
 
-          let res: Response;
+          const controller = new AbortController();
+          const timeoutId = setTimeout(() => {
+            try { controller.abort(); } catch (_) {}
+          }, 5000);
+
+          let res: Response | null = null;
           const queryStr = queryParams.toString();
           try {
             res = await fetch(`/api/v1/ai-chat?${queryStr}`, {
               method: 'GET',
-              headers: { 'Accept': 'application/json' }
+              headers: { 'Accept': 'application/json' },
+              signal: controller.signal
             });
             if (!res.ok) {
               res = await fetch(`/api/v1/ai?action=ai-chat&${queryStr}`, {
                 method: 'GET',
-                headers: { 'Accept': 'application/json' }
+                headers: { 'Accept': 'application/json' },
+                signal: controller.signal
               });
             }
           } catch {
-            res = await fetch(`/api/v1/ai?action=ai-chat&${queryStr}`, {
-              method: 'GET',
-              headers: { 'Accept': 'application/json' }
-            });
+            try {
+              res = await fetch(`/api/v1/ai?action=ai-chat&${queryStr}`, {
+                method: 'GET',
+                headers: { 'Accept': 'application/json' },
+                signal: controller.signal
+              });
+            } catch (_) {}
+          } finally {
+            clearTimeout(timeoutId);
           }
 
-          if (res.ok) {
+          if (res && res.ok) {
             const data = await res.json();
             if (data?.success && isMounted) {
               // Update VIP status from server if confirmed
@@ -552,7 +578,7 @@ export default function AiAssistantModal({ userId, userEmail, userName, userAvat
                 setMessages(fullHistory);
                 try {
                   const keys = getCandidateStorageKeys();
-                  const jsonStr = JSON.stringify(fullHistory.slice(-20)); // Keep cache compact and quick
+                  const jsonStr = JSON.stringify(fullHistory.slice(-25));
                   keys.forEach(k => localStorage.setItem(k, jsonStr));
                 } catch (_) {}
               }
@@ -560,10 +586,27 @@ export default function AiAssistantModal({ userId, userEmail, userName, userAvat
           }
         } catch (err) {
           console.warn('[AI Assistant Modal] Error fetching chat history from server:', err);
+        } finally {
+          if (isMounted) {
+            setIsInitialLoadingHistory(false);
+            // Pre-scroll directly to bottom before presenting messages
+            requestAnimationFrame(() => {
+              if (chatContainerRef.current) {
+                chatContainerRef.current.scrollTop = chatContainerRef.current.scrollHeight;
+              }
+              setTimeout(() => {
+                if (chatContainerRef.current) {
+                  chatContainerRef.current.scrollTop = chatContainerRef.current.scrollHeight;
+                }
+              }, 40);
+            });
+          }
         }
       };
 
       loadHistory();
+    } else {
+      prevIsOpenRef.current = false;
     }
 
     return () => {
@@ -681,6 +724,7 @@ export default function AiAssistantModal({ userId, userEmail, userName, userAvat
     }
     setLoading(false);
     setStatusText('');
+    setIsInitialLoadingHistory(true);
     if (externalOnClose) {
       externalOnClose();
     }
@@ -694,14 +738,16 @@ export default function AiAssistantModal({ userId, userEmail, userName, userAvat
   }, []);
 
   const scrollToBottom = () => {
-    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+    if (!isInitialLoadingHistory) {
+      messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+    }
   };
 
   useEffect(() => {
-    if (isOpen) {
+    if (isOpen && !isInitialLoadingHistory) {
       scrollToBottom();
     }
-  }, [messages, loading, statusText, isOpen]);
+  }, [messages, loading, statusText, isOpen, isInitialLoadingHistory]);
 
   // Simulates a genuine human typing and reflection delay that scales realistically with response length
   const simulateHumanTypingDelay = async (delayMs: number, name: string) => {
@@ -1186,7 +1232,37 @@ export default function AiAssistantModal({ userId, userEmail, userName, userAvat
           </div>
 
           {/* Chat Body - Max Width Centered for Large Screens */}
-          <div ref={chatContainerRef} className="flex-1 overflow-y-auto p-4 sm:p-6 md:p-8 space-y-4 max-w-4xl mx-auto w-full">
+          <div ref={chatContainerRef} className="flex-1 overflow-y-auto p-4 sm:p-6 md:p-8 max-w-4xl mx-auto w-full">
+            {isInitialLoadingHistory ? (
+              <div className="h-full min-h-[360px] flex flex-col items-center justify-center p-6 text-center max-w-sm mx-auto">
+                <div className="relative mb-5">
+                  <div className="absolute inset-0 rounded-full bg-pink-500/20 blur-xl animate-pulse pointer-events-none" />
+                  <img
+                    src={expertAvatar}
+                    alt={expertName}
+                    className="w-16 h-16 sm:w-20 sm:h-20 rounded-full aspect-square object-cover border-2 border-pink-500/50 shadow-lg shadow-pink-500/20 relative z-10"
+                    onError={(e) => {
+                      (e.target as HTMLImageElement).src = DEFAULT_AVATAR;
+                    }}
+                  />
+                  <div className="absolute -bottom-1 -right-1 z-20">
+                    <GlowingSpinner size="xs" color="primary" />
+                  </div>
+                </div>
+                <h4 className="text-white font-bold text-base sm:text-lg mb-1.5 text-center">
+                  {expertName}
+                </h4>
+                <p className="text-gray-400 text-xs sm:text-sm animate-pulse">
+                  Loading conversation history...
+                </p>
+              </div>
+            ) : (
+              <motion.div
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                transition={{ duration: 0.2 }}
+                className="space-y-4"
+              >
             {/* Load Earlier Messages Button */}
             {hasMoreMessages && (
               <div className="flex justify-center pt-1 pb-2">
@@ -1212,10 +1288,8 @@ export default function AiAssistantModal({ userId, userEmail, userName, userAvat
               </div>
             )}
             {messages.map((msg) => (
-              <motion.div
+              <div
                 key={msg.id}
-                initial={{ opacity: 0, y: 10 }}
-                animate={{ opacity: 1, y: 0 }}
                 className={`flex gap-3 sm:gap-4 ${msg.role === 'user' ? 'flex-row-reverse' : 'flex-row'}`}
               >
                 {msg.role === 'user' ? (
@@ -1284,7 +1358,7 @@ export default function AiAssistantModal({ userId, userEmail, userName, userAvat
                     )}
                   </div>
                 </div>
-              </motion.div>
+              </div>
             ))}
 
             {loading && (
@@ -1395,11 +1469,13 @@ export default function AiAssistantModal({ userId, userEmail, userName, userAvat
               </motion.div>
             )}
 
-            <div ref={messagesEndRef} />
+                <div ref={messagesEndRef} />
+              </motion.div>
+            )}
           </div>
 
-          {/* Quick Prompts (Only if enabled in Admin and not at limit) */}
-          {enableQuickPrompts && messages.length <= 2 && !loading && !isLimitReached && (
+          {/* Quick Prompts (Only if enabled in Admin, not at limit, and after history has loaded) */}
+          {enableQuickPrompts && !isInitialLoadingHistory && messages.length <= 2 && !loading && !isLimitReached && (
             <div className="px-4 py-3 border-t border-white/5 bg-black max-w-4xl mx-auto w-full flex flex-wrap gap-2">
               <span className="text-xs text-gray-400 w-full mb-1 flex items-center gap-1.5 font-medium">
                 <GraduationCap size={15} className="text-pink-400" /> Suggested questions for {expertName}:
@@ -1430,13 +1506,19 @@ export default function AiAssistantModal({ userId, userEmail, userName, userAvat
                   type="text"
                   value={input}
                   onChange={(e) => setInput(e.target.value)}
-                  placeholder={isLimitReached ? inputDisabledPlaceholder : inputPlaceholder}
-                  disabled={loading || isLimitReached}
+                  placeholder={
+                    isInitialLoadingHistory
+                      ? `Loading history...`
+                      : isLimitReached
+                      ? inputDisabledPlaceholder
+                      : inputPlaceholder
+                  }
+                  disabled={isInitialLoadingHistory || loading || isLimitReached}
                   className="flex-1 bg-zinc-800/90 border border-white/10 rounded-2xl px-4 sm:px-5 py-3.5 text-sm sm:text-base text-white placeholder-gray-500 focus:outline-none focus:border-pink-500/50 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
                 />
                 <button
                   type="submit"
-                  disabled={!input.trim() || loading || isLimitReached}
+                  disabled={isInitialLoadingHistory || !input.trim() || loading || isLimitReached}
                   className="px-5 sm:px-6 bg-gradient-to-r from-pink-500 to-rose-600 hover:from-pink-600 hover:to-rose-700 text-white font-bold rounded-2xl transition-all disabled:opacity-40 disabled:cursor-not-allowed flex items-center justify-center shadow-lg shadow-pink-500/20"
                 >
                   {loading ? <GlowingSpinner size="xs" color="white" /> : <Send size={20} />}

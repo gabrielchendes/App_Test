@@ -280,8 +280,8 @@ export default function Dashboard({ user }: DashboardProps) {
     const highPriorityTimer = setTimeout(() => {
       import('../components/Community');
       import('../components/AiAssistantModal');
-      // Pre-warm Ask Victoria avatar asset
-      const victoriaAvatar = 'https://fhnmpltilhongdofnzbj.supabase.co/storage/v1/object/public/contents/Victoria.webp';
+      // Pre-warm Ask Victoria / Expert avatar asset
+      const victoriaAvatar = settings?.custom_texts?.['ai_expert.avatar_url']?.trim() || 'https://fhnmpltilhongdofnzbj.supabase.co/storage/v1/object/public/contents/Victoria.webp';
       const img = new Image();
       img.src = victoriaAvatar;
     }, 600);
@@ -599,13 +599,7 @@ export default function Dashboard({ user }: DashboardProps) {
       }
 
     } catch (error: any) {
-      console.error('Notice during data fetch:', error);
-      if (error && error.message?.includes('Refresh Token Not Found')) {
-        console.warn('Session expired during usage, clearing...');
-        localStorage.removeItem('maternidade_premium_auth');
-        await supabase.auth.signOut().catch(() => {});
-        return;
-      }
+      console.warn('Notice during data fetch (retaining member session):', error?.message || error);
     } finally {
       setLoading(false);
       setHasInitialFetchCompleted(true);

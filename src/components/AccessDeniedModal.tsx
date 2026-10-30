@@ -39,6 +39,7 @@ export default function AccessDeniedModal({ userEmail }: AccessDeniedModalProps)
 
   const handleLogout = async () => {
     try {
+      localStorage.setItem('explicit_sign_out', 'true');
       await supabase.auth.signOut().catch(() => {});
       window.location.reload();
     } catch (e) {

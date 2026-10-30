@@ -1,0 +1,62 @@
+[
+  {
+    "id": "f5c0f361-6d4a-419e-a1b6-c49f6ccfbb30",
+    "user_id": "7bfb1b61-b43c-48d3-a81c-b84e694793b6",
+    "user_email": "emilywatson@student.com",
+    "user_name": "Emily Watson",
+    "user_avatar_url": "https://images.unsplash.com/photo-1544005313-94ddf0286df2?auto=format&fit=crop&w=400&q=80",
+    "content": "Girls, I really need to share this with you and get some advice from anyone who has been through it... I applied the method and I am already seeing the first signs, but I still get nervous butterflies in my stomach. How did you handle the anxiety during the first few days?",
+    "image_url": null,
+    "likes_count": 5,
+    "comments_count": 2,
+    "reply_to_id": null,
+    "reply_to_content": null,
+    "reply_to_user_name": null,
+    "created_at": "2026-10-28T14:48:00.000Z"
+  },
+  {
+    "id": "3e8ad866-5abe-454a-8fa4-fcc67fafd11a",
+    "user_id": "73a36d2d-35bc-4874-8e21-39925a39fdfb",
+    "user_email": "",
+    "user_name": "Test User",
+    "user_avatar_url": null,
+    "content": "Test post from admin",
+    "image_url": null,
+    "likes_count": 0,
+    "comments_count": 0,
+    "reply_to_id": null,
+    "reply_to_content": null,
+    "reply_to_user_name": null,
+    "created_at": "2026-10-28T14:21:14.685Z"
+  },
+  {
+    "id": "73fa8057-693e-4e14-9235-c5f7718bbc32",
+    "user_id": "021e05f7-c47e-4996-96bd-f8ae840825d3",
+    "user_email": "",
+    "user_name": "Camila Mendes",
+    "user_avatar_url": "https://images.unsplash.com/photo-1544005313-94ddf0286df2?auto=format&fit=crop&w=400&q=80",
+    "content": "Aluna comemorando uma vitória linda: ele que antes respondia com uma palavra só, agora mandou um áudio de 4 minutos perguntando como foi o dia dela. Meninas comentando vibrando juntas e compartilhando que com elas aconteceu o mesmo.",
+    "image_url": null,
+    "likes_count": 0,
+    "comments_count": 2,
+    "reply_to_id": null,
+    "reply_to_content": null,
+    "reply_to_user_name": null,
+    "created_at": "2026-10-28T14:17:11.562Z"
+  },
+  {
+    "id": "e72b8653-fbfb-489e-85d0-c6c531368dcb",
+    "user_id": "a1676c2b-3dab-46c9-b4e4-c5dacc910b05",
+    "user_email": "",
+    "user_name": "Camila Mendes",
+    "user_avatar_url": "https://images.unsplash.com/photo-1544005313-94ddf0286df2?auto=format&fit=crop&w=400&q=80",
+    "content": "Aluna insegura posta dúvida na comunidade: aplicou a mensagem de curiosidade, ele visualizou há 3 horas mas ainda não respondeu, está com medo de ter errado. Respostas de outras alunas acalmando e recomendando não mandar nada e confiar no processo.",
+    "image_url": null,
+    "likes_count": 0,
+    "comments_count": 2,
+    "reply_to_id": null,
+    "reply_to_content": null,
+    "reply_to_user_name": null,
+    "created_at": "2026-10-28T14:15:34.517Z"
+  }
+]

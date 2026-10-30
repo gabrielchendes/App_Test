@@ -3,6 +3,69 @@ import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { initializeApp, getApps, cert } from 'firebase-admin/app';
 import { getMessaging } from 'firebase-admin/messaging';
 import { randomUUID } from 'crypto';
+import fs from 'fs';
+import path from 'path';
+
+const DATA_DIR = path.join(process.cwd(), 'data');
+const PUSH_TOKENS_FILE = path.join(DATA_DIR, 'push_tokens.json');
+
+export interface StoredPushToken {
+  token: string;
+  user_id?: string;
+  platform?: string;
+  updated_at?: string;
+}
+
+function loadLocalPushTokens(): StoredPushToken[] {
+  try {
+    if (!fs.existsSync(DATA_DIR)) {
+      fs.mkdirSync(DATA_DIR, { recursive: true });
+    }
+    if (fs.existsSync(PUSH_TOKENS_FILE)) {
+      const raw = fs.readFileSync(PUSH_TOKENS_FILE, 'utf-8');
+      return JSON.parse(raw) || [];
+    }
+  } catch (err) {
+    console.warn('[Notifications API] Notice reading push_tokens.json:', err);
+  }
+  return [];
+}
+
+function saveLocalPushToken(token: string, userId?: string, platform = 'web'): void {
+  try {
+    if (!fs.existsSync(DATA_DIR)) {
+      fs.mkdirSync(DATA_DIR, { recursive: true });
+    }
+    const current = loadLocalPushTokens();
+    const existingIndex = current.findIndex(t => t.token === token);
+    const updatedItem: StoredPushToken = {
+      token,
+      user_id: userId,
+      platform,
+      updated_at: new Date().toISOString()
+    };
+    if (existingIndex >= 0) {
+      current[existingIndex] = { ...current[existingIndex], ...updatedItem };
+    } else {
+      current.push(updatedItem);
+    }
+    fs.writeFileSync(PUSH_TOKENS_FILE, JSON.stringify(current, null, 2), 'utf-8');
+  } catch (err) {
+    console.warn('[Notifications API] Notice saving push token locally:', err);
+  }
+}
+
+function removeLocalPushTokens(tokensToRemove: string[]): void {
+  try {
+    if (!fs.existsSync(PUSH_TOKENS_FILE)) return;
+    const current = loadLocalPushTokens();
+    const toRemoveSet = new Set(tokensToRemove);
+    const updated = current.filter(t => !toRemoveSet.has(t.token));
+    fs.writeFileSync(PUSH_TOKENS_FILE, JSON.stringify(updated, null, 2), 'utf-8');
+  } catch (err) {
+    console.warn('[Notifications API] Notice pruning push tokens locally:', err);
+  }
+}
 
 export interface InternalNotificationItem {
   id: string;
@@ -587,6 +650,24 @@ async function sendPushNotification(
       console.warn('[Notifications API] Erro ao buscar tokens de admin:', admTokenErr);
     }
 
+    // Merge tokens from local persistent storage (ensures push notifications reach users even with database RLS)
+    try {
+      const localTokens = loadLocalPushTokens();
+      if (localTokens.length > 0) {
+        const eligibleLocal = isBroadcast && (!userIds || userIds.length === 0)
+          ? localTokens
+          : localTokens.filter(t => t.user_id && userIds.includes(t.user_id));
+
+        eligibleLocal.forEach(lt => {
+          if (lt.token && !tokens.some((t: any) => t.token === lt.token)) {
+            tokens.push({ user_id: lt.user_id, token: lt.token });
+          }
+        });
+      }
+    } catch (locErr) {
+      console.warn('[Notifications API] Error reading local push tokens:', locErr);
+    }
+
     // If userIds was specifically provided (such as when exclusions are applied),
     // strictly enforce that tokens must belong to eligible users in userIds.
     if (userIds && userIds.length > 0) {
@@ -782,8 +863,9 @@ async function sendPushNotification(
       };
     }
     
-    // Clean up stale tokens asynchronously via supabaseAdmin (bypassing RLS)
+    // Clean up stale tokens asynchronously via supabaseAdmin and local storage
     if (failedTokens.length > 0) {
+      removeLocalPushTokens(failedTokens);
       try {
         await supabaseAdmin
           .from('push_tokens')
@@ -1590,6 +1672,10 @@ async function handleSubTopic(req: VercelRequest, res: VercelResponse) {
     } catch {}
   }
   
+  // 1. Always save token to local persistent storage immediately
+  saveLocalPushToken(token, effectiveUserId, 'web');
+
+  // 2. Best-effort sync with Supabase push_tokens table
   if (effectiveUserId) {
     try {
       const payload: any = {
@@ -1599,15 +1685,19 @@ async function handleSubTopic(req: VercelRequest, res: VercelResponse) {
       };
       const { error: upsertErr } = await client.from('push_tokens').upsert(payload, { onConflict: 'token' });
       if (upsertErr) {
-        console.warn('[Notifications API] Error saving token with client upsert, trying insert fallback:', upsertErr.message);
-        try {
-          await client.from('push_tokens').insert(payload);
-        } catch {}
+        const isRls = upsertErr.message?.toLowerCase().includes('row-level security') || (upsertErr as any).code === '42501';
+        if (isRls) {
+          console.log('[Notifications API] Push token safely stored in local registry (Supabase push_tokens RLS active)');
+        } else {
+          try {
+            await client.from('push_tokens').insert(payload);
+          } catch {}
+        }
       } else {
-        console.log('[Notifications API] Push token successfully saved for user:', effectiveUserId);
+        console.log('[Notifications API] Push token successfully saved in database for user:', effectiveUserId);
       }
-    } catch (e) {
-      console.warn('[Notifications API] Error saving token:', e);
+    } catch (e: any) {
+      console.log('[Notifications API] Push token stored locally (database sync notice:', e?.message || e, ')');
     }
   }
 

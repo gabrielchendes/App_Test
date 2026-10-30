@@ -13,7 +13,15 @@ export default defineConfig(({mode}) => {
       VitePWA({
         registerType: 'autoUpdate',
         injectRegister: false,
-        includeAssets: ['favicon.svg', 'apple-touch-icon.png', 'icon-192.png', 'icon-512.png'],
+        includeAssets: [
+          'favicon.svg',
+          'favicon.png',
+          'apple-touch-icon.png',
+          'icon-192.png',
+          'icon-512.png',
+          'icon-maskable-192.png',
+          'icon-maskable-512.png'
+        ],
         devOptions: {
           enabled: false,
         },
@@ -37,9 +45,6 @@ export default defineConfig(({mode}) => {
           maximumFileSizeToCacheInBytes: 4000000,
           runtimeCaching: [
             {
-              // Imagens e arquivos do Supabase Storage.
-              // NÃO inclui vídeo/áudio: o Safari exige respostas 206 (Range) reais do servidor,
-              // e o cache do Workbox não consegue montá-las a partir de respostas opacas.
               urlPattern: ({ url, request }) =>
                 /^https:\/\/.*\.supabase\.co\/storage\/v1\/object\/public\/.*/.test(url.href) &&
                 request.destination !== 'video' &&
@@ -57,9 +62,6 @@ export default defineConfig(({mode}) => {
                 },
               },
             },
-            // REMOVIDO: regra do Cloudflare R2 (r2.dev) com CacheFirst + rangeRequests.
-            // Ela causava o erro 416 no Safari. Sem regra, o Service Worker não intercepta
-            // os vídeos do R2 e o navegador fala direto com o servidor.
             {
               urlPattern: /^https:\/\/images\.unsplash\.com\/.*/,
               handler: 'CacheFirst',
@@ -76,7 +78,7 @@ export default defineConfig(({mode}) => {
         manifest: {
           id: '/',
           name: 'Missing Trigger',
-          short_name: 'Missing Trigger',
+          short_name: 'Trigger',
           description: 'Exclusive members area with premium content.',
           theme_color: '#0b0c10',
           background_color: '#0b0c10',
@@ -89,18 +91,6 @@ export default defineConfig(({mode}) => {
               src: '/icon-192.png',
               sizes: '192x192',
               type: 'image/png',
-              purpose: 'any maskable'
-            },
-            {
-              src: '/icon-512.png',
-              sizes: '512x512',
-              type: 'image/png',
-              purpose: 'any maskable'
-            },
-            {
-              src: '/icon-192.png',
-              sizes: '192x192',
-              type: 'image/png',
               purpose: 'any'
             },
             {
@@ -110,13 +100,13 @@ export default defineConfig(({mode}) => {
               purpose: 'any'
             },
             {
-              src: '/icon-192.png',
+              src: '/icon-maskable-192.png',
               sizes: '192x192',
               type: 'image/png',
               purpose: 'maskable'
             },
             {
-              src: '/icon-512.png',
+              src: '/icon-maskable-512.png',
               sizes: '512x512',
               type: 'image/png',
               purpose: 'maskable'

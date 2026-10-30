@@ -40,6 +40,7 @@ const Navbar = memo(({
   
   const handleLogout = async () => {
     try {
+      localStorage.setItem('explicit_sign_out', 'true');
       const { error } = await supabase.auth.signOut().catch(() => ({ error: null }));
       if (error) toast.error(t('auth.logout_error') || 'Erro ao sair');
       else toast.success(t('auth.logout_success') || 'Até logo!');

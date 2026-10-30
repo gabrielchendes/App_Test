@@ -93,6 +93,13 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         return await handleRefineSalesCopy(req, res);
       }
 
+      case 'generate-social-content':
+      case 'social-content':
+      case 'ai-social': {
+        const { handleGenerateSocialContent } = await import('../_ai/generateSocialContent');
+        return await handleGenerateSocialContent(req, res);
+      }
+
       default:
         // Default to ai-chat if body contains messages
         if (Array.isArray(req.body?.messages)) {

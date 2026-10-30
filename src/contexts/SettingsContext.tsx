@@ -212,10 +212,6 @@ export function SettingsProvider({ children }: { children: React.ReactNode }) {
 
         if (error) {
           console.warn('Supabase notice fetching settings, falling back to cached/defaults:', error?.message || error);
-          if (error.message && (error.message.includes('Refresh Token Not Found') || error.message.includes('invalid_grant'))) {
-            console.warn('Stale auth detected in SettingsProvider, clearing...');
-            localStorage.removeItem('maternidade_premium_auth');
-          }
         }
 
         if (sbData) {

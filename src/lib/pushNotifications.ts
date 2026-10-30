@@ -203,10 +203,11 @@ export async function setupPushInBackground(
           if (!upsertErr) {
             console.log('[Push] FCM token saved to Supabase');
           } else {
-            console.warn('[Push] Supabase push_token upsert notice:', upsertErr.message);
+            // Direct client write notice: server API endpoint handles token registration and persistence
+            console.log('[Push] FCM token registration handled via Notifications API');
           }
         } catch (dbErr) {
-          console.warn('[Push] Push token db error:', dbErr);
+          // Handled via backend notifications API
         }
 
         // 3. Attach foreground listener

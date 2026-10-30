@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { createPortal } from 'react-dom';
 import { GlowingSpinner } from './GlowingSpinner';
 import { 
@@ -39,7 +39,8 @@ import {
   Wand2,
   Puzzle,
   Headphones,
-  FileCode
+  FileCode,
+  Upload
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { Course, Module, Chapter, Checklist } from '../types/lms';
@@ -399,6 +400,63 @@ export default function CourseEditor({
   const [cropperType, setCropperType] = useState<'standard' | 'premium' | 'chapter' | 'existing-chapter'>('standard');
   const [cropperAspect, setCropperAspect] = useState(3/4);
   const [cropperChapterId, setCropperChapterId] = useState<string | null>(null);
+  const [cropperCustomInitialSrc, setCropperCustomInitialSrc] = useState<string | null>(null);
+
+  // File Input Refs for direct image upload
+  const courseCoverInputRef = useRef<HTMLInputElement>(null);
+  const newLessonCoverInputRef = useRef<HTMLInputElement>(null);
+  const singleChapterCoverFileInputRef = useRef<HTMLInputElement>(null);
+  const activeUploadTargetRef = useRef<{ type: 'existing-chapter'; chapterId: string } | null>(null);
+
+  // Drag states for dropzones
+  const [isDraggingCourseCover, setIsDraggingCourseCover] = useState(false);
+  const [isDraggingNewLessonCover, setIsDraggingNewLessonCover] = useState(false);
+  const [isDraggingExistingLessonCover, setIsDraggingExistingLessonCover] = useState(false);
+
+  // Direct file upload handler
+  const handleDirectFileUpload = (
+    e: React.ChangeEvent<HTMLInputElement> | React.DragEvent,
+    targetType: 'standard' | 'premium' | 'chapter' | 'existing-chapter',
+    aspect: number,
+    chapterId?: string
+  ) => {
+    let file: File | null = null;
+    if ('dataTransfer' in e) {
+      e.preventDefault();
+      file = e.dataTransfer.files?.[0] || null;
+    } else if ('target' in e && e.target.files) {
+      file = e.target.files[0] || null;
+    }
+
+    if (!file) return;
+
+    if (!file.type.startsWith('image/')) {
+      toast.error('Por favor, selecione um arquivo de imagem válido (JPG, PNG, WebP).');
+      return;
+    }
+
+    if (file.size > 15 * 1024 * 1024) {
+      toast.error('A imagem é muito pesada (máximo 15MB). Escolha outra foto.');
+      return;
+    }
+
+    const reader = new FileReader();
+    reader.onload = () => {
+      const dataUrl = reader.result as string;
+      setCropperCustomInitialSrc(dataUrl);
+      setCropperType(targetType);
+      setCropperAspect(aspect);
+      if (chapterId) {
+        setCropperChapterId(chapterId);
+      }
+      setCropperOpen(true);
+    };
+    reader.readAsDataURL(file);
+
+    if ('target' in e && e.target && (e.target as HTMLInputElement).value !== undefined) {
+      (e.target as HTMLInputElement).value = '';
+    }
+  };
 
   const [modules, setModules] = useState<Module[]>([]);
   const [chapters, setChapters] = useState<Chapter[]>([]);
@@ -473,6 +531,13 @@ export default function CourseEditor({
 
   const isUUID = (str?: string) =>
     /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(str || '');
+
+  const getEffectiveCourseId = () => {
+    if (courseId && courseId !== 'undefined' && courseId !== 'null' && isUUID(courseId)) return courseId;
+    if (course?.id && isUUID(course.id)) return course.id;
+    if (initialCourseId && initialCourseId !== 'undefined' && initialCourseId !== 'null' && isUUID(initialCourseId)) return initialCourseId;
+    return null;
+  };
 
   useEffect(() => {
     if (!externalPackages) {
@@ -562,7 +627,8 @@ export default function CourseEditor({
   }, [course.linked_package_id, packages]);
 
   const fetchCourseData = async () => {
-    if (!courseId || courseId === 'undefined' || courseId === 'null' || !isUUID(courseId)) {
+    const targetCourseId = getEffectiveCourseId();
+    if (!targetCourseId) {
       setLoading(false);
       return;
     }
@@ -572,7 +638,7 @@ export default function CourseEditor({
       const { data: courseData, error: courseError } = await supabase
         .from('courses')
         .select('*')
-        .eq('id', courseId)
+        .eq('id', targetCourseId)
         .single();
       
       if (courseError) throw courseError;
@@ -598,22 +664,26 @@ export default function CourseEditor({
       const { data: modulesData, error: modulesError } = await supabase
         .from('modules')
         .select('*')
-        .eq('course_id', courseId)
+        .eq('course_id', targetCourseId)
         .order('order_index');
       
       if (modulesError) throw modulesError;
       setModules(modulesData || []);
 
       const moduleIds = (modulesData || []).map(m => m.id);
-      const { data: chaptersData, error: chaptersError } = await supabase
-        .from('chapters')
-        .select('*')
-        .in('module_id', moduleIds)
-        .order('order_index');
-      
-      if (chaptersError) throw chaptersError;
-      const chaptersList = (chaptersData || []).map(fromDbChapter);
-      setChapters(chaptersList);
+      if (moduleIds.length > 0) {
+        const { data: chaptersData, error: chaptersError } = await supabase
+          .from('chapters')
+          .select('*')
+          .in('module_id', moduleIds)
+          .order('order_index');
+        
+        if (chaptersError) throw chaptersError;
+        const chaptersList = (chaptersData || []).map(fromDbChapter);
+        setChapters(chaptersList);
+      } else {
+        setChapters([]);
+      }
       
       setExpandedChapters([]);
     } catch (err) {
@@ -786,11 +856,12 @@ export default function CourseEditor({
         hide_single_module_header: course.hide_single_module_header !== false
       };
 
-      if (courseId && courseId !== 'undefined' && courseId !== 'null' && isUUID(courseId)) {
-        let { error } = await supabase.from('courses').update(courseData).eq('id', courseId);
+      const targetCourseId = getEffectiveCourseId();
+      if (targetCourseId) {
+        let { error } = await supabase.from('courses').update(courseData).eq('id', targetCourseId);
         if (error && error.message?.includes('hide_single_module_header')) {
           delete (courseData as any).hide_single_module_header;
-          const retry = await supabase.from('courses').update(courseData).eq('id', courseId);
+          const retry = await supabase.from('courses').update(courseData).eq('id', targetCourseId);
           error = retry.error;
         }
         if (error) {
@@ -800,6 +871,8 @@ export default function CourseEditor({
           }
           throw error;
         }
+        dataCache.invalidate('course_full_' + targetCourseId);
+        dataCache.invalidate('global_public_courses_catalog');
         dataCache.invalidate();
         toast.success('Informações salvas!');
       } else {
@@ -823,6 +896,7 @@ export default function CourseEditor({
           ...data,
           ...parseCourseHtmlFunnel(data)
         }));
+        dataCache.invalidate('global_public_courses_catalog');
         dataCache.invalidate();
         toast.success('Curso criado!');
       }
@@ -1079,9 +1153,11 @@ export default function CourseEditor({
       if (editingExistingChapter.content_type === 'checklist' && editingChecklist) {
         await saveChecklistToDatabase(editingExistingChapter.id, editingChecklist);
       }
-      if (courseId) {
-        dataCache.invalidate('course_full_' + courseId);
+      const effId = getEffectiveCourseId();
+      if (effId) {
+        dataCache.invalidate('course_full_' + effId);
       }
+      dataCache.invalidate('global_public_courses_catalog');
       dataCache.invalidate();
       toast.success('Aula atualizada com sucesso!');
       setIsDirty(false);
@@ -1316,67 +1392,145 @@ export default function CourseEditor({
                       <p className="text-xs text-gray-200 font-semibold">
                         Tamanho de <span className="text-blue-300 font-black">1080 x 1440 px</span> (Proporção 3:4)
                       </p>
-                      <p className="text-xs text-gray-200 font-semibold">
-                        Dica: jogue no <span className="text-blue-300 font-black">Squoosh.app ou TinyPNG</span> para comprimir imagem baixo de 100 KB - 150 KB (.webp) / ou 600x800 pixels
+                      <p className="text-[11px] text-gray-400">
+                        Faça upload direto do computador ou cole uma URL. O sistema recorta e ajusta perfeitamente.
                       </p>
                     </div>
 
-                    <div 
-                      onClick={() => {
-                        if (!course.cover_url) {
-                          toast.error("Por favor, cole a URL da imagem no campo abaixo primeiro antes de ajustar.");
-                          return;
+                    {/* Hidden file input for course cover */}
+                    <input
+                      type="file"
+                      ref={courseCoverInputRef}
+                      accept="image/*"
+                      className="hidden"
+                      onChange={(e) => handleDirectFileUpload(e, 'standard', 3/4)}
+                    />
+
+                    {/* Hidden global file input for existing chapters */}
+                    <input
+                      type="file"
+                      ref={singleChapterCoverFileInputRef}
+                      accept="image/*"
+                      className="hidden"
+                      onChange={(e) => {
+                        const targetId = activeUploadTargetRef.current?.chapterId || selectedChapterId;
+                        if (targetId) {
+                          handleDirectFileUpload(e, 'existing-chapter', 1, targetId);
                         }
-                        setCropperType('standard');
-                        setCropperAspect(3/4);
-                        setCropperOpen(true);
                       }}
-                      className="aspect-[3/4] rounded-3xl border-2 border-dashed border-white/10 overflow-hidden relative bg-black group/cover cursor-pointer hover:border-blue-500/50 transition-all shadow-xl"
-                    >
-                      {course.cover_url ? (
-                        <img src={course.cover_url} className="w-full h-full object-cover transition-transform duration-700 group-hover/cover:scale-110" alt="Capa" referrerPolicy="no-referrer" />
-                      ) : (
-                        <div className="absolute inset-0 flex flex-col items-center justify-center text-gray-600 p-6 text-center">
-                          <ImageIcon className="mb-3 opacity-20" size={44} />
-                          <span className="text-[10px] font-black uppercase tracking-widest opacity-40 mb-1">Capa do Curso</span>
-                          <span className="text-[9px] font-medium opacity-30 leading-normal max-w-[200px]">Cole a URL da imagem abaixo para habilitar o ajuste e visualização</span>
-                        </div>
-                      )}
-                      
-                      {course.cover_url && (
-                        <div className="absolute inset-0 bg-black/60 opacity-0 group-hover/cover:opacity-100 transition-opacity flex items-center justify-center backdrop-blur-sm">
-                          <p className="text-[10px] font-black text-white uppercase tracking-widest bg-blue-600/80 px-4 py-2 rounded-xl">Recortar & Ajustar Capa</p>
-                        </div>
-                      )}
-                    </div>
-                    <div className="flex gap-2">
-                      <button
-                        type="button"
-                        onClick={() => {
-                          if (!course.cover_url) {
-                            toast.error("Por favor, cole a URL da imagem no campo abaixo primeiro antes de ajustar.");
-                            return;
-                          }
+                    />
+
+                    <div 
+                      onDragOver={(e) => { e.preventDefault(); setIsDraggingCourseCover(true); }}
+                      onDragLeave={() => setIsDraggingCourseCover(false)}
+                      onDrop={(e) => {
+                        setIsDraggingCourseCover(false);
+                        handleDirectFileUpload(e, 'standard', 3/4);
+                      }}
+                      onClick={() => {
+                        if (course.cover_url) {
+                          setCropperCustomInitialSrc(null);
                           setCropperType('standard');
                           setCropperAspect(3/4);
                           setCropperOpen(true);
-                        }}
-                        className={`w-full py-3 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all flex items-center justify-center gap-2 border ${
-                          course.cover_url 
-                            ? 'bg-blue-500/10 hover:bg-blue-500/20 text-blue-400 border-blue-500/20' 
-                            : 'bg-white/[0.02] text-gray-600 border-white/5 cursor-not-allowed'
-                        }`}
-                      >
-                        <ImageIcon size={14} /> Recortar / Ajustar Capa
-                      </button>
+                        } else {
+                          courseCoverInputRef.current?.click();
+                        }
+                      }}
+                      className={`aspect-[3/4] rounded-3xl border-2 border-dashed overflow-hidden relative bg-black group/cover cursor-pointer transition-all shadow-xl ${
+                        isDraggingCourseCover 
+                          ? 'border-blue-500 bg-blue-500/10 scale-[1.02]' 
+                          : 'border-white/10 hover:border-blue-500/50'
+                      }`}
+                    >
+                      {course.cover_url ? (
+                        <>
+                          <img src={course.cover_url} className="w-full h-full object-cover transition-transform duration-700 group-hover/cover:scale-105" alt="Capa" referrerPolicy="no-referrer" />
+                          <div className="absolute inset-0 bg-black/60 opacity-0 group-hover/cover:opacity-100 transition-opacity flex flex-col items-center justify-center gap-2 backdrop-blur-sm p-4">
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                courseCoverInputRef.current?.click();
+                              }}
+                              className="w-full max-w-[200px] py-2.5 px-4 rounded-xl text-[10px] font-black text-white uppercase tracking-widest bg-blue-600 hover:bg-blue-500 transition-all flex items-center justify-center gap-2 shadow-lg cursor-pointer"
+                            >
+                              <Upload size={13} /> Fazer Upload de Foto
+                            </button>
+                            <span className="text-[10px] font-bold text-gray-300 uppercase tracking-widest bg-white/10 px-3 py-1.5 rounded-lg">
+                              Clique para Recortar
+                            </span>
+                          </div>
+                        </>
+                      ) : (
+                        <div className="absolute inset-0 flex flex-col items-center justify-center text-gray-400 p-6 text-center group-hover/cover:text-blue-400 transition-colors">
+                          <div className="w-14 h-14 rounded-2xl bg-white/5 group-hover/cover:bg-blue-500/10 flex items-center justify-center mb-3 transition-colors">
+                            <Upload size={28} className="text-gray-400 group-hover/cover:text-blue-400 transition-colors" />
+                          </div>
+                          <span className="text-xs font-black uppercase tracking-widest text-white mb-1">Upload da Capa do Curso</span>
+                          <span className="text-[10px] font-medium text-gray-500 leading-normal max-w-[220px]">
+                            Clique para escolher do computador ou arraste a imagem aqui (3:4)
+                          </span>
+                        </div>
+                      )}
                     </div>
+
+                    <div className="flex gap-2">
+                      <button
+                        type="button"
+                        onClick={() => courseCoverInputRef.current?.click()}
+                        className="flex-1 py-3 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all flex items-center justify-center gap-2 bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 text-white shadow-lg shadow-blue-900/30 active:scale-98 cursor-pointer"
+                      >
+                        <Upload size={14} /> Fazer Upload da Capa
+                      </button>
+
+                      {course.cover_url && (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setCropperCustomInitialSrc(null);
+                            setCropperType('standard');
+                            setCropperAspect(3/4);
+                            setCropperOpen(true);
+                          }}
+                          className="px-4 py-3 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all flex items-center justify-center gap-1.5 bg-white/5 hover:bg-white/10 text-gray-300 border border-white/10 cursor-pointer"
+                          title="Ajustar e Recortar"
+                        >
+                          <ImageIcon size={14} /> Ajustar
+                        </button>
+                      )}
+
+                      {course.cover_url && (
+                        <button
+                          type="button"
+                          onClick={async () => {
+                            setCourse(prev => ({ ...prev, cover_url: '' }));
+                            const effId = getEffectiveCourseId();
+                            if (effId) {
+                              try {
+                                await supabase.from('courses').update({ cover_url: '' }).eq('id', effId);
+                                dataCache.invalidate('course_full_' + effId);
+                                dataCache.invalidate('global_public_courses_catalog');
+                                dataCache.invalidate();
+                              } catch (_) {}
+                            }
+                            toast.success('Capa do treinamento removida!');
+                          }}
+                          className="px-3 py-3 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all flex items-center justify-center bg-red-500/10 hover:bg-red-500/20 text-red-400 border border-red-500/20 cursor-pointer"
+                          title="Remover Capa"
+                        >
+                          <Trash2 size={14} />
+                        </button>
+                      )}
+                    </div>
+
                     <div className="relative group/url">
                       <input 
                         type="text" 
                         value={course.cover_url || ''}
                         onChange={e => setCourse({...course, cover_url: e.target.value})}
-                        className="w-full bg-black/40 border border-white/10 rounded-2xl px-6 py-4 text-[10px] text-gray-400 focus:border-blue-500 outline-none transition-all font-mono"
-                        placeholder="Cole a URL direta da imagem aqui para visualizar e ajustar..."
+                        className="w-full bg-black/40 border border-white/10 rounded-2xl px-6 py-3.5 text-[10px] text-gray-400 focus:border-blue-500 outline-none transition-all font-mono"
+                        placeholder="Ou cole a URL direta da imagem aqui..."
                       />
                     </div>
                   </div>
@@ -2504,7 +2658,7 @@ export default function CourseEditor({
 
                       {/* Capa da Aula Card - Centered Below */}
                       <div className="bg-black/30 border border-white/10 rounded-3xl p-6 space-y-4 max-w-xl mx-auto w-full">
-                        <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest text-center block">Capa da Aula (Thumb)</label>
+                        <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest text-center block">Capa / Miniatura da Aula (Thumb 1:1)</label>
                         
                         <div className="bg-gradient-to-br from-emerald-500/10 to-teal-500/5 border border-emerald-500/20 rounded-2xl p-4 text-center space-y-1.5 shadow-md">
                           <p className="text-[10px] font-black text-emerald-400 uppercase tracking-widest flex items-center justify-center gap-1.5">
@@ -2513,62 +2667,118 @@ export default function CourseEditor({
                           <p className="text-xs text-gray-200 font-semibold">
                             Tamanho de <span className="text-emerald-300 font-black">1080 x 1080 px</span> (Proporção 1:1 Quadrada)
                           </p>
+                          <p className="text-[11px] text-gray-400">
+                            Faça upload do computador ou cole a URL. O sistema recorta em quadrado perfeito.
+                          </p>
                         </div>
+
+                        {/* Hidden file input */}
+                        <input
+                          type="file"
+                          ref={newLessonCoverInputRef}
+                          accept="image/*"
+                          className="hidden"
+                          onChange={(e) => handleDirectFileUpload(e, 'chapter', 1)}
+                        />
 
                         <div 
-                          onClick={() => {
-                            if (!editingChapter.cover_url) {
-                              toast.error("Por favor, cole a URL da imagem no campo abaixo primeiro antes de ajustar.");
-                              return;
-                            }
-                            setCropperType('chapter');
-                            setCropperAspect(1);
-                            setCropperOpen(true);
+                          onDragOver={(e) => { e.preventDefault(); setIsDraggingNewLessonCover(true); }}
+                          onDragLeave={() => setIsDraggingNewLessonCover(false)}
+                          onDrop={(e) => {
+                            setIsDraggingNewLessonCover(false);
+                            handleDirectFileUpload(e, 'chapter', 1);
                           }}
-                          className="aspect-square max-w-[240px] mx-auto rounded-2xl border border-white/10 overflow-hidden relative bg-black group/lessonaura cursor-pointer hover:border-emerald-500/50 transition-all shadow-lg"
+                          onClick={() => {
+                            if (editingChapter.cover_url) {
+                              setCropperCustomInitialSrc(null);
+                              setCropperType('chapter');
+                              setCropperAspect(1);
+                              setCropperOpen(true);
+                            } else {
+                              newLessonCoverInputRef.current?.click();
+                            }
+                          }}
+                          className={`aspect-square max-w-[240px] mx-auto rounded-2xl border-2 border-dashed overflow-hidden relative bg-black group/lessonaura cursor-pointer transition-all shadow-lg ${
+                            isDraggingNewLessonCover 
+                              ? 'border-emerald-500 bg-emerald-500/10 scale-105' 
+                              : 'border-white/10 hover:border-emerald-500/50'
+                          }`}
                         >
                           {editingChapter.cover_url ? (
-                            <img src={editingChapter.cover_url} className="w-full h-full object-cover transition-transform group-hover/lessonaura:scale-105" alt="Thumb" referrerPolicy="no-referrer" />
+                            <>
+                              <img src={editingChapter.cover_url} className="w-full h-full object-cover transition-transform group-hover/lessonaura:scale-105" alt="Thumb" referrerPolicy="no-referrer" />
+                              <div className="absolute inset-0 bg-black/60 opacity-0 group-hover/lessonaura:opacity-100 flex flex-col items-center justify-center gap-2 transition-opacity p-2 backdrop-blur-sm">
+                                <button
+                                  type="button"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    newLessonCoverInputRef.current?.click();
+                                  }}
+                                  className="w-full max-w-[160px] py-2 px-3 rounded-xl text-[9px] font-black text-white uppercase tracking-widest bg-emerald-600 hover:bg-emerald-500 transition-all flex items-center justify-center gap-1.5 shadow-md cursor-pointer"
+                                >
+                                  <Upload size={12} /> Trocar Foto
+                                </button>
+                                <span className="text-[9px] font-bold text-gray-300 uppercase tracking-widest bg-white/10 px-2.5 py-1 rounded-lg">
+                                  Clique para Recortar (1:1)
+                                </span>
+                              </div>
+                            </>
                           ) : (
-                            <div className="absolute inset-0 flex flex-col items-center justify-center text-gray-600 p-6 text-center">
-                              <ImageIcon className="mb-3 opacity-20" size={32} />
-                              <span className="text-[10px] font-black uppercase tracking-widest opacity-40 mb-1">Capa da Aula</span>
-                              <span className="text-[9px] font-medium opacity-30 leading-normal max-w-[200px]">Cole a URL da imagem abaixo para habilitar o ajuste</span>
-                            </div>
-                          )}
-                          {editingChapter.cover_url && (
-                            <div className="absolute inset-0 bg-black/60 opacity-0 group-hover/lessonaura:opacity-100 flex items-center justify-center transition-opacity">
-                              <span className="text-[9px] font-black text-white uppercase tracking-widest bg-emerald-600/80 px-3 py-1.5 rounded-lg">Ajustar Capa (1:1)</span>
+                            <div className="absolute inset-0 flex flex-col items-center justify-center text-gray-400 p-6 text-center group-hover/lessonaura:text-emerald-400 transition-colors">
+                              <div className="w-12 h-12 rounded-xl bg-white/5 group-hover/lessonaura:bg-emerald-500/10 flex items-center justify-center mb-2.5 transition-colors">
+                                <Upload size={24} className="text-gray-400 group-hover/lessonaura:text-emerald-400 transition-colors" />
+                              </div>
+                              <span className="text-[10px] font-black uppercase tracking-widest text-white mb-0.5">Upload Capa da Aula</span>
+                              <span className="text-[9px] font-medium text-gray-500 leading-normal max-w-[190px]">
+                                Clique para escolher do computador ou arraste a imagem (1:1)
+                              </span>
                             </div>
                           )}
                         </div>
 
-                        <button
-                          type="button"
-                          onClick={() => {
-                            if (!editingChapter.cover_url) {
-                              toast.error("Por favor, cole a URL da imagem no campo abaixo primeiro antes de ajustar.");
-                              return;
-                            }
-                            setCropperType('chapter');
-                            setCropperAspect(1);
-                            setCropperOpen(true);
-                          }}
-                          className={`w-full py-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all flex items-center justify-center gap-2 border ${
-                            editingChapter.cover_url 
-                              ? 'bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-400 border-emerald-500/20' 
-                              : 'bg-white/[0.02] text-gray-600 border-white/5 cursor-not-allowed'
-                          }`}
-                        >
-                          <ImageIcon size={14} /> Recortar / Ajustar Thumbnail
-                        </button>
+                        <div className="flex gap-2">
+                          <button
+                            type="button"
+                            onClick={() => newLessonCoverInputRef.current?.click()}
+                            className="flex-1 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all flex items-center justify-center gap-2 bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white shadow-lg shadow-emerald-900/30 active:scale-98 cursor-pointer"
+                          >
+                            <Upload size={14} /> Fazer Upload da Capa (1:1)
+                          </button>
+
+                          {editingChapter.cover_url && (
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setCropperCustomInitialSrc(null);
+                                setCropperType('chapter');
+                                setCropperAspect(1);
+                                setCropperOpen(true);
+                              }}
+                              className="px-3.5 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all flex items-center justify-center gap-1.5 bg-white/5 hover:bg-white/10 text-gray-300 border border-white/10 cursor-pointer"
+                              title="Ajustar e Recortar"
+                            >
+                              <ImageIcon size={14} /> Ajustar
+                            </button>
+                          )}
+
+                          {editingChapter.cover_url && (
+                            <button
+                              type="button"
+                              onClick={() => setEditingChapter({ ...editingChapter, cover_url: '' })}
+                              className="px-3 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all flex items-center justify-center bg-red-500/10 hover:bg-red-500/20 text-red-400 border border-red-500/20 cursor-pointer"
+                              title="Remover Capa"
+                            >
+                              <Trash2 size={14} />
+                            </button>
+                          )}
+                        </div>
 
                         <input 
                           type="text" 
                           value={editingChapter.cover_url || ''}
                           onChange={e => setEditingChapter({...editingChapter, cover_url: e.target.value})}
                           className="w-full bg-black/40 border border-white/10 rounded-xl px-4 py-3 text-[10px] text-gray-400 focus:border-emerald-500 outline-none transition-all font-mono"
-                          placeholder="Cole a URL direta da imagem aqui para visualizar e ajustar..."
+                          placeholder="Ou cole a URL direta da imagem aqui..."
                         />
                       </div>
 
@@ -3232,7 +3442,9 @@ export default function CourseEditor({
                                           {/* Capa da Aula Card - Centered Below */}
                                           <div className="bg-black/30 border border-white/10 rounded-3xl p-6 space-y-4 max-w-xl mx-auto w-full">
                                             <div className="space-y-3">
-                                              <label className="text-[10px] font-black text-gray-500 uppercase tracking-widest ml-1 text-center block">Capa desta Aula</label>
+                                              <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest ml-1 text-center block">
+                                                Capa / Miniatura desta Aula (Thumb 1:1)
+                                              </label>
                                               
                                               {/* Canva Guide Card */}
                                               <div className="bg-gradient-to-br from-blue-500/10 to-indigo-500/5 border border-blue-500/20 rounded-2xl p-4 text-center space-y-1.5 shadow-md">
@@ -3242,62 +3454,128 @@ export default function CourseEditor({
                                                 <p className="text-xs text-gray-200 font-semibold">
                                                   Tamanho de <span className="text-blue-300 font-black">1080 x 1080 px</span> (Proporção 1:1 Quadrada)
                                                 </p>
+                                                <p className="text-[11px] text-gray-400">
+                                                  Faça upload do computador ou cole a URL. O sistema recorta em quadrado perfeito.
+                                                </p>
                                               </div>
 
+
                                               <div 
-                                                onClick={() => {
-                                                  if (!draft.cover_url) {
-                                                    toast.error("Por favor, cole a URL da imagem no campo abaixo primeiro antes de ajustar.");
-                                                    return;
-                                                  }
-                                                  setCropperType('existing-chapter');
-                                                  setCropperChapterId(ch.id);
-                                                  setCropperAspect(1);
-                                                  setCropperOpen(true);
+                                                onDragOver={(e) => { e.preventDefault(); setIsDraggingExistingLessonCover(true); }}
+                                                onDragLeave={() => setIsDraggingExistingLessonCover(false)}
+                                                onDrop={(e) => {
+                                                  setIsDraggingExistingLessonCover(false);
+                                                  handleDirectFileUpload(e, 'existing-chapter', 1, ch.id);
                                                 }}
-                                                className="aspect-square max-w-[280px] mx-auto rounded-3xl overflow-hidden relative bg-black border border-white/10 cursor-pointer group/lessonaura hover:border-blue-500/50 transition-all shadow-lg"
+                                                onClick={() => {
+                                                  activeUploadTargetRef.current = { type: 'existing-chapter', chapterId: ch.id };
+                                                  if (draft.cover_url) {
+                                                    setCropperCustomInitialSrc(null);
+                                                    setCropperType('existing-chapter');
+                                                    setCropperChapterId(ch.id);
+                                                    setCropperAspect(1);
+                                                    setCropperOpen(true);
+                                                  } else {
+                                                    singleChapterCoverFileInputRef.current?.click();
+                                                  }
+                                                }}
+                                                className={`aspect-square max-w-[280px] mx-auto rounded-3xl overflow-hidden relative bg-black border-2 border-dashed cursor-pointer group/lessonaura transition-all shadow-lg ${
+                                                  isDraggingExistingLessonCover 
+                                                    ? 'border-blue-500 bg-blue-500/10 scale-105' 
+                                                    : 'border-white/10 hover:border-blue-500/50'
+                                                }`}
                                               >
                                                 {draft.cover_url ? (
-                                                  <img src={draft.cover_url} className="w-full h-full object-cover transition-transform group-hover/lessonaura:scale-105" alt="Thumb" referrerPolicy="no-referrer" />
+                                                  <>
+                                                    <img src={draft.cover_url} className="w-full h-full object-cover transition-transform group-hover/lessonaura:scale-105" alt="Thumb" referrerPolicy="no-referrer" />
+                                                    <div className="absolute inset-0 bg-black/60 opacity-0 group-hover/lessonaura:opacity-100 flex flex-col items-center justify-center gap-2 transition-opacity p-2 backdrop-blur-sm">
+                                                      <button
+                                                        type="button"
+                                                        onClick={(e) => {
+                                                          e.stopPropagation();
+                                                          activeUploadTargetRef.current = { type: 'existing-chapter', chapterId: ch.id };
+                                                          singleChapterCoverFileInputRef.current?.click();
+                                                        }}
+                                                        className="w-full max-w-[160px] py-2 px-3 rounded-xl text-[9px] font-black text-white uppercase tracking-widest bg-blue-600 hover:bg-blue-500 transition-all flex items-center justify-center gap-1.5 shadow-md cursor-pointer"
+                                                      >
+                                                        <Upload size={12} /> Trocar Foto
+                                                      </button>
+                                                      <span className="text-[9px] font-bold text-gray-300 uppercase tracking-widest bg-white/10 px-2.5 py-1 rounded-lg">
+                                                        Clique para Recortar (1:1)
+                                                      </span>
+                                                    </div>
+                                                  </>
                                                 ) : (
-                                                  <div className="absolute inset-0 flex flex-col items-center justify-center text-gray-600 p-6 text-center">
-                                                    <ImageIcon className="mb-3 opacity-20" size={32} />
-                                                    <span className="text-[10px] font-black uppercase tracking-widest opacity-40 mb-1">Capa da Aula</span>
-                                                    <span className="text-[9px] font-medium opacity-30 leading-normal max-w-[200px]">Cole a URL da imagem abaixo para habilitar o ajuste e visualização</span>
-                                                  </div>
-                                                )}
-                                                {draft.cover_url && (
-                                                  <div className="absolute inset-0 bg-black/60 opacity-0 group-hover/lessonaura:opacity-100 flex items-center justify-center transition-opacity">
-                                                    <span className="text-[9px] font-black text-white uppercase tracking-widest bg-blue-600/80 px-3 py-1.5 rounded-lg">Ajustar Capa (1:1)</span>
+                                                  <div className="absolute inset-0 flex flex-col items-center justify-center text-gray-400 p-6 text-center group-hover/lessonaura:text-blue-400 transition-colors">
+                                                    <div className="w-12 h-12 rounded-xl bg-white/5 group-hover/lessonaura:bg-blue-500/10 flex items-center justify-center mb-2.5 transition-colors">
+                                                      <Upload size={24} className="text-gray-400 group-hover/lessonaura:text-blue-400 transition-colors" />
+                                                    </div>
+                                                    <span className="text-[10px] font-black uppercase tracking-widest text-white mb-0.5">Upload Capa da Aula</span>
+                                                    <span className="text-[9px] font-medium text-gray-500 leading-normal max-w-[200px]">
+                                                      Clique para escolher foto ou arraste aqui (1:1)
+                                                    </span>
                                                   </div>
                                                 )}
                                               </div>
-                                              <button
-                                                type="button"
-                                                onClick={() => {
-                                                  if (!draft.cover_url) {
-                                                    toast.error("Por favor, cole a URL da imagem no campo abaixo primeiro antes de ajustar.");
-                                                    return;
-                                                  }
-                                                  setCropperType('existing-chapter');
-                                                  setCropperChapterId(ch.id);
-                                                  setCropperAspect(1);
-                                                  setCropperOpen(true);
-                                                }}
-                                                className={`w-full py-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all flex items-center justify-center gap-2 border ${
-                                                  draft.cover_url 
-                                                    ? 'bg-blue-500/10 hover:bg-blue-500/20 text-blue-400 border-blue-500/20' 
-                                                    : 'bg-white/[0.02] text-gray-600 border-white/5 cursor-not-allowed'
-                                                }`}
-                                              >
-                                                <ImageIcon size={14} /> Recortar / Ajustar Thumbnail
-                                              </button>
+
+                                              <div className="flex gap-2">
+                                                <button
+                                                  type="button"
+                                                  onClick={() => {
+                                                    activeUploadTargetRef.current = { type: 'existing-chapter', chapterId: ch.id };
+                                                    singleChapterCoverFileInputRef.current?.click();
+                                                  }}
+                                                  className="flex-1 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all flex items-center justify-center gap-2 bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 text-white shadow-lg shadow-blue-900/30 active:scale-98 cursor-pointer"
+                                                >
+                                                  <Upload size={14} /> Fazer Upload da Capa (1:1)
+                                                </button>
+
+                                                {draft.cover_url && (
+                                                  <button
+                                                    type="button"
+                                                    onClick={() => {
+                                                      setCropperCustomInitialSrc(null);
+                                                      setCropperType('existing-chapter');
+                                                      setCropperChapterId(ch.id);
+                                                      setCropperAspect(1);
+                                                      setCropperOpen(true);
+                                                    }}
+                                                    className="px-3.5 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all flex items-center justify-center gap-1.5 bg-white/5 hover:bg-white/10 text-gray-300 border border-white/10 cursor-pointer"
+                                                    title="Ajustar e Recortar"
+                                                  >
+                                                    <ImageIcon size={14} /> Ajustar
+                                                  </button>
+                                                )}
+
+                                                {draft.cover_url && (
+                                                  <button
+                                                    type="button"
+                                                    onClick={async () => {
+                                                      setEditingExistingChapter(prev => prev ? ({ ...prev, cover_url: '' }) : null);
+                                                      setChapters(prev => prev.map(c => c.id === ch.id ? { ...c, cover_url: '' } : c));
+                                                      try {
+                                                        await supabase.from('chapters').update({ cover_url: '' }).eq('id', ch.id);
+                                                        const effId = getEffectiveCourseId();
+                                                        if (effId) dataCache.invalidate('course_full_' + effId);
+                                                        dataCache.invalidate('global_public_courses_catalog');
+                                                        dataCache.invalidate();
+                                                      } catch (_) {}
+                                                      toast.success('Capa da aula removida!');
+                                                    }}
+                                                    className="px-3 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all flex items-center justify-center bg-red-500/10 hover:bg-red-500/20 text-red-400 border border-red-500/20 cursor-pointer"
+                                                    title="Remover Capa"
+                                                  >
+                                                    <Trash2 size={14} />
+                                                  </button>
+                                                )}
+                                              </div>
+
                                               <input 
                                                 type="text" 
                                                 value={draft.cover_url || ''}
                                                 onChange={e => setEditingExistingChapter(prev => prev ? ({ ...prev, cover_url: e.target.value }) : null)}
                                                 className="w-full bg-black/40 border border-white/10 rounded-xl px-4 py-3 text-[10px] text-gray-400 focus:border-blue-500 outline-none font-mono"
-                                                placeholder="Cole a URL direta da imagem aqui para visualizar e ajustar..."
+                                                placeholder="Ou cole a URL direta da imagem aqui..."
                                               />
                                             </div>
                                           </div>
@@ -3360,38 +3638,96 @@ export default function CourseEditor({
       onClose={() => {
         setCropperOpen(false);
         setCropperChapterId(null);
+        setCropperCustomInitialSrc(null);
       }}
       aspectRatio={cropperAspect}
-      allowUpload={cropperType !== 'standard'}
+      allowUpload={true}
       initialImageSrc={
-        cropperType === 'standard' 
-          ? course.cover_url 
-          : cropperType === 'premium' 
-            ? course.premium_cover_url 
-            : cropperType === 'chapter' 
-              ? editingChapter.cover_url 
-              : cropperType === 'existing-chapter'
-                ? editingExistingChapter?.cover_url
-                : undefined
+        cropperCustomInitialSrc || (
+          cropperType === 'standard' 
+            ? course.cover_url 
+            : cropperType === 'premium' 
+              ? course.premium_cover_url 
+              : cropperType === 'chapter' 
+                ? editingChapter.cover_url 
+                : cropperType === 'existing-chapter'
+                  ? (chapters.find(c => c.id === (cropperChapterId || editingExistingChapter?.id))?.cover_url || editingExistingChapter?.cover_url)
+                  : undefined
+        )
       }
       title={
         cropperType === 'standard' 
-          ? 'Ajustar Capa do Curso' 
+          ? 'Capa do Treinamento (Proporção 3:4)' 
           : cropperType === 'premium' 
-            ? 'Ajustar Capa Premium' 
-            : 'Ajustar Capa da Aula'
+            ? 'Capa Premium do Curso' 
+            : 'Capa / Miniatura da Aula (Proporção 1:1)'
       }
       onConfirm={async (url) => {
         if (cropperType === 'standard') {
           setCourse(prev => ({ ...prev, cover_url: url }));
+          setIsDirty(true);
+          // If this is an existing course in database, persist immediately!
+          const effCourseId = getEffectiveCourseId();
+          if (effCourseId) {
+            try {
+              const { error } = await supabase.from('courses').update({ cover_url: url }).eq('id', effCourseId);
+              if (error) throw error;
+              dataCache.invalidate('course_full_' + effCourseId);
+              dataCache.invalidate('global_public_courses_catalog');
+              dataCache.invalidate();
+              toast.success('Capa do treinamento salva no banco de dados com sucesso!');
+            } catch (err: any) {
+              console.error('Erro ao persistir capa do curso:', err);
+              toast.success('Capa aplicada no formulário! Salve as informações para confirmar.');
+            }
+          } else {
+            toast.success('Capa do treinamento aplicada com sucesso!');
+          }
         } else if (cropperType === 'premium') {
           setCourse(prev => ({ ...prev, premium_cover_url: url }));
+          setIsDirty(true);
+          const effCourseId = getEffectiveCourseId();
+          if (effCourseId) {
+            try {
+              await supabase.from('courses').update({ premium_cover_url: url }).eq('id', effCourseId);
+              dataCache.invalidate('course_full_' + effCourseId);
+              dataCache.invalidate('global_public_courses_catalog');
+              dataCache.invalidate();
+              toast.success('Capa premium salva no banco de dados!');
+            } catch (e) {
+              toast.success('Capa premium aplicada!');
+            }
+          }
         } else if (cropperType === 'chapter') {
           setEditingChapter(prev => ({ ...prev, cover_url: url }));
+          setIsDirty(true);
+          toast.success('Capa da nova aula aplicada!');
         } else if (cropperType === 'existing-chapter') {
+          const targetChapterId = cropperChapterId || editingExistingChapter?.id;
           setEditingExistingChapter(prev => prev ? ({ ...prev, cover_url: url }) : null);
-          toast.success('Miniatura ajustada! Salve as alterações da aula para persistir.');
+          if (targetChapterId) {
+            // Update chapters state in memory so re-renders preserve it
+            setChapters(prev => prev.map(c => c.id === targetChapterId ? { ...c, cover_url: url } : c));
+            // Persist directly to Supabase chapters table immediately!
+            try {
+              const { error } = await supabase.from('chapters').update({ cover_url: url }).eq('id', targetChapterId);
+              if (error) throw error;
+              const effId = getEffectiveCourseId();
+              if (effId) {
+                dataCache.invalidate('course_full_' + effId);
+              }
+              dataCache.invalidate('global_public_courses_catalog');
+              dataCache.invalidate();
+              toast.success('Capa da aula salva no banco de dados com sucesso!');
+            } catch (err: any) {
+              console.error('Erro ao persistir capa da aula:', err);
+              toast.success('Capa aplicada! Clique em "Salvar Alterações" para confirmar.');
+            }
+          } else {
+            toast.success('Capa da aula aplicada!');
+          }
         }
+        setCropperCustomInitialSrc(null);
       }}
     />
 

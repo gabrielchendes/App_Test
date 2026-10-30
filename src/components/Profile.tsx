@@ -237,11 +237,13 @@ export default function Profile({ user, canInstall, onInstall }: ProfileProps) {
   const handleLogout = async () => {
     setLoggingOut(true);
     try {
+      localStorage.setItem('explicit_sign_out', 'true');
       // Small delay to show feedback
       await new Promise(resolve => setTimeout(resolve, 800));
       const { error } = await supabase.auth.signOut();
       if (error) throw error;
     } catch (error: any) {
+      localStorage.removeItem('explicit_sign_out');
       toast.error(t('global.logout_error') || 'Erro ao sair da conta');
       setLoggingOut(false);
     }

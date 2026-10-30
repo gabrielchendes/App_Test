@@ -39,11 +39,7 @@ export function TenantProvider({ children }: { children: ReactNode }) {
         const { data, error } = await Promise.race([queryPromise, timeoutPromise]);
 
         if (error) {
-          // If it's an auth error, it might be a stale token
-          if (error.message.includes('Refresh Token Not Found') || error.message.includes('invalid_grant')) {
-            console.warn('Stale auth detected in TenantProvider, clearing...');
-            localStorage.removeItem('maternidade_premium_auth');
-          }
+          // Fallback for demo if table doesn't exist
 
           // Fallback for demo if table doesn't exist
           setTenant({

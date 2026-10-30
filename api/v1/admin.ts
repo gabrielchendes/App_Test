@@ -57,6 +57,35 @@ function savePostLikeToStorage(postId: string, likesCount: number): void {
   }
 }
 
+const DELETED_QUESTIONS_FILE = path.join(DATA_DIR, 'deleted_questions.json');
+
+function loadDeletedQuestions(): string[] {
+  try {
+    if (fs.existsSync(DELETED_QUESTIONS_FILE)) {
+      const content = fs.readFileSync(DELETED_QUESTIONS_FILE, 'utf-8');
+      return JSON.parse(content) || [];
+    }
+  } catch (err) {
+    console.warn('[Admin API] Error reading deleted_questions.json:', err);
+  }
+  return [];
+}
+
+function saveDeletedQuestion(questionId: string): void {
+  try {
+    if (!fs.existsSync(DATA_DIR)) {
+      fs.mkdirSync(DATA_DIR, { recursive: true });
+    }
+    const current = loadDeletedQuestions();
+    if (!current.includes(questionId)) {
+      current.push(questionId);
+      fs.writeFileSync(DELETED_QUESTIONS_FILE, JSON.stringify(current, null, 2), 'utf-8');
+    }
+  } catch (err) {
+    console.error('[Admin API] Error saving deleted question to file:', err);
+  }
+}
+
 const cleanUrl = (raw?: string) => {
   if (!raw) return 'https://placeholder.supabase.co';
   let clean = raw.replace(/^["']|["']$/g, '').trim();
@@ -202,6 +231,9 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   if (action === 'post-likes-map') {
     return res.status(200).json(loadPostLikesMap());
   }
+  if (action === 'deleted-questions') {
+    return res.status(200).json(loadDeletedQuestions());
+  }
 
   try {
     // Auth Check for Admin APIs
@@ -320,6 +352,10 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         return res.status(200).json(loadPostLikesMap());
       case 'comment-delete':
         return await handleCommentDelete(req, res);
+      case 'question-delete':
+        return await handleQuestionDelete(req, res);
+      case 'question-create':
+        return await handleQuestionCreate(req, res);
       case 'products-list':
         return await handleProductsList(req, res);
       case 'product-save':
@@ -390,17 +426,75 @@ async function handleUsersList(req: VercelRequest, res: VercelResponse) {
       }
     } catch {}
 
-    const [profilesRes, purchasesRes, pushTokensRes, hotmartEventsRes] = await Promise.all([
-      (async () => { try { return await client.from('profiles').select('*'); } catch { return await supabaseAdmin.from('profiles').select('*'); } })(),
-      (async () => { try { return await client.from('purchases').select('user_id, product_id'); } catch { return await supabaseAdmin.from('purchases').select('user_id, product_id'); } })(),
-      (async () => { try { return await client.from('push_tokens').select('user_id'); } catch { return await supabaseAdmin.from('push_tokens').select('user_id'); } })(),
-      (async () => { try { return await client.from('hotmart_events').select('buyer_email, payload').limit(500); } catch { return await supabaseAdmin.from('hotmart_events').select('buyer_email, payload').limit(500); } })()
+    const [profilesData, purchasesData, pushTokensData, hotmartEventsData] = await Promise.all([
+      (async () => {
+        try {
+          const res = await client.from('profiles').select('*');
+          if (!res.error && Array.isArray(res.data) && res.data.length > 0) return res.data;
+        } catch {}
+        try {
+          const res = await supabaseAdmin.from('profiles').select('*');
+          if (!res.error && Array.isArray(res.data) && res.data.length > 0) return res.data;
+        } catch {}
+        try {
+          const anon = createClient(supabaseUrl || 'https://placeholder.supabase.co', supabaseAnonKey || 'placeholder-key');
+          const res = await anon.from('profiles').select('*');
+          if (!res.error && Array.isArray(res.data)) return res.data;
+        } catch {}
+        return [];
+      })(),
+      (async () => {
+        try {
+          const res = await client.from('purchases').select('user_id, product_id');
+          if (!res.error && Array.isArray(res.data) && res.data.length > 0) return res.data;
+        } catch {}
+        try {
+          const res = await supabaseAdmin.from('purchases').select('user_id, product_id');
+          if (!res.error && Array.isArray(res.data) && res.data.length > 0) return res.data;
+        } catch {}
+        return [];
+      })(),
+      (async () => {
+        const tokensMap = new Map<string, string>();
+        try {
+          const res = await client.from('push_tokens').select('user_id, token');
+          if (!res.error && Array.isArray(res.data)) {
+            res.data.forEach((r: any) => { if (r.user_id) tokensMap.set(r.token || r.user_id, r.user_id); });
+          }
+        } catch {}
+        try {
+          const res = await supabaseAdmin.from('push_tokens').select('user_id, token');
+          if (!res.error && Array.isArray(res.data)) {
+            res.data.forEach((r: any) => { if (r.user_id) tokensMap.set(r.token || r.user_id, r.user_id); });
+          }
+        } catch {}
+        try {
+          const pushTokensPath = path.join(DATA_DIR, 'push_tokens.json');
+          if (fs.existsSync(pushTokensPath)) {
+            const raw = fs.readFileSync(pushTokensPath, 'utf-8');
+            const localList = JSON.parse(raw) || [];
+            localList.forEach((t: any) => { if (t.user_id) tokensMap.set(t.token || t.user_id, t.user_id); });
+          }
+        } catch {}
+        return Array.from(tokensMap.values()).map(user_id => ({ user_id }));
+      })(),
+      (async () => {
+        try {
+          const res = await client.from('hotmart_events').select('buyer_email, payload').limit(500);
+          if (!res.error && Array.isArray(res.data) && res.data.length > 0) return res.data;
+        } catch {}
+        try {
+          const res = await supabaseAdmin.from('hotmart_events').select('buyer_email, payload').limit(500);
+          if (!res.error && Array.isArray(res.data) && res.data.length > 0) return res.data;
+        } catch {}
+        return [];
+      })()
     ]);
     
-    const profiles = profilesRes.data || [];
-    const purchases = purchasesRes.data || [];
-    const pushTokens = pushTokensRes.data || [];
-    const hotmartEvents = hotmartEventsRes.data || [];
+    const profiles = Array.isArray(profilesData) ? profilesData : [];
+    const purchases = Array.isArray(purchasesData) ? purchasesData : [];
+    const pushTokens = Array.isArray(pushTokensData) ? pushTokensData : [];
+    const hotmartEvents = Array.isArray(hotmartEventsData) ? hotmartEventsData : [];
 
     // Map buyer phones and names from hotmart_events
     const eventBuyerMap = new Map<string, { phone?: string; name?: string }>();
@@ -459,8 +553,8 @@ async function handleUsersList(req: VercelRequest, res: VercelResponse) {
         hasUnlimitedAi = true;
       }
 
-      const resolvedFullName = u.user_metadata?.full_name || profile?.full_name || evData?.name || '';
-      const resolvedPhone = u.user_metadata?.phone || (profile as any)?.phone || evData?.phone || '';
+      const resolvedFullName = profile?.full_name || u.user_metadata?.full_name || evData?.name || u.full_name || '';
+      const resolvedPhone = profile?.phone || u.user_metadata?.phone || evData?.phone || u.phone || '';
       
       const isCaller = callerUser && (callerUser.id === u.id || (callerUser.email && callerUser.email.toLowerCase().trim() === uEmail));
       const resolvedLastAccess = 
@@ -1582,6 +1676,94 @@ async function handleCommentDelete(req: VercelRequest, res: VercelResponse) {
   } catch {}
 
   return res.status(200).json({ success: true });
+}
+
+async function handleQuestionDelete(req: VercelRequest, res: VercelResponse) {
+  const questionId = req.body?.id || req.body?.questionId || req.query?.id || req.query?.questionId;
+  if (!questionId) return res.status(400).json({ error: 'Question ID is required' });
+
+  // 1. Record in local server storage
+  saveDeletedQuestion(questionId);
+
+  // 2. Synchronize to app_settings.custom_texts['deleted_question_ids']
+  try {
+    const settings = await getAppSettingsSafe();
+    const currentCustomTexts = settings?.custom_texts || {};
+    let existingList: string[] = [];
+    try {
+      existingList = JSON.parse(currentCustomTexts['deleted_question_ids'] || '[]');
+    } catch {}
+    if (!existingList.includes(questionId)) {
+      existingList.push(questionId);
+      currentCustomTexts['deleted_question_ids'] = JSON.stringify(existingList);
+      await supabaseAdmin.from('app_settings').update({ custom_texts: currentCustomTexts }).eq('id', 1);
+    }
+  } catch (settErr) {
+    console.warn('[Admin API] app_settings deleted_question_ids notice:', settErr);
+  }
+
+  // 3. Try directly deleting from Supabase
+  try {
+    await supabaseAdmin.from('chapter_questions').delete().eq('id', questionId);
+  } catch {}
+
+  const scopedClient = getScopedClient(req);
+  try {
+    await scopedClient.from('chapter_questions').delete().eq('id', questionId);
+  } catch {}
+
+  return res.status(200).json({ success: true, message: 'Dúvida excluída com sucesso' });
+}
+
+async function handleQuestionCreate(req: VercelRequest, res: VercelResponse) {
+  const { chapter_id, user_id, user_name, user_avatar_url, question, answer, answered_at, answered_by } = req.body || {};
+  if (!chapter_id || !question || !user_name) {
+    return res.status(400).json({ error: 'Missing required fields (chapter_id, question, user_name)' });
+  }
+
+  const payload: any = {
+    chapter_id,
+    user_id: user_id || null,
+    user_name: String(user_name).trim(),
+    user_avatar_url: user_avatar_url ? String(user_avatar_url).trim() : null,
+    question: String(question).trim(),
+    is_read_by_admin: true
+  };
+
+  if (answer && String(answer).trim()) {
+    payload.answer = String(answer).trim();
+    payload.answered_at = answered_at || new Date().toISOString();
+    payload.answered_by = answered_by || user_id || null;
+  }
+
+  // Use supabaseAdmin with service_role privileges
+  try {
+    const { data, error } = await supabaseAdmin
+      .from('chapter_questions')
+      .insert(payload)
+      .select()
+      .single();
+
+    if (!error) return res.status(200).json({ success: true, data });
+    console.warn('[Admin API] supabaseAdmin chapter_questions insert notice:', error.message);
+  } catch (err: any) {
+    console.warn('[Admin API] supabaseAdmin insert error:', err?.message);
+  }
+
+  // Fallback to scoped client
+  const scopedClient = getScopedClient(req);
+  try {
+    const { data, error } = await scopedClient
+      .from('chapter_questions')
+      .insert(payload)
+      .select()
+      .single();
+
+    if (!error) return res.status(200).json({ success: true, data });
+    return res.status(500).json({ error: error.message || 'Error creating question' });
+  } catch (err: any) {
+    return res.status(500).json({ error: err.message || 'Error creating question' });
+  }
 }
 
 async function handleUpdateSettings(req: VercelRequest, res: VercelResponse) {

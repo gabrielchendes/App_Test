@@ -117,6 +117,28 @@ const supabaseAdmin = createClient(supabaseUrl || 'https://placeholder.supabase.
   }
 });
 
+function getSupabaseForRequest(req: VercelRequest) {
+  const authHeader = req.headers.authorization;
+  if (authHeader && authHeader.startsWith('Bearer ')) {
+    const token = authHeader.substring(7).trim();
+    if (token && token.length > 10 && token !== 'undefined') {
+      return createClient(supabaseUrl || 'https://placeholder.supabase.co', supabaseAnonKey || effectiveKey, {
+        global: {
+          headers: {
+            Authorization: `Bearer ${token}`
+          }
+        },
+        auth: {
+          persistSession: false,
+          autoRefreshToken: false,
+          detectSessionInUrl: false
+        }
+      });
+    }
+  }
+  return supabaseAdmin;
+}
+
 function parseBody(req: VercelRequest): Record<string, any> {
   let body = req.body;
   if (!body) return {};
@@ -173,27 +195,32 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       }
 
       const userId = body.user_id || generateUUID();
+      const postId = body.id || body.postId || generateUUID();
+      const postTimestamp = body.created_at || new Date().toISOString();
+
       const postPayload: any = {
+        id: postId,
         user_id: userId,
         user_email: body.user_email || '',
         user_name: body.user_name || 'Member',
         user_avatar_url: body.user_avatar_url || null,
         content: content,
         image_url: imageUrl,
-        likes_count: 0,
-        comments_count: 0,
+        likes_count: typeof body.likes_count === 'number' ? body.likes_count : 0,
+        comments_count: typeof body.comments_count === 'number' ? body.comments_count : 0,
         reply_to_id: body.reply_to_id || null,
         reply_to_content: body.reply_to_content || null,
         reply_to_user_name: body.reply_to_user_name || null,
-        created_at: new Date().toISOString()
+        created_at: postTimestamp
       };
 
       let createdPost: any = null;
 
-      // Attempt 1: Direct insert via supabaseAdmin (service role bypasses RLS)
+      // Attempt 1: Scoped client with forwarded user token or supabaseAdmin
       try {
-        console.log('[Community API] Inserting post via supabaseAdmin...');
-        const { data, error } = await supabaseAdmin
+        const client = getSupabaseForRequest(req);
+        console.log('[Community API] Inserting post via Supabase client...');
+        const { data, error } = await client
           .from('community_posts')
           .insert(postPayload)
           .select()
@@ -203,7 +230,17 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           createdPost = data;
           console.log('[Community API] Post inserted successfully into Supabase:', data.id);
         } else if (error) {
-          console.warn('[Community API] supabaseAdmin insert warning:', error.message || error);
+          console.warn('[Community API] First insert attempt warning:', error.message || error);
+          if (client !== supabaseAdmin) {
+            const adminRes = await supabaseAdmin
+              .from('community_posts')
+              .insert(postPayload)
+              .select()
+              .single();
+            if (!adminRes.error && adminRes.data) {
+              createdPost = adminRes.data;
+            }
+          }
         }
       } catch (sbErr: any) {
         console.warn('[Community API] Supabase connection error:', sbErr?.message || sbErr);
@@ -212,7 +249,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       // Fallback: If Supabase failed or table is unavailable, guarantee success with local persistence
       if (!createdPost) {
         createdPost = {
-          id: generateUUID(),
           ...postPayload
         };
         console.log('[Community API] Created post in fallback store with ID:', createdPost.id);
@@ -221,7 +257,12 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       // Sync to local JSON backup
       try {
         const local = loadLocalPosts();
-        local.unshift(createdPost);
+        const existingIdx = local.findIndex(p => p.id === createdPost.id);
+        if (existingIdx !== -1) {
+          local[existingIdx] = { ...local[existingIdx], ...createdPost };
+        } else {
+          local.unshift(createdPost);
+        }
         saveLocalPosts(local.slice(0, 500));
       } catch (_) {}
 
@@ -296,6 +337,11 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       try {
         const local = loadLocalPosts();
         saveLocalPosts(local.filter(p => p.id !== postId));
+        const commentsMap = loadLocalComments();
+        if (commentsMap[postId]) {
+          delete commentsMap[postId];
+          saveLocalComments(commentsMap);
+        }
       } catch (_) {}
 
       return res.status(200).json({ success: true, deleted: postId });
@@ -311,19 +357,24 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         return res.status(400).json({ error: 'Post ID and comment content are required' });
       }
 
+      const commentId = body.id || body.commentId || generateUUID();
+      const commentTimestamp = body.created_at || new Date().toISOString();
+
       const commentPayload: any = {
+        id: commentId,
         post_id: postId,
         user_id: body.user_id || generateUUID(),
         user_name: body.user_name || 'Member',
         user_avatar_url: body.user_avatar_url || null,
         content: content,
-        created_at: new Date().toISOString()
+        created_at: commentTimestamp
       };
 
       let createdComment: any = null;
 
       try {
-        const { data, error } = await supabaseAdmin
+        const client = getSupabaseForRequest(req);
+        const { data, error } = await client
           .from('post_comments')
           .insert(commentPayload)
           .select()
@@ -331,6 +382,15 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
         if (!error && data) {
           createdComment = data;
+        } else if (error && client !== supabaseAdmin) {
+          const adminRes = await supabaseAdmin
+            .from('post_comments')
+            .insert(commentPayload)
+            .select()
+            .single();
+          if (!adminRes.error && adminRes.data) {
+            createdComment = adminRes.data;
+          }
         }
       } catch (err: any) {
         console.warn('[Community API] Error inserting comment via Supabase:', err?.message || err);
@@ -338,24 +398,35 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
       if (!createdComment) {
         createdComment = {
-          id: generateUUID(),
           ...commentPayload
         };
       }
 
-      // Bump comments_count on post
+      // Bump comments_count on post in Supabase
       try {
         const { data: post } = await supabaseAdmin.from('community_posts').select('comments_count').eq('id', postId).maybeSingle();
         const newCount = ((post?.comments_count || 0) + 1);
         await supabaseAdmin.from('community_posts').update({ comments_count: newCount }).eq('id', postId);
       } catch (_) {}
 
-      // Save to local comments
+      // Save to local comments and bump post count in local posts
       try {
         const commentsMap = loadLocalComments();
         if (!commentsMap[postId]) commentsMap[postId] = [];
-        commentsMap[postId].push(createdComment);
+        const existingIdx = commentsMap[postId].findIndex(c => c.id === createdComment.id);
+        if (existingIdx !== -1) {
+          commentsMap[postId][existingIdx] = { ...commentsMap[postId][existingIdx], ...createdComment };
+        } else {
+          commentsMap[postId].push(createdComment);
+        }
         saveLocalComments(commentsMap);
+
+        const localPosts = loadLocalPosts();
+        const pIdx = localPosts.findIndex(p => p.id === postId);
+        if (pIdx !== -1) {
+          localPosts[pIdx].comments_count = commentsMap[postId].length;
+          saveLocalPosts(localPosts);
+        }
       } catch (_) {}
 
       return res.status(200).json({
@@ -394,28 +465,101 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         if (postId && commentsMap[postId]) {
           commentsMap[postId] = commentsMap[postId].filter(c => c.id !== commentId);
           saveLocalComments(commentsMap);
+          const localPosts = loadLocalPosts();
+          const pIdx = localPosts.findIndex(p => p.id === postId);
+          if (pIdx !== -1) {
+            localPosts[pIdx].comments_count = commentsMap[postId].length;
+            saveLocalPosts(localPosts);
+          }
         }
       } catch (_) {}
 
       return res.status(200).json({ success: true, deleted: commentId });
     }
 
-    // 6. LIST POSTS (optional fallback read)
-    if (action === 'list-posts' || req.method === 'GET') {
+    // 6. LIST POSTS (Merged Supabase + Local, Sorted newest first)
+    if (action === 'list-posts' || (req.method === 'GET' && (!action || action === 'posts'))) {
+      let remotePosts: any[] = [];
       try {
         const { data, error } = await supabaseAdmin
           .from('community_posts')
           .select('*')
           .order('created_at', { ascending: false })
-          .limit(50);
+          .limit(100);
 
-        if (!error && data && data.length > 0) {
-          return res.status(200).json({ success: true, posts: data });
+        if (!error && Array.isArray(data)) {
+          remotePosts = data;
         }
       } catch (_) {}
 
-      const local = loadLocalPosts();
-      return res.status(200).json({ success: true, posts: local });
+      const localPosts = loadLocalPosts();
+
+      // Merge unique by id
+      const postsMap = new Map<string, any>();
+      for (const p of remotePosts) {
+        if (p && p.id) postsMap.set(p.id, p);
+      }
+      for (const p of localPosts) {
+        if (p && p.id) {
+          const existing = postsMap.get(p.id) || {};
+          postsMap.set(p.id, { ...existing, ...p });
+        }
+      }
+
+      const merged = Array.from(postsMap.values());
+      // Sort newest first by created_at (descending)
+      merged.sort((a, b) => {
+        const timeA = a.created_at ? new Date(a.created_at).getTime() : 0;
+        const timeB = b.created_at ? new Date(b.created_at).getTime() : 0;
+        return timeB - timeA;
+      });
+
+      return res.status(200).json({ success: true, posts: merged });
+    }
+
+    // 7. LIST COMMENTS FOR A POST (Merged Supabase + Local, Sorted chronological)
+    if (action === 'list-comments' || action === 'get-comments') {
+      const postId = (req.query?.postId as string) || (req.query?.post_id as string) || (req.body?.postId as string) || (req.body?.post_id as string);
+      if (!postId) {
+        return res.status(400).json({ error: 'Post ID is required' });
+      }
+
+      let remoteComments: any[] = [];
+      try {
+        const { data, error } = await supabaseAdmin
+          .from('post_comments')
+          .select('*')
+          .eq('post_id', postId)
+          .order('created_at', { ascending: true });
+
+        if (!error && Array.isArray(data)) {
+          remoteComments = data;
+        }
+      } catch (_) {}
+
+      const localCommentsMap = loadLocalComments();
+      const localList = localCommentsMap[postId] || [];
+
+      // Merge unique by id
+      const commentsMap = new Map<string, any>();
+      for (const c of remoteComments) {
+        if (c && c.id) commentsMap.set(c.id, c);
+      }
+      for (const c of localList) {
+        if (c && c.id) {
+          const existing = commentsMap.get(c.id) || {};
+          commentsMap.set(c.id, { ...existing, ...c });
+        }
+      }
+
+      const mergedComments = Array.from(commentsMap.values());
+      mergedComments.sort((a, b) => {
+        const timeA = a.created_at ? new Date(a.created_at).getTime() : 0;
+        const timeB = b.created_at ? new Date(b.created_at).getTime() : 0;
+        return timeA - timeB;
+      });
+
+      return res.status(200).json({ success: true, comments: mergedComments });
     }
 
     return res.status(400).json({ error: `Unknown action: ${action}` });

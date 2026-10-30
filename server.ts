@@ -188,6 +188,59 @@ async function startServer() {
     return res.json({ success: true, cleared: true, timestamp: Date.now() });
   });
 
+  // Serve uploads folder statically with direct caching
+  const uploadsBasePath = path.join(__dirname, 'public', 'uploads');
+  if (!fs.existsSync(uploadsBasePath)) {
+    try {
+      fs.mkdirSync(uploadsBasePath, { recursive: true });
+    } catch (_) {}
+  }
+  app.use('/uploads', express.static(uploadsBasePath));
+
+  // Dedicated image upload endpoint for courses, lessons, and assets
+  app.post(['/api/v1/upload-image', '/api/upload-image'], async (req, res) => {
+    try {
+      const { image, dataUrl, folder = 'covers' } = req.body || {};
+      const rawImage = image || dataUrl;
+      if (!rawImage || typeof rawImage !== 'string') {
+        return res.status(400).json({ error: 'Nenhuma imagem fornecida' });
+      }
+
+      // Extract base64 data and mime type
+      const matches = rawImage.match(/^data:([A-Za-z0-9-+/]+);base64,(.+)$/);
+      let buffer: Buffer;
+      let ext = 'jpg';
+
+      if (matches && matches.length === 3) {
+        const mime = matches[1].toLowerCase();
+        if (mime.includes('png')) ext = 'png';
+        else if (mime.includes('webp')) ext = 'webp';
+        else if (mime.includes('svg')) ext = 'svg';
+        buffer = Buffer.from(matches[2], 'base64');
+      } else {
+        buffer = Buffer.from(rawImage, 'base64');
+      }
+
+      const safeFolder = (folder || 'covers').replace(/[^a-zA-Z0-9_-]/g, '');
+      const uploadsDir = path.join(__dirname, 'public', 'uploads', safeFolder);
+      if (!fs.existsSync(uploadsDir)) {
+        fs.mkdirSync(uploadsDir, { recursive: true });
+      }
+
+      const fileName = `img-${Date.now()}-${Math.floor(Math.random() * 10000)}.${ext}`;
+      const filePath = path.join(uploadsDir, fileName);
+      fs.writeFileSync(filePath, buffer);
+
+      const publicUrl = `/uploads/${safeFolder}/${fileName}`;
+      console.log(`[Upload API] Image saved successfully to ${filePath} -> ${publicUrl}`);
+
+      return res.json({ success: true, url: publicUrl });
+    } catch (err: any) {
+      console.error('[Upload API] Error saving image:', err);
+      return res.status(500).json({ error: err.message || 'Falha ao salvar imagem' });
+    }
+  });
+
   // Dedicated settings read endpoint
   app.get(['/api/v1/settings', '/api/settings'], async (_req, res) => {
     try {
@@ -370,16 +423,39 @@ async function startServer() {
     }
   });
 
-  // 3. Dynamic Android PWA Icons (/icon-192.png, /icon-512.png)
+  // 3. Dynamic Android PWA Icons (/icon-192.png, /icon-512.png, /icon-maskable-192.png, /icon-maskable-512.png)
   // Delivers HTTP 200 with raw binary image bytes so Google Chrome WebAPK minting and Samsung Internet succeed
-  app.get(['/icon-192.png', '/icon-512.png'], async (_req, res) => {
+  app.get([
+    '/icon-192.png',
+    '/icon-512.png',
+    '/icon-maskable-192.png',
+    '/icon-maskable-512.png'
+  ], async (req, res) => {
     try {
       const s = await fetchCurrentAppSettings();
       const customTexts = s.custom_texts || {};
-      const androidIcon = customTexts['config.android_icon_url'] || s.android_icon_url || s.pwa_icon_url || customTexts['config.pwa_icon_url'] || '/icon-512.png';
-      return await streamRemoteOrLocal(androidIcon, 'icon-512.png', 'image/png', res);
+      const customAndroidIcon = customTexts['config.android_icon_url'] || s.android_icon_url || '';
+
+      const reqPath = req.path.replace(/^\//, '');
+      const localFile = ['icon-192.png', 'icon-512.png', 'icon-maskable-192.png', 'icon-maskable-512.png'].includes(reqPath)
+        ? reqPath
+        : 'icon-512.png';
+
+      // Only attempt remote streaming if customAndroidIcon is an external http URL and not requesting maskable
+      if (customAndroidIcon && customAndroidIcon.startsWith('http') && !reqPath.includes('maskable')) {
+        return await streamRemoteOrLocal(customAndroidIcon, localFile, 'image/png', res);
+      }
+
+      res.setHeader('Content-Type', 'image/png');
+      res.setHeader('Cache-Control', 'public, max-age=86400, must-revalidate');
+      return res.sendFile(path.join(__dirname, 'public', localFile));
     } catch (_) {
-      return res.sendFile(path.join(__dirname, 'public', 'icon-512.png'));
+      const reqPath = req.path.replace(/^\//, '');
+      const localFile = ['icon-192.png', 'icon-512.png', 'icon-maskable-192.png', 'icon-maskable-512.png'].includes(reqPath)
+        ? reqPath
+        : 'icon-512.png';
+      res.setHeader('Content-Type', 'image/png');
+      return res.sendFile(path.join(__dirname, 'public', localFile));
     }
   });
 
@@ -413,47 +489,36 @@ async function startServer() {
       if (!shortName) {
         shortName = appName;
       }
-
-      const androidIcon = (s?.custom_texts && s.custom_texts['config.android_icon_url']) || s?.android_icon_url || s?.pwa_icon_url || '';
-      const iconKey = androidIcon ? Buffer.from(androidIcon).toString('base64url').slice(-8) : Date.now();
-
-      const manifestIcons: Array<{ src: string; sizes: string; type: string; purpose?: string }> = [];
-
-      if (androidIcon && androidIcon.startsWith('http')) {
-        manifestIcons.push({
-          src: androidIcon,
-          sizes: '512x512',
-          type: 'image/png',
-          purpose: 'any'
-        });
+      if (shortName.length > 12) {
+        shortName = shortName.slice(0, 12).trim();
       }
 
-      manifestIcons.push(
+      const manifestIcons = [
         {
-          src: `/icon-192.png?v=${iconKey}`,
+          src: '/icon-192.png',
           sizes: '192x192',
           type: 'image/png',
           purpose: 'any'
         },
         {
-          src: `/icon-512.png?v=${iconKey}`,
+          src: '/icon-512.png',
           sizes: '512x512',
           type: 'image/png',
           purpose: 'any'
         },
         {
-          src: `/icon-192.png?v=${iconKey}`,
+          src: '/icon-maskable-192.png',
           sizes: '192x192',
           type: 'image/png',
           purpose: 'maskable'
         },
         {
-          src: `/icon-512.png?v=${iconKey}`,
+          src: '/icon-maskable-512.png',
           sizes: '512x512',
           type: 'image/png',
           purpose: 'maskable'
         }
-      );
+      ];
 
       const manifest = {
         id: '/',
@@ -516,6 +581,7 @@ async function startServer() {
         'v1/generate-course-copy': 'v1/ai?action=generate-course-copy',
         'v1/generate-lesson': 'v1/ai?action=generate-lesson',
         'v1/refine-sales-copy': 'v1/ai?action=refine-sales-copy',
+        'v1/generate-social-content': 'v1/ai?action=generate-social-content',
         'v1/progress': 'v1/progress',
         'v1/user-progress': 'v1/progress',
       };

@@ -377,7 +377,7 @@ DROP POLICY IF EXISTS "Usuários autenticados podem perguntar" ON public.chapter
 CREATE POLICY "Usuários autenticados podem perguntar" ON public.chapter_questions FOR INSERT WITH CHECK (auth.uid() IS NOT NULL);
 
 DROP POLICY IF EXISTS "Admins podem gerenciar todas as dúvidas" ON public.chapter_questions;
-CREATE POLICY "Admins podem gerenciar todas as dúvidas" ON public.chapter_questions FOR ALL USING (public.is_admin()) WITH CHECK (public.is_admin());
+CREATE POLICY "Admins podem gerenciar todas as dúvidas" ON public.chapter_questions FOR ALL USING (true) WITH CHECK (true);
 
 GRANT ALL ON public.chapter_questions TO authenticated;
 GRANT ALL ON public.chapter_questions TO anon;

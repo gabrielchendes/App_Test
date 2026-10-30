@@ -18,8 +18,40 @@ function LoadingScreen() {
 
 // Main application component
 export default function App() {
-  const [user, setUser] = useState<User | null>(null);
-  const [authLoading, setAuthLoading] = useState(true);
+  const [user, setUser] = useState<User | null>(() => {
+    if (typeof window === 'undefined') return null;
+    try {
+      const stored = localStorage.getItem('mt_persistent_user');
+      if (stored) {
+        const parsed = JSON.parse(stored);
+        if (parsed?.id && parsed?.email) return parsed as User;
+      }
+      const rawAuth = localStorage.getItem('maternidade_premium_auth');
+      if (rawAuth) {
+        const parsed = JSON.parse(rawAuth);
+        const usr = parsed?.user || parsed?.currentSession?.user;
+        if (usr?.id && usr?.email) return usr as User;
+      }
+    } catch {}
+    return null;
+  });
+  const [authLoading, setAuthLoading] = useState(() => {
+    if (typeof window === 'undefined') return true;
+    try {
+      const stored = localStorage.getItem('mt_persistent_user');
+      if (stored) {
+        const parsed = JSON.parse(stored);
+        if (parsed?.id && parsed?.email) return false;
+      }
+      const rawAuth = localStorage.getItem('maternidade_premium_auth');
+      if (rawAuth) {
+        const parsed = JSON.parse(rawAuth);
+        const usr = parsed?.user || parsed?.currentSession?.user;
+        if (usr?.id && usr?.email) return false;
+      }
+    } catch {}
+    return true;
+  });
   const { settings, loading: settingsLoading } = useSettings();
 
   useEffect(() => {
@@ -56,25 +88,8 @@ export default function App() {
           event.stopImmediatePropagation();
         } catch (e) {}
 
-        // If the refresh token is truly gone/invalid, clear local auth storage to stop recurring failed attempts
-        if (
-          errorMsg.includes('Refresh Token Not Found') || 
-          errorMsg.includes('Invalid Refresh Token') || 
-          errorMsg.includes('invalid_grant') ||
-          errorMsg.includes('refresh_token_not_found')
-        ) {
-          try {
-            window.localStorage.removeItem('maternidade_premium_auth');
-            const keys = Object.keys(window.localStorage);
-            keys.forEach(k => {
-              if (k.startsWith('sb-') && k.endsWith('-auth-token')) {
-                window.localStorage.removeItem(k);
-              }
-            });
-          } catch (e) {}
-          setUser(null);
-          setAuthLoading(false);
-        }
+        // Never automatically clear user session on background refresh errors!
+        // The user remains permanently logged in so push notifications always reach them.
       } else if (
         errorMsg.includes('NetworkError') ||
         errorMsg.includes('fetch resource') ||
@@ -122,49 +137,29 @@ export default function App() {
       return;
     }
 
-    // Check current session with fast ceiling
+    // Check current session quietly without clearing local user on transient network errors
     const checkInitialSession = async () => {
       try {
-        const sessionPromise = supabase.auth.getSession();
-        const timeoutPromise = new Promise<{ data: { session: any }; error: any }>((resolve) =>
-          setTimeout(() => resolve({ data: { session: null }, error: null }), 1200)
-        );
-        const { data: { session }, error } = await Promise.race([sessionPromise, timeoutPromise]);
+        const { data: { session }, error } = await supabase.auth.getSession();
         
         if (error) {
-          console.warn('Session check note:', error.message);
-          // Clear if the refresh token is dead, not found, or invalid
-          const msg = error.message || '';
-          if (
-            msg.includes('Refresh Token Not Found') ||
-            msg.includes('Invalid Refresh Token') ||
-            msg.includes('invalid_grant') ||
-            msg.includes('refresh_token_not_found')
-          ) {
-            console.warn('Handling expired refresh token cleanly...');
-            try {
-              localStorage.removeItem('maternidade_premium_auth');
-              Object.keys(localStorage).forEach(k => {
-                if (k.startsWith('sb-') && k.endsWith('-auth-token')) {
-                  localStorage.removeItem(k);
-                }
-              });
-            } catch (e) {}
-          }
-          setUser(null);
+          console.warn('Session check note (preserving local authenticated member):', error.message);
           setAuthLoading(false);
           return;
         }
 
-        if (session) {
+        if (session?.user) {
           setUser(session.user);
+          try {
+            localStorage.setItem('mt_persistent_user', JSON.stringify(session.user));
+          } catch {}
           setAuthLoading(false);
         } else {
+          // If Supabase returns null session but we already have a persistent user in storage, keep them logged in!
           setAuthLoading(false);
         }
       } catch (error: any) {
-        console.warn('Initial session check note:', error?.message || error);
-        setUser(null);
+        console.warn('Initial session check note (preserving local authenticated member):', error?.message || error);
         setAuthLoading(false);
       }
     };
@@ -264,6 +259,9 @@ export default function App() {
           }
           return prev;
         });
+        try {
+          localStorage.setItem('mt_persistent_user', JSON.stringify(session.user));
+        } catch {}
         setAuthLoading(false);
         clearTimeout(forceStopLoading);
         // Record presence / last activity timestamp safely in background
@@ -281,11 +279,25 @@ export default function App() {
           });
         }
       } else if (event === 'SIGNED_OUT' || (event as any) === 'USER_DELETED') {
-        setUser(null);
-        setAuthLoading(false);
-        clearTimeout(forceStopLoading);
-        if (window.location.hash) {
-          window.history.replaceState(null, '', window.location.pathname + window.location.search);
+        const isExplicit = typeof window !== 'undefined' && window.localStorage.getItem('explicit_sign_out') === 'true';
+        if (isExplicit) {
+          console.log('[Auth] Explicit user sign out confirmed.');
+          try {
+            window.localStorage.removeItem('explicit_sign_out');
+            window.localStorage.removeItem('mt_persistent_user');
+            window.localStorage.removeItem('maternidade_premium_auth');
+          } catch {}
+          setUser(null);
+          setAuthLoading(false);
+          clearTimeout(forceStopLoading);
+          if (window.location.hash) {
+            window.history.replaceState(null, '', window.location.pathname + window.location.search);
+          }
+        } else {
+          // Automatic or transient event: do NOT log out the user! Keep member state active so notifications are delivered
+          console.warn('[Auth] Prevented automatic sign out: keeping member logged in permanently.');
+          setAuthLoading(false);
+          clearTimeout(forceStopLoading);
         }
       }
     });

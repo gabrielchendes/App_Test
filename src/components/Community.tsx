@@ -130,9 +130,11 @@ export default function Community({ user, isImportMode = false }: CommunityProps
     }
   };
 
-  const formatDate = (dateString: string) => {
+  const formatDate = (dateString?: string) => {
     try {
-      const date = new Date(dateString);
+      const safeDateStr = dateString || new Date().toISOString();
+      const date = new Date(safeDateStr);
+      if (isNaN(date.getTime())) return '';
       const localeCode = t('community.locale') || 'ptBR';
       const locales: Record<string, any> = { ptBR, enUS, es };
       const locale = locales[localeCode] || ptBR;
@@ -146,10 +148,10 @@ export default function Community({ user, isImportMode = false }: CommunityProps
       }
 
       // Older than a week, use the custom format
-      const formatStr = t('community.date_format');
+      const formatStr = t('community.date_format') || "dd 'de' MMMM 'às' HH:mm";
       return format(date, formatStr, { locale });
     } catch (e) {
-      return dateString;
+      return dateString || '';
     }
   };
   const inputAreaRef = useRef<HTMLDivElement>(null);
@@ -180,6 +182,14 @@ export default function Community({ user, isImportMode = false }: CommunityProps
         setPosts(prev => prev.map(p => res[p.id] !== undefined ? { ...p, likes_count: res[p.id] } : p));
       }
     }).catch(() => {});
+
+    // Listen to new post creation events from admin creator or actions
+    const handleCommunityPostCreated = (e: any) => {
+      console.log('🔔 [Community] Detected community-post-created event:', e?.detail);
+      dataCache.invalidate('community_cached_posts');
+      fetchPosts(0, true);
+    };
+    window.addEventListener('community-post-created', handleCommunityPostCreated);
 
     const channelId = Math.random().toString(36).substring(2, 9);
     const channel = supabase
@@ -212,14 +222,9 @@ export default function Community({ user, isImportMode = false }: CommunityProps
         'postgres_changes',
         { event: '*', schema: 'public', table: 'post_likes' },
         (payload: any) => {
-          // Only fetch user likes from server if the change came from another device/user
-          // This prevents the "oscillation" flicker during the local optimistic phase
           if ((payload.new?.user_id === user.id || payload.old?.user_id === user.id)) {
-             // Optional: verify sync, but for immediate UI we rely on handleLike
              return;
           }
-          // If another user liked/unliked, we don't need to do anything here 
-          // because community_posts listener handles the count update.
         }
       )
       .on(
@@ -255,10 +260,11 @@ export default function Community({ user, isImportMode = false }: CommunityProps
       )
       .subscribe();
 
-    // Polling fallback every 60 seconds (less frequent now that realtime is surgical)
+    // Polling fallback every 60 seconds
     const interval = setInterval(() => fetchPosts(0, false), 60000);
 
     return () => {
+      window.removeEventListener('community-post-created', handleCommunityPostCreated);
       supabase.removeChannel(channel);
       clearInterval(interval);
     };
@@ -275,29 +281,67 @@ export default function Community({ user, isImportMode = false }: CommunityProps
       const from = pageNum * POSTS_PER_PAGE;
       const to = from + POSTS_PER_PAGE - 1;
 
-      const { data, error } = await supabase
-        .from('community_posts')
-        .select('*')
-        .order('created_at', { ascending: false })
-        .range(from, to);
+      // 1. Fetch remote posts from Supabase directly
+      let sbPosts: CommunityPost[] = [];
+      try {
+        const { data, error } = await supabase
+          .from('community_posts')
+          .select('*')
+          .order('created_at', { ascending: false })
+          .range(from, to);
 
-      if (error) throw error;
-      
-      if (isInitial) {
-        setPosts(data || []);
-        if (data && data.length > 0) {
-          dataCache.set('community_cached_posts', data, 300000);
+        if (!error && Array.isArray(data)) {
+          sbPosts = data;
+        }
+      } catch (sbErr) {
+        console.warn('Supabase fetch posts note:', sbErr);
+      }
+
+      // 2. Fetch merged and fallback posts from API backend
+      let apiPosts: CommunityPost[] = [];
+      try {
+        const res = await safeFetch('/api/v1/community?action=list-posts');
+        if (res && res.success && Array.isArray(res.posts)) {
+          apiPosts = res.posts;
+        }
+      } catch (apiErr) {
+        console.warn('API fetch posts note:', apiErr);
+      }
+
+      // 3. Merge both collections by unique ID
+      const postsMap = new Map<string, CommunityPost>();
+      for (const p of sbPosts) {
+        if (p && p.id) postsMap.set(p.id, p);
+      }
+      for (const p of apiPosts) {
+        if (p && p.id) {
+          const existing = postsMap.get(p.id) || ({} as CommunityPost);
+          postsMap.set(p.id, { ...existing, ...p });
+        }
+      }
+
+      // 4. Sort strictly by created_at (most recent first)
+      const mergedList = Array.from(postsMap.values());
+      mergedList.sort((a, b) => {
+        const timeA = a.created_at ? new Date(a.created_at).getTime() : 0;
+        const timeB = b.created_at ? new Date(b.created_at).getTime() : 0;
+        return timeB - timeA;
+      });
+
+      if (isInitial || pageNum === 0) {
+        setPosts(mergedList);
+        if (mergedList.length > 0) {
+          dataCache.set('community_cached_posts', mergedList, 300000);
         }
       } else {
         setPosts(prev => {
-          // Filter out any duplicates that might have been added via realtime
           const existingIds = new Set(prev.map(p => p.id));
-          const newPosts = (data || []).filter(p => !existingIds.has(p.id));
+          const newPosts = mergedList.filter(p => !existingIds.has(p.id));
           return [...prev, ...newPosts];
         });
       }
 
-      setHasMore((data || []).length === POSTS_PER_PAGE);
+      setHasMore(mergedList.length >= POSTS_PER_PAGE);
       setPage(pageNum);
     } catch (error: any) {
       console.error('Error fetching posts:', error);
@@ -330,15 +374,53 @@ export default function Community({ user, isImportMode = false }: CommunityProps
 
   const fetchComments = async (postId: string) => {
     try {
-      const { data, error } = await supabase
-        .from('post_comments')
-        .select('*')
-        .eq('post_id', postId)
-        .order('created_at', { ascending: true });
+      // 1. Fetch from Supabase
+      let sbComments: PostComment[] = [];
+      try {
+        const { data, error } = await supabase
+          .from('post_comments')
+          .select('*')
+          .eq('post_id', postId)
+          .order('created_at', { ascending: true });
 
-      if (error) throw error;
+        if (!error && Array.isArray(data)) {
+          sbComments = data;
+        }
+      } catch (sbErr) {
+        console.warn('Supabase comments fetch note:', sbErr);
+      }
 
-      let commentsList = data || [];
+      // 2. Fetch from API endpoint (which handles local fallback comments)
+      let apiComments: PostComment[] = [];
+      try {
+        const res = await safeFetch(`/api/v1/community?action=list-comments&postId=${postId}`);
+        if (res && res.success && Array.isArray(res.comments)) {
+          apiComments = res.comments;
+        }
+      } catch (apiErr) {
+        console.warn('API comments fetch note:', apiErr);
+      }
+
+      // 3. Merge comments deduplicating by ID
+      const commentsMap = new Map<string, PostComment>();
+      for (const c of sbComments) {
+        if (c && c.id) commentsMap.set(c.id, c);
+      }
+      for (const c of apiComments) {
+        if (c && c.id) {
+          const existing = commentsMap.get(c.id) || ({} as PostComment);
+          commentsMap.set(c.id, { ...existing, ...c });
+        }
+      }
+
+      let commentsList = Array.from(commentsMap.values());
+      // Sort chronological (oldest to newest)
+      commentsList.sort((a, b) => {
+        const timeA = a.created_at ? new Date(a.created_at).getTime() : 0;
+        const timeB = b.created_at ? new Date(b.created_at).getTime() : 0;
+        return timeA - timeB;
+      });
+
       try {
         const localOverrides = JSON.parse(localStorage.getItem('comment_likes_cache') || '{}');
         commentsList = commentsList.map(c => {
