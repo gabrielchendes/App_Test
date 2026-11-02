@@ -41,6 +41,7 @@ import { getPdfEmbedSources } from '../utils/pdfHelper';
 import { dataCache } from '../lib/cache';
 import { lazyWithRetry } from '../lib/lazyWithRetry';
 import { safeFetch } from '../lib/utils';
+import { applySingleCourseOverride, applyChapterOverrides, applySingleChapterOverride, useCourseOverridesSync } from '../lib/courseOverrides';
 
 const LessonVideoPlayer = lazyWithRetry(() => import('./LessonVideoPlayer'));
 const ChapterQuestions = lazyWithRetry(() => import('./ChapterQuestions'));
@@ -62,6 +63,7 @@ interface CourseViewerProps {
 }
 
 export default function CourseViewer({ courseId, userId, onClose, initialCourse, initialProgress, isProfessor = false }: CourseViewerProps) {
+  useCourseOverridesSync();
   const { t } = useI18n();
   const { settings } = useSettings();
 
@@ -72,11 +74,11 @@ export default function CourseViewer({ courseId, userId, onClose, initialCourse,
   }, [courseId, cacheKey]);
 
   const [course, setCourse] = useState<Course | null>(() => {
-    if (cachedData?.course) return cachedData.course;
-    return initialCourse ? (parseCourseHtmlFunnel(initialCourse) as Course) : null;
+    if (cachedData?.course) return applySingleCourseOverride(cachedData.course);
+    return initialCourse ? applySingleCourseOverride(parseCourseHtmlFunnel(initialCourse) as Course) : null;
   });
   const [modules, setModules] = useState<Module[]>(() => cachedData?.modules || []);
-  const [chapters, setChapters] = useState<Chapter[]>(() => cachedData?.chapters || []);
+  const [chapters, setChapters] = useState<Chapter[]>(() => applyChapterOverrides(cachedData?.chapters || []));
   const [progress, setProgress] = useState<UserProgress[]>(() => {
     if (cachedData?.progress && Array.isArray(cachedData.progress)) return cachedData.progress;
     if (initialProgress && Array.isArray(initialProgress)) return initialProgress;
@@ -204,7 +206,7 @@ export default function CourseViewer({ courseId, userId, onClose, initialCourse,
           pdf_url: effectivePdf,
           preview_pdf_url: currentCourse.preview_pdf_url || effectivePdf
         };
-        setCourse(currentCourse);
+        setCourse(applySingleCourseOverride(currentCourse));
       }
 
       // 2. Process modules & unpack nested chapters directly
@@ -236,6 +238,8 @@ export default function CourseViewer({ courseId, userId, onClose, initialCourse,
           finalChapters = chaptersData.map(fromDbChapter);
         }
       }
+
+      finalChapters = applyChapterOverrides(finalChapters);
 
       // 3. Process progress (merge DB progress with local backup)
       let progressData: UserProgress[] = [];
@@ -947,20 +951,23 @@ export default function CourseViewer({ courseId, userId, onClose, initialCourse,
                                 {/* Bottom Subtle Golden Light Glow */}
                                 <div className="absolute bottom-0 inset-x-6 h-[1px] bg-gradient-to-r from-transparent via-amber-400/25 to-transparent z-30 pointer-events-none" />
 
-                              {chapter.cover_url && chapter.cover_url.trim() ? (
-                                <img 
-                                  src={chapter.cover_url.trim()} 
-                                  loading="lazy"
-                                  decoding="async"
-                                  className={`w-full h-full object-cover transition-all duration-700 ${isCompleted ? 'opacity-90' : 'opacity-100 group-hover:scale-105'}`} 
-                                  alt={chapter.title} 
-                                  referrerPolicy="no-referrer"
-                                />
-                              ) : (
-                                <div className="w-full h-full bg-zinc-900 flex items-center justify-center text-white/30 group-hover:text-primary transition-colors">
-                                  {getChapterIconComponent(chapter, "w-10 h-10 sm:w-12 sm:h-12 text-white/40 group-hover:text-primary transition-colors", false)}
-                                </div>
-                              )}
+                              {(() => {
+                                const chCover = applySingleChapterOverride(chapter).cover_url;
+                                return chCover && chCover.trim() ? (
+                                  <img 
+                                    src={chCover.trim()} 
+                                    loading="lazy"
+                                    decoding="async"
+                                    className={`w-full h-full object-cover transition-all duration-700 ${isCompleted ? 'opacity-90' : 'opacity-100 group-hover:scale-105'}`} 
+                                    alt={chapter.title} 
+                                    referrerPolicy="no-referrer"
+                                  />
+                                ) : (
+                                  <div className="w-full h-full bg-zinc-900 flex items-center justify-center text-white/30 group-hover:text-primary transition-colors">
+                                    {getChapterIconComponent(chapter, "w-10 h-10 sm:w-12 sm:h-12 text-white/40 group-hover:text-primary transition-colors", false)}
+                                  </div>
+                                );
+                              })()}
                               
                               {/* Crisp Subtle Gradient to ensure text & badges pop without darkening the artwork */}
                               <div className="absolute inset-0 bg-gradient-to-t from-black/60 via-transparent to-black/20 pointer-events-none" />

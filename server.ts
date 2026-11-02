@@ -3,6 +3,7 @@ import { createServer as createViteServer, loadEnv } from 'vite';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import fs from 'fs';
+import { createClient } from '@supabase/supabase-js';
 
 // Ensure DOMException is available globally
 if (typeof (globalThis as any).DOMException === 'undefined') {
@@ -197,10 +198,10 @@ async function startServer() {
   }
   app.use('/uploads', express.static(uploadsBasePath));
 
-  // Dedicated image upload endpoint for courses, lessons, and assets
+  // Enterprise Cloud Image Upload endpoint (Supabase Storage with CDN URLs)
   app.post(['/api/v1/upload-image', '/api/upload-image'], async (req, res) => {
     try {
-      const { image, dataUrl, folder = 'covers' } = req.body || {};
+      const { image, dataUrl, folder = 'courses', fileName: customName, contentType: customMime } = req.body || {};
       const rawImage = image || dataUrl;
       if (!rawImage || typeof rawImage !== 'string') {
         return res.status(400).json({ error: 'Nenhuma imagem fornecida' });
@@ -209,32 +210,103 @@ async function startServer() {
       // Extract base64 data and mime type
       const matches = rawImage.match(/^data:([A-Za-z0-9-+/]+);base64,(.+)$/);
       let buffer: Buffer;
+      let mimeType = customMime || 'image/jpeg';
       let ext = 'jpg';
 
       if (matches && matches.length === 3) {
-        const mime = matches[1].toLowerCase();
-        if (mime.includes('png')) ext = 'png';
-        else if (mime.includes('webp')) ext = 'webp';
-        else if (mime.includes('svg')) ext = 'svg';
+        mimeType = matches[1].toLowerCase();
+        if (mimeType.includes('webp')) ext = 'webp';
+        else if (mimeType.includes('png')) ext = 'png';
+        else if (mimeType.includes('svg')) ext = 'svg';
+        else if (mimeType.includes('gif')) ext = 'gif';
         buffer = Buffer.from(matches[2], 'base64');
       } else {
         buffer = Buffer.from(rawImage, 'base64');
+        if (customMime?.includes('webp')) ext = 'webp';
+        else if (customMime?.includes('png')) ext = 'png';
       }
 
-      const safeFolder = (folder || 'covers').replace(/[^a-zA-Z0-9_-]/g, '');
-      const uploadsDir = path.join(__dirname, 'public', 'uploads', safeFolder);
-      if (!fs.existsSync(uploadsDir)) {
-        fs.mkdirSync(uploadsDir, { recursive: true });
+      const safeFolder = (folder || 'courses').replace(/[^a-zA-Z0-9_-]/g, '');
+      const cleanFileName = customName 
+        ? customName.replace(/[^a-zA-Z0-9_.-]/g, '')
+        : `cover-${Date.now()}-${Math.floor(1000 + Math.random() * 9000)}.${ext}`;
+      const objectPath = safeFolder ? `${safeFolder}/${cleanFileName}` : cleanFileName;
+
+      const targetUrl = process.env.VITE_SUPABASE_URL || process.env.SUPABASE_URL;
+      const anonKey = process.env.VITE_SUPABASE_ANON_KEY || process.env.SUPABASE_ANON_KEY;
+      const authHeader = req.headers.authorization;
+      const token = authHeader?.startsWith('Bearer ') ? authHeader.split(' ')[1] : authHeader;
+
+      const candidateBuckets = safeFolder.includes('lesson')
+        ? ['course_content', 'course_covers', 'community_images', 'contents', 'Ebooks', 'avatars']
+        : ['course_covers', 'course_content', 'community_images', 'contents', 'Ebooks', 'avatars'];
+
+      let publicUrl = '';
+      let usedBucket = '';
+
+      if (targetUrl && (token || anonKey)) {
+        const client = createClient(targetUrl, token || anonKey || '', {
+          auth: { persistSession: false, autoRefreshToken: false, detectSessionInUrl: false },
+          ...(token ? { global: { headers: { Authorization: `Bearer ${token}` } } } : {})
+        });
+
+        for (const bucket of candidateBuckets) {
+          try {
+            const { data: uploadData, error: uploadErr } = await client.storage
+              .from(bucket)
+              .upload(objectPath, buffer, {
+                contentType: mimeType,
+                cacheControl: '31536000, public',
+                upsert: true
+              });
+
+            if (!uploadErr && uploadData) {
+              const { data: pubData } = client.storage.from(bucket).getPublicUrl(uploadData.path || objectPath);
+              if (pubData?.publicUrl) {
+                publicUrl = pubData.publicUrl;
+                usedBucket = bucket;
+                console.log(`[Server Upload] Saved to Supabase Storage bucket '${bucket}': ${publicUrl}`);
+                break;
+              }
+            }
+
+            // Direct REST API fallback with token or anonKey
+            if (!publicUrl) {
+              const activeKey = token || anonKey;
+              const restRes = await fetch(`${targetUrl}/storage/v1/object/${bucket}/${objectPath}`, {
+                method: 'POST',
+                headers: {
+                  'apikey': anonKey || activeKey || '',
+                  'Authorization': `Bearer ${activeKey}`,
+                  'Content-Type': mimeType,
+                  'x-upsert': 'true'
+                },
+                body: buffer
+              });
+              if (restRes.ok) {
+                publicUrl = `${targetUrl}/storage/v1/object/public/${bucket}/${objectPath}`;
+                usedBucket = bucket;
+                console.log(`[Server Upload] Saved via REST to bucket '${bucket}': ${publicUrl}`);
+                break;
+              }
+            }
+          } catch (bErr: any) {
+            console.warn(`[Server Upload] Bucket '${bucket}' attempt:`, bErr.message);
+          }
+        }
       }
 
-      const fileName = `img-${Date.now()}-${Math.floor(Math.random() * 10000)}.${ext}`;
-      const filePath = path.join(uploadsDir, fileName);
-      fs.writeFileSync(filePath, buffer);
+      if (publicUrl) {
+        return res.json({ success: true, url: publicUrl, bucket: usedBucket, path: objectPath, format: ext });
+      }
 
-      const publicUrl = `/uploads/${safeFolder}/${fileName}`;
-      console.log(`[Upload API] Image saved successfully to ${filePath} -> ${publicUrl}`);
+      // Safe fallback: return data URL so UI never fails
+      const fallbackDataUrl = rawImage.startsWith('data:') 
+        ? rawImage 
+        : `data:${mimeType};base64,${buffer.toString('base64')}`;
 
-      return res.json({ success: true, url: publicUrl });
+      console.warn('[Server Upload] Cloud storage unavailable, returning Data URL.');
+      return res.json({ success: true, url: fallbackDataUrl, fallback: true });
     } catch (err: any) {
       console.error('[Upload API] Error saving image:', err);
       return res.status(500).json({ error: err.message || 'Falha ao salvar imagem' });

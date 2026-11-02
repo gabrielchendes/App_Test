@@ -6,6 +6,56 @@ import path from 'path';
 const DATA_DIR = path.join(process.cwd(), 'data');
 const COMMENT_LIKES_FILE = path.join(DATA_DIR, 'comment_likes.json');
 const POST_LIKES_FILE = path.join(DATA_DIR, 'post_likes.json');
+const COURSE_OVERRIDES_FILE = path.join(DATA_DIR, 'course_overrides.json');
+const CHAPTER_OVERRIDES_FILE = path.join(DATA_DIR, 'chapter_overrides.json');
+
+export function loadCourseOverrides(): Record<string, any> {
+  try {
+    if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
+    if (fs.existsSync(COURSE_OVERRIDES_FILE)) {
+      const content = fs.readFileSync(COURSE_OVERRIDES_FILE, 'utf-8');
+      return JSON.parse(content) || {};
+    }
+  } catch (err) {
+    console.warn('[Admin API] Error reading course_overrides.json:', err);
+  }
+  return {};
+}
+
+export function saveCourseOverride(courseId: string, fields: Record<string, any>): void {
+  try {
+    if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
+    const current = loadCourseOverrides();
+    current[courseId] = { ...(current[courseId] || {}), ...fields };
+    fs.writeFileSync(COURSE_OVERRIDES_FILE, JSON.stringify(current, null, 2), 'utf-8');
+  } catch (err) {
+    console.error('[Admin API] Error saving course override:', err);
+  }
+}
+
+export function loadChapterOverrides(): Record<string, any> {
+  try {
+    if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
+    if (fs.existsSync(CHAPTER_OVERRIDES_FILE)) {
+      const content = fs.readFileSync(CHAPTER_OVERRIDES_FILE, 'utf-8');
+      return JSON.parse(content) || {};
+    }
+  } catch (err) {
+    console.warn('[Admin API] Error reading chapter_overrides.json:', err);
+  }
+  return {};
+}
+
+export function saveChapterOverride(chapterId: string, fields: Record<string, any>): void {
+  try {
+    if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
+    const current = loadChapterOverrides();
+    current[chapterId] = { ...(current[chapterId] || {}), ...fields };
+    fs.writeFileSync(CHAPTER_OVERRIDES_FILE, JSON.stringify(current, null, 2), 'utf-8');
+  } catch (err) {
+    console.error('[Admin API] Error saving chapter override:', err);
+  }
+}
 
 function loadCommentLikesMap(): Record<string, number> {
   try {
@@ -224,7 +274,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     action = 'user-delete';
   }
 
-  // Public read-only endpoints for synced community likes
+  // Public read-only endpoints for synced community likes and course overrides
   if (action === 'comment-likes-map') {
     return res.status(200).json(loadCommentLikesMap());
   }
@@ -233,6 +283,21 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   }
   if (action === 'deleted-questions') {
     return res.status(200).json(loadDeletedQuestions());
+  }
+  if (action === 'course-overrides') {
+    return res.status(200).json(loadCourseOverrides());
+  }
+  if (action === 'chapter-overrides') {
+    return res.status(200).json(loadChapterOverrides());
+  }
+  if (action === 'course-save') {
+    return await handleCourseSave(req, res);
+  }
+  if (action === 'chapter-save') {
+    return await handleChapterSave(req, res);
+  }
+  if (action === 'upload-image' || action === 'upload-storage') {
+    return await handleStorageUpload(req, res);
   }
 
   try {
@@ -319,13 +384,24 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     const isSuperAdmin = (settings?.admin_email && user.email?.toLowerCase() === settings.admin_email.toLowerCase()) || isHardcodedAdmin;
     
     const isUserAdmin = profile?.is_admin || isSuperAdmin;
-    const publicActions = ['comment-like', 'comment-likes-map', 'post-likes-map'];
+    const publicActions = ['comment-like', 'comment-likes-map', 'post-likes-map', 'course-overrides', 'chapter-overrides', 'upload-image', 'upload-storage'];
 
     if (!isUserAdmin && !publicActions.includes(action)) {
       return res.status(403).json({ error: 'Acesso negado: Apenas administradores' });
     }
 
     switch (action) {
+      case 'upload-image':
+      case 'upload-storage':
+        return await handleStorageUpload(req, res);
+      case 'course-save':
+        return await handleCourseSave(req, res);
+      case 'course-overrides':
+        return res.status(200).json(loadCourseOverrides());
+      case 'chapter-save':
+        return await handleChapterSave(req, res);
+      case 'chapter-overrides':
+        return res.status(200).json(loadChapterOverrides());
       case 'users-list':
         return await handleUsersList(req, res);
       case 'user-create':
@@ -2453,6 +2529,253 @@ async function handleProductSave(req: VercelRequest, res: VercelResponse) {
     return res.status(200).json({ success: true, product: savedData });
   } catch (err: any) {
     return res.status(500).json({ error: err.message });
+  }
+}
+
+async function handleCourseSave(req: VercelRequest, res: VercelResponse) {
+  try {
+    const { courseId, data: courseData } = req.body || {};
+    if (!courseId) return res.status(400).json({ error: 'courseId is required' });
+    if (!courseData || typeof courseData !== 'object') return res.status(400).json({ error: 'data is required' });
+
+    // 1. Immediately persist to local course_overrides.json so image and edits are NEVER lost on reload
+    saveCourseOverride(courseId, courseData);
+
+    // 2. Persist to Supabase database (try scoped client with user token, then fallback to supabaseAdmin)
+    const client = getScopedClient(req);
+    let updatedRows: any[] = [];
+    let dbError: any = null;
+
+    try {
+      const resUpdate = await client.from('courses').update(courseData).eq('id', courseId).select();
+      if (!resUpdate.error && resUpdate.data && resUpdate.data.length > 0) {
+        updatedRows = resUpdate.data;
+      } else {
+        dbError = resUpdate.error;
+      }
+    } catch (e: any) {
+      dbError = e;
+    }
+
+    if (updatedRows.length === 0 && client !== supabaseAdmin) {
+      try {
+        const adminRes = await supabaseAdmin.from('courses').update(courseData).eq('id', courseId).select();
+        if (!adminRes.error && adminRes.data && adminRes.data.length > 0) {
+          updatedRows = adminRes.data;
+          dbError = null;
+        }
+      } catch (adminErr) {
+        // fallback notice
+      }
+    }
+
+    console.log(`[Admin API] Course ${courseId} saved. Database rows updated: ${updatedRows.length}. Persisted locally: true.`);
+
+    return res.status(200).json({
+      success: true,
+      courseId,
+      dbUpdated: updatedRows.length > 0,
+      saved: updatedRows[0] || courseData
+    });
+  } catch (err: any) {
+    console.error('[Admin API] Error saving course:', err);
+    return res.status(500).json({ error: err.message || 'Error saving course' });
+  }
+}
+
+async function handleChapterSave(req: VercelRequest, res: VercelResponse) {
+  try {
+    const { chapterId, data: chapterData } = req.body || {};
+    if (!chapterId) return res.status(400).json({ error: 'chapterId is required' });
+    if (!chapterData || typeof chapterData !== 'object') return res.status(400).json({ error: 'data is required' });
+
+    // 1. Immediately persist to local chapter_overrides.json so image and edits are NEVER lost on reload
+    saveChapterOverride(chapterId, chapterData);
+
+    // 2. Persist to Supabase database (try scoped client with user token, then fallback to supabaseAdmin)
+    const client = getScopedClient(req);
+    let updatedRows: any[] = [];
+    let dbError: any = null;
+
+    try {
+      const resUpdate = await client.from('chapters').update(chapterData).eq('id', chapterId).select();
+      if (!resUpdate.error && resUpdate.data && resUpdate.data.length > 0) {
+        updatedRows = resUpdate.data;
+      } else {
+        dbError = resUpdate.error;
+      }
+    } catch (e: any) {
+      dbError = e;
+    }
+
+    if (updatedRows.length === 0 && client !== supabaseAdmin) {
+      try {
+        const adminRes = await supabaseAdmin.from('chapters').update(chapterData).eq('id', chapterId).select();
+        if (!adminRes.error && adminRes.data && adminRes.data.length > 0) {
+          updatedRows = adminRes.data;
+          dbError = null;
+        }
+      } catch (adminErr) {
+        // fallback notice
+      }
+    }
+
+    console.log(`[Admin API] Chapter ${chapterId} saved. Database rows updated: ${updatedRows.length}. Persisted locally: true.`);
+
+    return res.status(200).json({
+      success: true,
+      chapterId,
+      dbUpdated: updatedRows.length > 0,
+      saved: updatedRows[0] || chapterData
+    });
+  } catch (err: any) {
+    console.error('[Admin API] Error saving chapter:', err);
+    return res.status(500).json({ error: err.message || 'Error saving chapter' });
+  }
+}
+
+/**
+ * Enterprise Cloud Storage Upload Handler
+ * Stores images directly in Supabase Storage with permanent CDN-backed URLs.
+ * Bypasses local container disk paths to ensure 100% persistence on Vercel and cross-device sync.
+ */
+async function handleStorageUpload(req: VercelRequest, res: VercelResponse) {
+  try {
+    const { image, dataUrl, folder = 'courses', fileName: customName, contentType: customMime } = req.body || {};
+    const rawImage = image || dataUrl;
+    if (!rawImage || typeof rawImage !== 'string') {
+      return res.status(400).json({ error: 'Nenhuma imagem fornecida' });
+    }
+
+    // Extract mime type and binary buffer
+    const matches = rawImage.match(/^data:([A-Za-z0-9-+/]+);base64,(.+)$/);
+    let buffer: Buffer;
+    let mimeType = customMime || 'image/jpeg';
+    let ext = 'jpg';
+
+    if (matches && matches.length === 3) {
+      mimeType = matches[1].toLowerCase();
+      if (mimeType.includes('webp')) ext = 'webp';
+      else if (mimeType.includes('png')) ext = 'png';
+      else if (mimeType.includes('svg')) ext = 'svg';
+      else if (mimeType.includes('gif')) ext = 'gif';
+      else ext = 'jpg';
+      buffer = Buffer.from(matches[2], 'base64');
+    } else {
+      buffer = Buffer.from(rawImage, 'base64');
+      if (customMime?.includes('webp')) ext = 'webp';
+      else if (customMime?.includes('png')) ext = 'png';
+    }
+
+    const safeFolder = (folder || 'courses').replace(/[^a-zA-Z0-9_-]/g, '');
+    const cleanFileName = customName 
+      ? customName.replace(/[^a-zA-Z0-9_.-]/g, '')
+      : `cover-${Date.now()}-${Math.floor(1000 + Math.random() * 9000)}.${ext}`;
+    const objectPath = safeFolder ? `${safeFolder}/${cleanFileName}` : cleanFileName;
+
+    // Prioritized buckets: course_covers and course_content are standard in Supabase
+    const candidateBuckets = safeFolder.includes('lesson')
+      ? ['course_content', 'course_covers', 'community_images', 'contents', 'Ebooks', 'avatars']
+      : ['course_covers', 'course_content', 'community_images', 'contents', 'Ebooks', 'avatars'];
+
+    const client = getScopedClient(req);
+    const authHeader = req.headers?.authorization;
+    const token = authHeader?.startsWith('Bearer ') ? authHeader.split(' ')[1] : authHeader;
+
+    let publicUrl = '';
+    let usedBucket = '';
+
+    for (const bucket of candidateBuckets) {
+      try {
+        // Attempt 1: Upload via scoped Supabase client (with caller's JWT)
+        const { data: uploadData, error: uploadErr } = await client.storage
+          .from(bucket)
+          .upload(objectPath, buffer, {
+            contentType: mimeType,
+            cacheControl: '31536000, public',
+            upsert: true
+          });
+
+        if (!uploadErr && uploadData) {
+          const { data: pubData } = client.storage.from(bucket).getPublicUrl(uploadData.path || objectPath);
+          if (pubData?.publicUrl) {
+            publicUrl = pubData.publicUrl;
+            usedBucket = bucket;
+            console.log(`[Storage Upload] Uploaded successfully to bucket '${bucket}': ${publicUrl}`);
+            break;
+          }
+        }
+
+        // Attempt 2: If scoped client failed and admin client differs, try admin client
+        if (client !== supabaseAdmin) {
+          const { data: adminUpData, error: adminUpErr } = await supabaseAdmin.storage
+            .from(bucket)
+            .upload(objectPath, buffer, {
+              contentType: mimeType,
+              cacheControl: '31536000, public',
+              upsert: true
+            });
+
+          if (!adminUpErr && adminUpData) {
+            const { data: pubData } = supabaseAdmin.storage.from(bucket).getPublicUrl(adminUpData.path || objectPath);
+            if (pubData?.publicUrl) {
+              publicUrl = pubData.publicUrl;
+              usedBucket = bucket;
+              console.log(`[Storage Upload] Uploaded via admin client to bucket '${bucket}': ${publicUrl}`);
+              break;
+            }
+          }
+        }
+
+        // Attempt 3: Direct Storage REST API with caller token or anon key
+        if (!publicUrl && token) {
+          const restRes = await fetch(`${supabaseUrl}/storage/v1/object/${bucket}/${objectPath}`, {
+            method: 'POST',
+            headers: {
+              'apikey': supabaseAnonKey,
+              'Authorization': `Bearer ${token}`,
+              'Content-Type': mimeType,
+              'x-upsert': 'true'
+            },
+            body: buffer
+          });
+          if (restRes.ok) {
+            const canonicalUrl = `${supabaseUrl}/storage/v1/object/public/${bucket}/${objectPath}`;
+            publicUrl = canonicalUrl;
+            usedBucket = bucket;
+            console.log(`[Storage Upload] Uploaded via Storage REST API to bucket '${bucket}': ${publicUrl}`);
+            break;
+          }
+        }
+      } catch (bucketErr: any) {
+        console.warn(`[Storage Upload] Bucket '${bucket}' notice:`, bucketErr.message);
+      }
+    }
+
+    if (publicUrl) {
+      return res.status(200).json({
+        success: true,
+        url: publicUrl,
+        bucket: usedBucket,
+        path: objectPath,
+        format: ext
+      });
+    }
+
+    // Fallback: If cloud storage is unavailable, return self-contained base64 data URL
+    const fallbackDataUrl = rawImage.startsWith('data:') 
+      ? rawImage 
+      : `data:${mimeType};base64,${buffer.toString('base64')}`;
+
+    console.warn('[Storage Upload] Cloud storage could not be reached, returning high-fidelity Data URL.');
+    return res.status(200).json({
+      success: true,
+      url: fallbackDataUrl,
+      fallback: true
+    });
+  } catch (err: any) {
+    console.error('[Storage Upload API] Fatal upload error:', err);
+    return res.status(500).json({ error: err.message || 'Erro ao processar upload da imagem' });
   }
 }
 

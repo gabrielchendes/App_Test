@@ -62,6 +62,14 @@ import { ChapterBadgeCustomizer } from './ChapterBadgeCustomizer';
 import { parseCourseHtmlFunnel, serializeCourseHtmlFunnel } from '../utils/courseFunnel';
 import ImageCropperModal from './ImageCropperModal';
 import { dataCache } from '../lib/cache';
+import { 
+  applyCourseOverrides, 
+  applySingleCourseOverride, 
+  applyChapterOverrides, 
+  applySingleChapterOverride, 
+  saveCourseViaApi, 
+  saveChapterViaApi 
+} from '../lib/courseOverrides';
 
 const getNextCategoryOrderIndex = async (isBonus: boolean, isFree: boolean): Promise<number> => {
   try {
@@ -646,7 +654,7 @@ export default function CourseEditor({
       const funnelParsed = parseCourseHtmlFunnel(courseData);
       const effectivePdfUrl = courseData.pdf_url || courseData.preview_pdf_url || '';
 
-      setCourse({
+      setCourse(applySingleCourseOverride({
         ...courseData,
         hide_single_module_header: funnelParsed.hide_single_module_header !== undefined
           ? funnelParsed.hide_single_module_header
@@ -659,7 +667,7 @@ export default function CourseEditor({
         preview_enabled: true,
         preview_type: funnelParsed.preview_type || 'html',
         preview_rich_text: funnelParsed.preview_rich_text
-      });
+      }));
 
       const { data: modulesData, error: modulesError } = await supabase
         .from('modules')
@@ -679,7 +687,7 @@ export default function CourseEditor({
           .order('order_index');
         
         if (chaptersError) throw chaptersError;
-        const chaptersList = (chaptersData || []).map(fromDbChapter);
+        const chaptersList: Chapter[] = applyChapterOverrides((chaptersData || []).map(fromDbChapter) as Chapter[]);
         setChapters(chaptersList);
       } else {
         setChapters([]);
@@ -858,6 +866,7 @@ export default function CourseEditor({
 
       const targetCourseId = getEffectiveCourseId();
       if (targetCourseId) {
+        await saveCourseViaApi(targetCourseId, courseData);
         let { error } = await supabase.from('courses').update(courseData).eq('id', targetCourseId);
         if (error && error.message?.includes('hide_single_module_header')) {
           delete (courseData as any).hide_single_module_header;
@@ -1045,6 +1054,7 @@ export default function CourseEditor({
       }
 
       if (editingChapter.id) {
+        await saveChapterViaApi(editingChapter.id, lessonData);
         let { error } = await supabase.from('chapters').update(lessonData).eq('id', editingChapter.id);
         if (error && (error.message?.includes('custom_icon') || error.message?.includes('custom_badge'))) {
           if (error.message?.includes('custom_icon')) delete lessonData.custom_icon;
@@ -1067,6 +1077,9 @@ export default function CourseEditor({
           error = retry.error;
         }
         if (error) throw error;
+        if (newChapter?.id) {
+          await saveChapterViaApi(newChapter.id, lessonData);
+        }
         if (editingChapter.content_type === 'checklist' && newChapter) {
           await saveChecklistToDatabase(newChapter.id, newChecklist);
         }
@@ -1134,6 +1147,7 @@ export default function CourseEditor({
         updateData.custom_badge = editingExistingChapter.custom_badge?.trim() || null;
       }
 
+      await saveChapterViaApi(editingExistingChapter.id, updateData);
       let { error } = await supabase
         .from('chapters')
         .update(updateData)
@@ -1508,6 +1522,7 @@ export default function CourseEditor({
                             const effId = getEffectiveCourseId();
                             if (effId) {
                               try {
+                                saveCourseViaApi(effId, { cover_url: '' });
                                 await supabase.from('courses').update({ cover_url: '' }).eq('id', effId);
                                 dataCache.invalidate('course_full_' + effId);
                                 dataCache.invalidate('global_public_courses_catalog');
@@ -3554,6 +3569,7 @@ export default function CourseEditor({
                                                       setEditingExistingChapter(prev => prev ? ({ ...prev, cover_url: '' }) : null);
                                                       setChapters(prev => prev.map(c => c.id === ch.id ? { ...c, cover_url: '' } : c));
                                                       try {
+                                                        await saveChapterViaApi(ch.id, { cover_url: '' });
                                                         await supabase.from('chapters').update({ cover_url: '' }).eq('id', ch.id);
                                                         const effId = getEffectiveCourseId();
                                                         if (effId) dataCache.invalidate('course_full_' + effId);
@@ -3666,20 +3682,15 @@ export default function CourseEditor({
         if (cropperType === 'standard') {
           setCourse(prev => ({ ...prev, cover_url: url }));
           setIsDirty(true);
-          // If this is an existing course in database, persist immediately!
           const effCourseId = getEffectiveCourseId();
           if (effCourseId) {
-            try {
-              const { error } = await supabase.from('courses').update({ cover_url: url }).eq('id', effCourseId);
-              if (error) throw error;
-              dataCache.invalidate('course_full_' + effCourseId);
-              dataCache.invalidate('global_public_courses_catalog');
-              dataCache.invalidate();
-              toast.success('Capa do treinamento salva no banco de dados com sucesso!');
-            } catch (err: any) {
-              console.error('Erro ao persistir capa do curso:', err);
-              toast.success('Capa aplicada no formulário! Salve as informações para confirmar.');
-            }
+            // Persist immediately via backend API and database
+            await saveCourseViaApi(effCourseId, { cover_url: url });
+            supabase.from('courses').update({ cover_url: url }).eq('id', effCourseId).then(() => {}).catch(() => {});
+            dataCache.invalidate('course_full_' + effCourseId);
+            dataCache.invalidate('global_public_courses_catalog');
+            dataCache.invalidate();
+            toast.success('Capa do treinamento salva com sucesso!');
           } else {
             toast.success('Capa do treinamento aplicada com sucesso!');
           }
@@ -3688,15 +3699,12 @@ export default function CourseEditor({
           setIsDirty(true);
           const effCourseId = getEffectiveCourseId();
           if (effCourseId) {
-            try {
-              await supabase.from('courses').update({ premium_cover_url: url }).eq('id', effCourseId);
-              dataCache.invalidate('course_full_' + effCourseId);
-              dataCache.invalidate('global_public_courses_catalog');
-              dataCache.invalidate();
-              toast.success('Capa premium salva no banco de dados!');
-            } catch (e) {
-              toast.success('Capa premium aplicada!');
-            }
+            await saveCourseViaApi(effCourseId, { premium_cover_url: url });
+            supabase.from('courses').update({ premium_cover_url: url }).eq('id', effCourseId).then(() => {}).catch(() => {});
+            dataCache.invalidate('course_full_' + effCourseId);
+            dataCache.invalidate('global_public_courses_catalog');
+            dataCache.invalidate();
+            toast.success('Capa premium salva com sucesso!');
           }
         } else if (cropperType === 'chapter') {
           setEditingChapter(prev => ({ ...prev, cover_url: url }));
@@ -3706,23 +3714,17 @@ export default function CourseEditor({
           const targetChapterId = cropperChapterId || editingExistingChapter?.id;
           setEditingExistingChapter(prev => prev ? ({ ...prev, cover_url: url }) : null);
           if (targetChapterId) {
-            // Update chapters state in memory so re-renders preserve it
             setChapters(prev => prev.map(c => c.id === targetChapterId ? { ...c, cover_url: url } : c));
-            // Persist directly to Supabase chapters table immediately!
-            try {
-              const { error } = await supabase.from('chapters').update({ cover_url: url }).eq('id', targetChapterId);
-              if (error) throw error;
-              const effId = getEffectiveCourseId();
-              if (effId) {
-                dataCache.invalidate('course_full_' + effId);
-              }
-              dataCache.invalidate('global_public_courses_catalog');
-              dataCache.invalidate();
-              toast.success('Capa da aula salva no banco de dados com sucesso!');
-            } catch (err: any) {
-              console.error('Erro ao persistir capa da aula:', err);
-              toast.success('Capa aplicada! Clique em "Salvar Alterações" para confirmar.');
+            // Persist immediately via backend API and database
+            await saveChapterViaApi(targetChapterId, { cover_url: url });
+            supabase.from('chapters').update({ cover_url: url }).eq('id', targetChapterId).then(() => {}).catch(() => {});
+            const effId = getEffectiveCourseId();
+            if (effId) {
+              dataCache.invalidate('course_full_' + effId);
             }
+            dataCache.invalidate('global_public_courses_catalog');
+            dataCache.invalidate();
+            toast.success('Capa da aula salva com sucesso!');
           } else {
             toast.success('Capa da aula aplicada!');
           }

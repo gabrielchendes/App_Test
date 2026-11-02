@@ -29,6 +29,7 @@ import { lazyWithRetry } from '../lib/lazyWithRetry';
 import { GlowingSpinner } from '../components/GlowingSpinner';
 import { parseCourseHtmlFunnel } from '../utils/courseFunnel';
 import PWAInstallModal from '../components/PWAInstallModal';
+import { applyCourseOverrides, useCourseOverridesSync } from '../lib/courseOverrides';
 
 // Lazy load heavy components and modals
 const Profile = lazyWithRetry(() => import('../components/Profile'));
@@ -50,6 +51,7 @@ interface DashboardProps {
 }
 
 export default function Dashboard({ user }: DashboardProps) {
+  useCourseOverridesSync();
   const { settings } = useSettings();
   const { t } = useI18n();
 
@@ -58,13 +60,18 @@ export default function Dashboard({ user }: DashboardProps) {
   const profileCacheKey = `dashboard_profile_${user?.id}`;
   const initialCached = useMemo(() => {
     const userCached = user?.id ? dataCache.getSync(cacheKey, null) : null;
-    if (userCached?.courses?.length) return userCached;
+    if (userCached?.courses?.length) {
+      return {
+        ...userCached,
+        courses: applyCourseOverrides(userCached.courses)
+      };
+    }
 
     // Fallback: check global catalog cache so screen has courses immediately
     const globalCached = dataCache.getSync('global_public_courses_catalog', null);
     if (globalCached && Array.isArray(globalCached) && globalCached.length > 0) {
       return {
-        courses: globalCached,
+        courses: applyCourseOverrides(globalCached),
         purchases: [],
         userProgress: [],
         courseStats: {},
@@ -381,7 +388,7 @@ export default function Dashboard({ user }: DashboardProps) {
     const cachedData = forceNoCache ? null : dataCache.get(cacheKey, true);
     
     if (cachedData && cachedData.courses && cachedData.courses.length > 0) {
-      setCourses(cachedData.courses);
+      setCourses(applyCourseOverrides(cachedData.courses));
       setPurchases(cachedData.purchases || []);
       setUserProgress(cachedData.userProgress || []);
       setCourseStats(cachedData.courseStats || {});
@@ -409,12 +416,12 @@ export default function Dashboard({ user }: DashboardProps) {
           }
 
           if (coursesRes.data && coursesRes.data.length > 0) {
-            return coursesRes.data.filter((c: any) => c.is_active !== false);
+            return applyCourseOverrides(coursesRes.data.filter((c: any) => c.is_active !== false));
           } else if (coursesRes.error) {
             console.warn('First courses fetch warning, trying fallback select:', coursesRes.error);
             const fallbackRes = await supabase.from('courses').select('*');
             if (fallbackRes.data && fallbackRes.data.length > 0) {
-              return fallbackRes.data.filter((c: any) => c.is_active !== false);
+              return applyCourseOverrides(fallbackRes.data.filter((c: any) => c.is_active !== false));
             }
           }
           return [];
@@ -526,7 +533,7 @@ export default function Dashboard({ user }: DashboardProps) {
       const mainPrice = parseFloat(settings?.custom_texts?.['main_price'] || '0') || 0;
       const mainCheckoutUrl = settings?.custom_texts?.['main_checkout_url'] || '';
 
-      const processedCourses = fetchedCoursesData.map(c => {
+      const processedCourses = applyCourseOverrides(fetchedCoursesData).map(c => {
         const funnelParsed = parseCourseHtmlFunnel(c);
         const isMainCourse = !!c.is_free && !c.is_bonus;
         const effectivePdf = c.pdf_url || c.preview_pdf_url || '';

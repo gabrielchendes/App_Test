@@ -100,6 +100,7 @@ import { AdminTestimonials } from './AdminTestimonials';
 import AdminAiContentCreator from './AdminAiContentCreator';
 import { safeParse, safeFetch } from '../lib/utils';
 import { dataCache } from '../lib/cache';
+import { applyCourseOverrides } from '../lib/courseOverrides';
 import { DEFAULT_UNLIMITED_INFO_HTML } from '../constants/defaultUnlimitedHtml';
 import { lazyWithRetry } from '../lib/lazyWithRetry';
 import { languagePresets } from '../constants/languagePresets';
@@ -1185,7 +1186,7 @@ export default function AdminPanel({ user }: AdminPanelProps) {
           if (orderA !== orderB) return orderA - orderB;
           return new Date(a.created_at || 0).getTime() - new Date(b.created_at || 0).getTime();
         });
-        setCourses(sorted);
+        setCourses(applyCourseOverrides(sorted));
       }
 
       const { data: chaptersData } = await supabase.from('chapters').select('id, content_type, modules!inner(course_id)');

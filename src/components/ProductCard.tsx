@@ -4,6 +4,7 @@ import { Course } from '../types/lms';
 import { motion } from 'motion/react';
 import { useI18n } from '../contexts/I18nContext';
 import { cn } from '../lib/utils';
+import { applySingleCourseOverride } from '../lib/courseOverrides';
 
 interface ProductCardProps {
   product: Course;
@@ -17,6 +18,7 @@ interface ProductCardProps {
 
 const ProductCard = memo(({ product, isUnlocked, progress = 0, stats, settings, onOpen, onPrefetch }: ProductCardProps) => {
   const { t } = useI18n();
+  const effectiveProduct = useMemo(() => applySingleCourseOverride(product), [product]);
 
   // State calculations
   const isNotStarted = progress === 0;
@@ -127,8 +129,8 @@ const ProductCard = memo(({ product, isUnlocked, progress = 0, stats, settings, 
         {/* Thumbnail Area */}
         <div className="relative aspect-[3/4] overflow-hidden w-full z-10">
           <img
-            src={(product.cover_url && product.cover_url.trim()) ? product.cover_url.trim() : `https://picsum.photos/seed/${product.id}/600/800`}
-            alt={product.title}
+            src={(effectiveProduct.cover_url && effectiveProduct.cover_url.trim()) ? effectiveProduct.cover_url.trim() : `https://picsum.photos/seed/${effectiveProduct.id}/600/800`}
+            alt={effectiveProduct.title}
             loading="lazy"
             decoding="async"
             className="w-full h-full object-cover transition-all duration-500 group-hover:scale-105"
@@ -166,7 +168,7 @@ const ProductCard = memo(({ product, isUnlocked, progress = 0, stats, settings, 
           {settings?.show_course_titles_home && (
             <div className="flex-1 flex items-center justify-center w-full my-auto py-0.5">
               <h3 className="font-black text-[9px] sm:text-[11px] text-zinc-200 leading-snug uppercase tracking-[0.05em] group-hover:text-white transition-colors break-words text-center w-full">
-                {product.title}
+                {effectiveProduct.title}
               </h3>
             </div>
           )}

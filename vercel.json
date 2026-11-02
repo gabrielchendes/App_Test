@@ -43,6 +43,14 @@
       "destination": "/api/v1/settings"
     },
     {
+      "source": "/api/upload-image",
+      "destination": "/api/v1/admin?action=upload-image"
+    },
+    {
+      "source": "/api/v1/upload-image",
+      "destination": "/api/v1/admin?action=upload-image"
+    },
+    {
       "source": "/api/v1/auth/:action",
       "destination": "/api/v1/auth?action=:action"
     },
