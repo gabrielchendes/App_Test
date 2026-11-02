@@ -86,6 +86,37 @@ export async function syncOverridesFromServer(): Promise<void> {
       } catch {}
     }
 
+    // Direct cloud sync from Supabase ai_user_memory for guaranteed Vercel persistence
+    try {
+      const { data: cloudCourse } = await supabase
+        .from('ai_user_memory')
+        .select('facts')
+        .eq('user_id', '__global_course_overrides__')
+        .maybeSingle();
+      if (cloudCourse?.facts && Array.isArray(cloudCourse.facts) && cloudCourse.facts[0]) {
+        courseOverridesMemory = { ...courseOverridesMemory, ...cloudCourse.facts[0] };
+        changed = true;
+        try {
+          localStorage.setItem(COURSE_OVERRIDES_CACHE_KEY, JSON.stringify(courseOverridesMemory));
+        } catch {}
+      }
+    } catch {}
+
+    try {
+      const { data: cloudChapter } = await supabase
+        .from('ai_user_memory')
+        .select('facts')
+        .eq('user_id', '__global_chapter_overrides__')
+        .maybeSingle();
+      if (cloudChapter?.facts && Array.isArray(cloudChapter.facts) && cloudChapter.facts[0]) {
+        chapterOverridesMemory = { ...chapterOverridesMemory, ...cloudChapter.facts[0] };
+        changed = true;
+        try {
+          localStorage.setItem(CHAPTER_OVERRIDES_CACHE_KEY, JSON.stringify(chapterOverridesMemory));
+        } catch {}
+      }
+    } catch {}
+
     if (changed) {
       notifyOverridesUpdated();
     }
@@ -168,7 +199,26 @@ export async function saveCourseViaApi(courseId: string, dataToSave: Record<stri
   } catch {}
   notifyOverridesUpdated();
 
-  // 2. Send to backend admin API (persists in server data/course_overrides.json & Supabase DB)
+  // 2. Direct cloud sync to Supabase ai_user_memory for guaranteed persistence across all devices & Vercel
+  supabase
+    .from('ai_user_memory')
+    .upsert({
+      user_id: '__global_course_overrides__',
+      facts: [courseOverridesMemory],
+      last_updated: new Date().toISOString()
+    })
+    .then(() => {})
+    .catch(() => {});
+
+  // 3. Try direct update on public.courses table
+  supabase
+    .from('courses')
+    .update(dataToSave)
+    .eq('id', courseId)
+    .then(() => {})
+    .catch(() => {});
+
+  // 4. Send to backend admin API (persists in server data/course_overrides.json & Supabase DB)
   try {
     const token = await getAuthTokenSafe();
     const headers: Record<string, string> = {
@@ -213,7 +263,26 @@ export async function saveChapterViaApi(chapterId: string, dataToSave: Record<st
   } catch {}
   notifyOverridesUpdated();
 
-  // 2. Send to backend admin API (persists in server data/chapter_overrides.json & Supabase DB)
+  // 2. Direct cloud sync to Supabase ai_user_memory for guaranteed persistence across all devices & Vercel
+  supabase
+    .from('ai_user_memory')
+    .upsert({
+      user_id: '__global_chapter_overrides__',
+      facts: [chapterOverridesMemory],
+      last_updated: new Date().toISOString()
+    })
+    .then(() => {})
+    .catch(() => {});
+
+  // 3. Try direct update on public.chapters table
+  supabase
+    .from('chapters')
+    .update(dataToSave)
+    .eq('id', chapterId)
+    .then(() => {})
+    .catch(() => {});
+
+  // 4. Send to backend admin API (persists in server data/chapter_overrides.json & Supabase DB)
   try {
     const token = await getAuthTokenSafe();
     const headers: Record<string, string> = {

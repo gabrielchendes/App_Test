@@ -9,52 +9,126 @@ const POST_LIKES_FILE = path.join(DATA_DIR, 'post_likes.json');
 const COURSE_OVERRIDES_FILE = path.join(DATA_DIR, 'course_overrides.json');
 const CHAPTER_OVERRIDES_FILE = path.join(DATA_DIR, 'chapter_overrides.json');
 
+// In-memory caches for overrides to support Vercel serverless read-only environment
+let inMemoryCourseOverrides: Record<string, any> = {};
+let inMemoryChapterOverrides: Record<string, any> = {};
+
 export function loadCourseOverrides(): Record<string, any> {
+  if (Object.keys(inMemoryCourseOverrides).length > 0) {
+    return inMemoryCourseOverrides;
+  }
   try {
-    if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
     if (fs.existsSync(COURSE_OVERRIDES_FILE)) {
       const content = fs.readFileSync(COURSE_OVERRIDES_FILE, 'utf-8');
-      return JSON.parse(content) || {};
+      const parsed = JSON.parse(content) || {};
+      inMemoryCourseOverrides = { ...inMemoryCourseOverrides, ...parsed };
+      return inMemoryCourseOverrides;
     }
-  } catch (err) {
-    console.warn('[Admin API] Error reading course_overrides.json:', err);
+  } catch (err) {}
+  return inMemoryCourseOverrides;
+}
+
+export async function fetchCloudCourseOverrides(): Promise<Record<string, any>> {
+  const local = loadCourseOverrides();
+  try {
+    const { data, error } = await supabaseAdmin
+      .from('ai_user_memory')
+      .select('facts')
+      .eq('user_id', '__global_course_overrides__')
+      .maybeSingle();
+    if (!error && data?.facts && Array.isArray(data.facts) && data.facts[0]) {
+      const cloud = data.facts[0] || {};
+      inMemoryCourseOverrides = { ...local, ...cloud };
+      return inMemoryCourseOverrides;
+    }
+  } catch (e) {
+    console.warn('[Admin API] Cloud course overrides fetch notice:', e);
   }
-  return {};
+  return local;
 }
 
 export function saveCourseOverride(courseId: string, fields: Record<string, any>): void {
+  loadCourseOverrides();
+  inMemoryCourseOverrides[courseId] = { ...(inMemoryCourseOverrides[courseId] || {}), ...fields };
   try {
     if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
-    const current = loadCourseOverrides();
-    current[courseId] = { ...(current[courseId] || {}), ...fields };
-    fs.writeFileSync(COURSE_OVERRIDES_FILE, JSON.stringify(current, null, 2), 'utf-8');
+    fs.writeFileSync(COURSE_OVERRIDES_FILE, JSON.stringify(inMemoryCourseOverrides, null, 2), 'utf-8');
   } catch (err) {
-    console.error('[Admin API] Error saving course override:', err);
+    // Expected on Vercel read-only filesystem
   }
+  // Sync to Supabase cloud memory so Vercel & other devices immediately see it
+  Promise.resolve(
+    supabaseAdmin
+      .from('ai_user_memory')
+      .upsert({
+        user_id: '__global_course_overrides__',
+        facts: [inMemoryCourseOverrides],
+        last_updated: new Date().toISOString()
+      })
+  ).then(() => {
+    console.log(`[Admin API] Course override persisted to Supabase cloud memory`);
+  }).catch((err: any) => {
+    console.warn('[Admin API] Cloud override sync notice:', err?.message);
+  });
 }
 
 export function loadChapterOverrides(): Record<string, any> {
+  if (Object.keys(inMemoryChapterOverrides).length > 0) {
+    return inMemoryChapterOverrides;
+  }
   try {
-    if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
     if (fs.existsSync(CHAPTER_OVERRIDES_FILE)) {
       const content = fs.readFileSync(CHAPTER_OVERRIDES_FILE, 'utf-8');
-      return JSON.parse(content) || {};
+      const parsed = JSON.parse(content) || {};
+      inMemoryChapterOverrides = { ...inMemoryChapterOverrides, ...parsed };
+      return inMemoryChapterOverrides;
     }
-  } catch (err) {
-    console.warn('[Admin API] Error reading chapter_overrides.json:', err);
+  } catch (err) {}
+  return inMemoryChapterOverrides;
+}
+
+export async function fetchCloudChapterOverrides(): Promise<Record<string, any>> {
+  const local = loadChapterOverrides();
+  try {
+    const { data, error } = await supabaseAdmin
+      .from('ai_user_memory')
+      .select('facts')
+      .eq('user_id', '__global_chapter_overrides__')
+      .maybeSingle();
+    if (!error && data?.facts && Array.isArray(data.facts) && data.facts[0]) {
+      const cloud = data.facts[0] || {};
+      inMemoryChapterOverrides = { ...local, ...cloud };
+      return inMemoryChapterOverrides;
+    }
+  } catch (e) {
+    console.warn('[Admin API] Cloud chapter overrides fetch notice:', e);
   }
-  return {};
+  return local;
 }
 
 export function saveChapterOverride(chapterId: string, fields: Record<string, any>): void {
+  loadChapterOverrides();
+  inMemoryChapterOverrides[chapterId] = { ...(inMemoryChapterOverrides[chapterId] || {}), ...fields };
   try {
     if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
-    const current = loadChapterOverrides();
-    current[chapterId] = { ...(current[chapterId] || {}), ...fields };
-    fs.writeFileSync(CHAPTER_OVERRIDES_FILE, JSON.stringify(current, null, 2), 'utf-8');
+    fs.writeFileSync(CHAPTER_OVERRIDES_FILE, JSON.stringify(inMemoryChapterOverrides, null, 2), 'utf-8');
   } catch (err) {
-    console.error('[Admin API] Error saving chapter override:', err);
+    // Expected on Vercel read-only filesystem
   }
+  // Sync to Supabase cloud memory so Vercel & other devices immediately see it
+  Promise.resolve(
+    supabaseAdmin
+      .from('ai_user_memory')
+      .upsert({
+        user_id: '__global_chapter_overrides__',
+        facts: [inMemoryChapterOverrides],
+        last_updated: new Date().toISOString()
+      })
+  ).then(() => {
+    console.log(`[Admin API] Chapter override persisted to Supabase cloud memory`);
+  }).catch((err: any) => {
+    console.warn('[Admin API] Cloud chapter override sync notice:', err?.message);
+  });
 }
 
 function loadCommentLikesMap(): Record<string, number> {
@@ -285,10 +359,12 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     return res.status(200).json(loadDeletedQuestions());
   }
   if (action === 'course-overrides') {
-    return res.status(200).json(loadCourseOverrides());
+    const overrides = await fetchCloudCourseOverrides();
+    return res.status(200).json(overrides);
   }
   if (action === 'chapter-overrides') {
-    return res.status(200).json(loadChapterOverrides());
+    const overrides = await fetchCloudChapterOverrides();
+    return res.status(200).json(overrides);
   }
   if (action === 'course-save') {
     return await handleCourseSave(req, res);
@@ -397,11 +473,11 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       case 'course-save':
         return await handleCourseSave(req, res);
       case 'course-overrides':
-        return res.status(200).json(loadCourseOverrides());
+        return res.status(200).json(await fetchCloudCourseOverrides());
       case 'chapter-save':
         return await handleChapterSave(req, res);
       case 'chapter-overrides':
-        return res.status(200).json(loadChapterOverrides());
+        return res.status(200).json(await fetchCloudChapterOverrides());
       case 'users-list':
         return await handleUsersList(req, res);
       case 'user-create':
