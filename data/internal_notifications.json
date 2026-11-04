@@ -1,1 +1,24 @@
-[]
+[
+  {
+    "id": "174f1b02-9bc5-4d32-bcdc-e21d90706fd5",
+    "user_id": "7bfb1b61-b43c-48d3-a81c-b84e694793b6",
+    "broadcast_id": "8c5b5bfe-f4fb-4aa6-81ea-eb307ad0f56a",
+    "title": "Teste Sem Coluna ReadCount",
+    "body": "Validando que a insercao no banco de dados funciona perfeitamente sem read_count",
+    "message": "Validando que a insercao no banco de dados funciona perfeitamente sem read_count",
+    "is_read": false,
+    "read": false,
+    "created_at": "2026-11-02T23:38:52.752Z"
+  },
+  {
+    "id": "3977f94d-aab0-49d8-9897-c8f82bf2420a",
+    "user_id": "7bfb1b61-b43c-48d3-a81c-b84e694793b6",
+    "broadcast_id": "c9c1f3f4-1116-440c-83e9-ad4d34fcce72",
+    "title": "Aviso Importante aos Alunos",
+    "body": "Nova aula prática adicionada na área de membros.",
+    "message": "Nova aula prática adicionada na área de membros.",
+    "is_read": false,
+    "read": false,
+    "created_at": "2026-11-02T23:28:56.794Z"
+  }
+]

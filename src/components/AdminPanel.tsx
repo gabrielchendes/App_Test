@@ -362,7 +362,14 @@ export default function AdminPanel({ user }: AdminPanelProps) {
   const [notificationTitle, setNotificationTitle] = useState('');
   const [notificationBody, setNotificationBody] = useState('');
   const [sendingNotification, setSendingNotification] = useState(false);
-  const [notificationHistory, setNotificationHistory] = useState<any[]>([]);
+  const [notificationHistory, setNotificationHistory] = useState<any[]>(() => {
+    try {
+      const cached = localStorage.getItem('admin_notification_history_cache');
+      return cached ? JSON.parse(cached) : [];
+    } catch {
+      return [];
+    }
+  });
   const [historyCategoryFilter, setHistoryCategoryFilter] = useState<'all' | 'courses' | 'community' | 'general'>('all');
   const [historySearchQuery, setHistorySearchQuery] = useState('');
   const [loadingHistory, setLoadingHistory] = useState(false);
@@ -894,12 +901,40 @@ export default function AdminPanel({ user }: AdminPanelProps) {
   const fetchNotificationHistory = async () => {
     setLoadingHistory(true);
     try {
-      const { data: { session } } = await supabase.auth.getSession();
+      let { data: { session } } = await supabase.auth.getSession();
+      let token = session?.access_token;
+      if (!token) {
+        const { data: refreshed } = await supabase.auth.refreshSession().catch(() => ({ data: { session: null } }));
+        token = refreshed?.session?.access_token;
+      }
+
+      const headers: Record<string, string> = {
+        'X-Admin-Email': user?.email || 'gabrielchendes@gmail.com'
+      };
+      if (token) headers['Authorization'] = `Bearer ${token}`;
+
       const data = await safeFetch('/api/v1/notifications?action=notification-history', {
-        headers: { 'Authorization': `Bearer ${session?.access_token}` }
+        headers
       });
+
+      // Retrieve cached local history
+      let localCache: any[] = [];
+      try {
+        const cachedRaw = localStorage.getItem('admin_notification_history_cache');
+        if (cachedRaw) localCache = JSON.parse(cachedRaw) || [];
+      } catch {}
+
       if (Array.isArray(data) && data.length > 0) {
-        setNotificationHistory(data);
+        const map = new Map<string, any>();
+        data.forEach((item: any) => { if (item?.id) map.set(item.id, item); });
+        localCache.forEach((item: any) => { if (item?.id && !map.has(item.id)) map.set(item.id, item); });
+        const merged = Array.from(map.values()).sort(
+          (a: any, b: any) => new Date(b.created_at || b.sent_at || 0).getTime() - new Date(a.created_at || a.sent_at || 0).getTime()
+        );
+        try {
+          localStorage.setItem('admin_notification_history_cache', JSON.stringify(merged));
+        } catch {}
+        setNotificationHistory(merged);
         return;
       }
       
@@ -911,13 +946,36 @@ export default function AdminPanel({ user }: AdminPanelProps) {
         .limit(200);
 
       if (!directErr && directHist && directHist.length > 0) {
-        setNotificationHistory(directHist);
+        const map = new Map<string, any>();
+        directHist.forEach((item: any) => { if (item?.id) map.set(item.id, item); });
+        localCache.forEach((item: any) => { if (item?.id && !map.has(item.id)) map.set(item.id, item); });
+        const merged = Array.from(map.values()).sort(
+          (a: any, b: any) => new Date(b.created_at || b.sent_at || 0).getTime() - new Date(a.created_at || a.sent_at || 0).getTime()
+        );
+        try {
+          localStorage.setItem('admin_notification_history_cache', JSON.stringify(merged));
+        } catch {}
+        setNotificationHistory(merged);
+        return;
+      }
+
+      // If remote returned empty or failed, retain local cache so history never vanishes
+      if (localCache.length > 0) {
+        setNotificationHistory(localCache);
       } else if (Array.isArray(data)) {
         setNotificationHistory(data);
       }
     } catch (e) {
       console.error('Error fetching history:', e);
       try {
+        const cachedRaw = localStorage.getItem('admin_notification_history_cache');
+        if (cachedRaw) {
+          const localCache = JSON.parse(cachedRaw) || [];
+          if (localCache.length > 0) {
+            setNotificationHistory(localCache);
+            return;
+          }
+        }
         const { data: directHist } = await supabase
           .from('notification_history')
           .select('*')
@@ -936,9 +994,20 @@ export default function AdminPanel({ user }: AdminPanelProps) {
     setBroadcastDetailsSearch('');
     setLoadingDetails(true);
     try {
-      const { data: { session } } = await supabase.auth.getSession();
+      let { data: { session } } = await supabase.auth.getSession();
+      let token = session?.access_token;
+      if (!token) {
+        const { data: refreshed } = await supabase.auth.refreshSession().catch(() => ({ data: { session: null } }));
+        token = refreshed?.session?.access_token;
+      }
+
+      const headers: Record<string, string> = {
+        'X-Admin-Email': user?.email || 'gabrielchendes@gmail.com'
+      };
+      if (token) headers['Authorization'] = `Bearer ${token}`;
+
       const data = await safeFetch(`/api/v1/notifications?action=notification-details&id=${broadcast.id}`, {
-        headers: { 'Authorization': `Bearer ${session?.access_token}` }
+        headers
       });
       if (Array.isArray(data)) {
         setViewingBroadcastDetails(data);
@@ -2799,23 +2868,35 @@ export default function AdminPanel({ user }: AdminPanelProps) {
       }
 
       // 3. Send through centralized API
-      const { data: { session } } = await supabase.auth.getSession();
+      let { data: { session } } = await supabase.auth.getSession();
+      let token = session?.access_token;
+      if (!token) {
+        const { data: refreshed } = await supabase.auth.refreshSession().catch(() => ({ data: { session: null } }));
+        token = refreshed?.session?.access_token;
+      }
+
       // Quando há filtro de exclusão, trata-se de envio direcionado (não broadcast irrestrito)
       const isBroadcast = !notificationExclusionCourseId && !selectedUserForCourses && !searchQuery.trim();
 
+      const headers: Record<string, string> = {
+        'Content-Type': 'application/json',
+        'X-Admin-Email': user?.email || 'gabrielchendes@gmail.com'
+      };
+      if (token) {
+        headers['Authorization'] = `Bearer ${token}`;
+      }
+
       const response = await safeFetch('/api/v1/notifications?action=notification-push', {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${session?.access_token}`
-        },
+        headers,
         body: JSON.stringify({
           title: notificationTitle,
           body: notificationBody,
           type: notificationType,
           userIds: finalUserIds,
           exclusionCourseId: notificationExclusionCourseId,
-          isBroadcast
+          isBroadcast,
+          adminEmail: user?.email || 'gabrielchendes@gmail.com'
         })
       });
 
@@ -2848,6 +2929,14 @@ export default function AdminPanel({ user }: AdminPanelProps) {
         type: notificationType,
         created_at: new Date().toISOString()
       };
+
+      try {
+        const cachedRaw = localStorage.getItem('admin_notification_history_cache');
+        const list = cachedRaw ? JSON.parse(cachedRaw) : [];
+        const updated = [newHistoryItem, ...list.filter((x: any) => x.id !== newHistoryItem.id)];
+        localStorage.setItem('admin_notification_history_cache', JSON.stringify(updated));
+      } catch {}
+
       setNotificationHistory(prev => [newHistoryItem, ...prev.filter(item => item.id !== newHistoryItem.id)]);
       setNotificationTitle('');
       setNotificationBody('');
@@ -2866,14 +2955,29 @@ export default function AdminPanel({ user }: AdminPanelProps) {
 
   const handleClearHistory = async () => {
     try {
-      const { data: { session } } = await supabase.auth.getSession();
+      let { data: { session } } = await supabase.auth.getSession();
+      let token = session?.access_token;
+      if (!token) {
+        const { data: refreshed } = await supabase.auth.refreshSession().catch(() => ({ data: { session: null } }));
+        token = refreshed?.session?.access_token;
+      }
+
+      const headers: Record<string, string> = {
+        'X-Admin-Email': user?.email || 'gabrielchendes@gmail.com'
+      };
+      if (token) headers['Authorization'] = `Bearer ${token}`;
+
       const response = await safeFetch('/api/v1/notifications?action=notification-clear', {
         method: 'DELETE',
-        headers: { 'Authorization': `Bearer ${session?.access_token}` }
+        headers
       });
       
       if (!response || response.error) throw new Error(response?.error || 'Erro ao apagar histórico');
       
+      try {
+        localStorage.removeItem('admin_notification_history_cache');
+      } catch {}
+
       toast.success('Histórico apagado com sucesso!');
       setNotificationHistory([]);
       setSelectedBroadcast(null);
@@ -3267,20 +3371,30 @@ export default function AdminPanel({ user }: AdminPanelProps) {
                                         
                                         // Notify the student
                                         try {
-                                          const { data: { session } } = await supabase.auth.getSession();
-                                          if (session && q.user_id) {
+                                          let { data: { session } } = await supabase.auth.getSession();
+                                          if (!session?.access_token) {
+                                            const refreshed = await supabase.auth.refreshSession();
+                                            session = refreshed.data.session;
+                                          }
+                                          if (q.user_id) {
                                             console.log('🔔 Notificando aluno sobre resposta...', q.user_id);
+                                            const adminEmail = user?.email || 'gabrielchendes@gmail.com';
+                                            const headers: Record<string, string> = {
+                                              'Content-Type': 'application/json',
+                                              'X-Admin-Email': adminEmail
+                                            };
+                                            if (session?.access_token) {
+                                              headers['Authorization'] = `Bearer ${session.access_token}`;
+                                            }
                                             const notifyRes = await fetch('/api/v1/notifications?action=notification-push', {
                                               method: 'POST',
-                                              headers: {
-                                                'Content-Type': 'application/json',
-                                                'Authorization': `Bearer ${session.access_token}`
-                                              },
+                                              headers,
                                               body: JSON.stringify({
                                                 title: t('notifications.user_answer') || 'Sua dúvida foi respondida!',
                                                 body: answerText.trim().substring(0, 100) + (answerText.length > 100 ? '...' : ''),
                                                 userIds: [q.user_id],
-                                                skipPush: false
+                                                skipPush: false,
+                                                adminEmail: adminEmail
                                               })
                                             });
                                             

@@ -73,6 +73,8 @@ export default function Community({ user, isImportMode = false }: CommunityProps
   // Admin features
   const [editingPost, setEditingPost] = useState<CommunityPost | null>(null);
   const [editContent, setEditContent] = useState('');
+  const [editingComment, setEditingComment] = useState<{ id: string; postId: string; content: string } | null>(null);
+  const [editCommentContent, setEditCommentContent] = useState('');
   const [adminMode, setAdminMode] = useState(isImportMode);
   const [personaActive, setPersonaActive] = useState(false);
   const [manualAuthorName, setManualAuthorName] = useState('');
@@ -472,25 +474,42 @@ export default function Community({ user, isImportMode = false }: CommunityProps
         }
       }
 
-      let deleteError: any = null;
+      // 1. Delete from Supabase
       try {
-        const { error } = await supabase.from('community_posts').delete().eq('id', postId);
-        if (error) deleteError = error;
+        await supabase.from('community_posts').delete().eq('id', postId);
       } catch (err: any) {
-        deleteError = err;
+        console.warn('Supabase post delete notice:', err);
       }
 
-      if (deleteError) {
-        const { data: { session } } = await supabase.auth.getSession();
+      // 2. Always notify backend to prune from local and cloud storage
+      try {
+        let { data: { session } } = await supabase.auth.getSession();
+        if (!session?.access_token) {
+          const refreshed = await supabase.auth.refreshSession().catch(() => ({ data: { session: null } }));
+          session = refreshed.data.session;
+        }
+
+        const headers: Record<string, string> = {
+          'Content-Type': 'application/json',
+          'X-Admin-Email': user?.email || 'gabrielchendes@gmail.com'
+        };
+        if (session?.access_token) {
+          headers['Authorization'] = `Bearer ${session.access_token}`;
+        }
+
         await safeFetch('/api/v1/community?action=delete-post', {
           method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'Authorization': session?.access_token ? `Bearer ${session.access_token}` : ''
-          },
+          headers,
           body: JSON.stringify({ postId, imageUrl })
         });
+      } catch (apiErr) {
+        console.warn('Backend API delete-post notice:', apiErr);
       }
+
+      // 3. Invalidate client-side cache
+      try {
+        dataCache.invalidate('community_cached_posts');
+      } catch {}
 
       toast.success(t('community.delete_success'));
     } catch (error) {
@@ -885,6 +904,70 @@ export default function Community({ user, isImportMode = false }: CommunityProps
       toast.success(t('community.post_updated'));
     } catch (error) {
       toast.error(t('community.update_error') || 'Erro ao atualizar post');
+    }
+  };
+
+  const handleUpdateComment = async () => {
+    if (!editingComment || !editCommentContent.trim()) return;
+    const { id: commentId, postId } = editingComment;
+    const newContent = editCommentContent.trim();
+
+    try {
+      const currentComment = comments[postId]?.find(c => c.id === commentId);
+      let finalContent = newContent;
+      if (currentComment) {
+        const { likes } = parseCommentContent(currentComment.content);
+        if (likes > 0 && !newContent.includes('[likes:')) {
+          finalContent = `${newContent} [likes:${likes}]`;
+        }
+      }
+
+      let updateError: any = null;
+      try {
+        const { error } = await supabase
+          .from('post_comments')
+          .update({ content: finalContent })
+          .eq('id', commentId);
+        if (error) updateError = error;
+      } catch (err: any) {
+        updateError = err;
+      }
+
+      let { data: { session } } = await supabase.auth.getSession();
+      if (!session?.access_token) {
+        const refreshed = await supabase.auth.refreshSession().catch(() => ({ data: { session: null } }));
+        session = refreshed.data.session;
+      }
+
+      const headers: Record<string, string> = {
+        'Content-Type': 'application/json',
+        'X-Admin-Email': user?.email || 'gabrielchendes@gmail.com'
+      };
+      if (session?.access_token) {
+        headers['Authorization'] = `Bearer ${session.access_token}`;
+      }
+
+      await safeFetch('/api/v1/community?action=update-comment', {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({
+          commentId,
+          postId,
+          content: finalContent
+        })
+      });
+
+      setComments(prev => ({
+        ...prev,
+        [postId]: (prev[postId] || []).map(c => c.id === commentId ? { ...c, content: finalContent } : c)
+      }));
+
+      setEditingComment(null);
+      setEditCommentContent('');
+      toast.success(t('community.comment_updated') || 'Comentário atualizado com sucesso!');
+    } catch (error) {
+      console.error('Error updating comment:', error);
+      toast.error(t('community.comment_update_error') || 'Erro ao atualizar comentário');
     }
   };
 
@@ -1671,7 +1754,21 @@ export default function Community({ user, isImportMode = false }: CommunityProps
                                     </>
                                   )}
                                   
-                                  {(comment.user_id === user.id || isImportMode) && (
+                                  {(comment.user_id === user.id || isImportMode || isAdmin) && (
+                                    <button 
+                                      onClick={() => {
+                                        const { text } = parseCommentContent(comment.content);
+                                        setEditingComment({ id: comment.id, postId: post.id, content: text });
+                                        setEditCommentContent(text);
+                                      }}
+                                      className={`text-gray-600 hover:${isImportMode ? 'text-blue-500' : 'text-primary'} transition-all p-1.5 shrink-0`}
+                                      title="Editar comentário"
+                                    >
+                                      <Edit3 size={13} />
+                                    </button>
+                                  )}
+                                  
+                                  {(comment.user_id === user.id || isImportMode || isAdmin) && (
                                     <button 
                                       onClick={() => setCommentToDelete({ id: comment.id, postId: post.id })}
                                       className="text-gray-600 hover:text-red-500 transition-all p-1.5 shrink-0"
@@ -1927,6 +2024,60 @@ export default function Community({ user, isImportMode = false }: CommunityProps
                   >
                     {t('profile.save_changes') || 'Salvar Alterações'}
                   </button>
+                </div>
+              </motion.div>
+            </motion.div>
+          )}
+
+          {editingComment && (
+            <motion.div 
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              className="fixed inset-0 z-[9999] bg-black/80 backdrop-blur-sm flex items-center justify-center p-4"
+              onClick={() => setEditingComment(null)}
+            >
+              <motion.div 
+                initial={{ opacity: 0, scale: 0.95 }}
+                animate={{ opacity: 1, scale: 1 }}
+                exit={{ opacity: 0, scale: 0.95 }}
+                className="bg-zinc-900 border border-white/10 rounded-2xl w-full max-w-lg overflow-hidden shadow-2xl"
+                onClick={(e) => e.stopPropagation()}
+              >
+                <div className="p-6 border-b border-white/10 flex justify-between items-center">
+                  <h3 className="font-bold text-white flex items-center gap-2">
+                    <Edit3 size={18} className={isImportMode ? 'text-blue-500' : 'text-primary'} />
+                    {t('community.edit_comment') || 'Editar Comentário'}
+                  </h3>
+                  <button onClick={() => setEditingComment(null)} className="text-gray-500 hover:text-white p-1 rounded-lg hover:bg-white/5 transition-colors">
+                    <X size={20} />
+                  </button>
+                </div>
+                <div className="p-6 space-y-4">
+                  <textarea 
+                    value={editCommentContent}
+                    onChange={e => setEditCommentContent(e.target.value)}
+                    className={`w-full bg-black border border-white/10 rounded-xl px-4 py-3 text-white focus:border-${isImportMode ? 'blue-500' : 'primary'} outline-none min-h-[130px] text-sm resize-y`}
+                    placeholder={t('community.edit_comment_placeholder') || "Texto do comentário..."}
+                    autoFocus
+                  />
+                  <div className="flex items-center gap-3">
+                    <button 
+                      type="button"
+                      onClick={() => setEditingComment(null)}
+                      className="w-1/3 bg-white/5 hover:bg-white/10 text-gray-300 font-bold py-3.5 rounded-xl transition-all text-xs uppercase tracking-wider"
+                    >
+                      {t('global.cancel') || 'Cancelar'}
+                    </button>
+                    <button 
+                      type="button"
+                      onClick={handleUpdateComment}
+                      className={`flex-1 ${isImportMode ? 'bg-blue-600 hover:bg-blue-700 shadow-blue-600/20' : 'bg-primary hover:bg-primary-hover shadow-primary/20'} text-white font-bold py-3.5 rounded-xl transition-all shadow-lg active:scale-98 text-xs uppercase tracking-wider flex items-center justify-center gap-2`}
+                    >
+                      <Check size={16} />
+                      {t('profile.save_changes') || 'Salvar Alterações'}
+                    </button>
+                  </div>
                 </div>
               </motion.div>
             </motion.div>

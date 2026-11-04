@@ -20,7 +20,7 @@
         },
         {
           "key": "Access-Control-Allow-Headers",
-          "value": "Content-Type, Authorization, Range, X-Requested-With, Accept, User-Agent"
+          "value": "Content-Type, Authorization, Range, X-Requested-With, Accept, User-Agent, X-Admin-Email, X-User-Email"
         },
         {
           "key": "Access-Control-Expose-Headers",

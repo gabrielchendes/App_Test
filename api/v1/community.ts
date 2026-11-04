@@ -60,6 +60,19 @@ function saveLocalComments(commentsMap: Record<string, any[]>): void {
   }
 }
 
+const DELETED_POSTS_FILE = path.join(DATA_DIR, 'deleted_post_ids.json');
+
+function loadDeletedPostIds(): string[] {
+  try {
+    if (fs.existsSync(DELETED_POSTS_FILE)) {
+      const raw = fs.readFileSync(DELETED_POSTS_FILE, 'utf-8');
+      const list = JSON.parse(raw);
+      if (Array.isArray(list)) return list;
+    }
+  } catch {}
+  return [];
+}
+
 const cleanUrl = (raw?: string) => {
   if (!raw) return 'https://placeholder.supabase.co';
   let clean = raw.replace(/^["']|["']$/g, '').trim();
@@ -75,10 +88,22 @@ const cleanUrl = (raw?: string) => {
   }
 };
 
-const supabaseUrl = cleanUrl(
-  process.env.SUPABASE_URL || 
-  process.env.VITE_SUPABASE_URL
-);
+const getInitialSupabaseUrl = () => {
+  const envUrl = process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL;
+  if (envUrl && envUrl.trim() && !envUrl.includes('placeholder')) return cleanUrl(envUrl);
+  try {
+    const settingsPath = path.join(process.cwd(), 'data', 'app_settings.json');
+    if (fs.existsSync(settingsPath)) {
+      const settings = JSON.parse(fs.readFileSync(settingsPath, 'utf-8'));
+      const raw = settings?.logo_url || settings?.favicon_url || '';
+      const match = raw.match(/https:\/\/[a-z0-9]+\.supabase\.co/);
+      if (match) return match[0];
+    }
+  } catch {}
+  return 'https://fhnmpltilhongdofnzbj.supabase.co';
+};
+
+const supabaseUrl = getInitialSupabaseUrl();
 
 const isRevokedKey = (key?: string) => {
   if (!key) return true;
@@ -116,6 +141,49 @@ const supabaseAdmin = createClient(supabaseUrl || 'https://placeholder.supabase.
     detectSessionInUrl: false
   }
 });
+
+async function recordDeletedPostId(id: string): Promise<void> {
+  try {
+    ensureDataDir();
+    const current = loadDeletedPostIds();
+    if (!current.includes(id)) {
+      current.push(id);
+      fs.writeFileSync(DELETED_POSTS_FILE, JSON.stringify(current, null, 2), 'utf-8');
+    }
+    try {
+      const { data } = await supabaseAdmin
+        .from('ai_user_memory')
+        .select('facts')
+        .eq('user_id', '__deleted_community_posts__')
+        .maybeSingle();
+      const existing = (data?.facts && Array.isArray(data.facts[0])) ? data.facts[0] : [];
+      if (!existing.includes(id)) {
+        await supabaseAdmin
+          .from('ai_user_memory')
+          .upsert({
+            user_id: '__deleted_community_posts__',
+            facts: [[...existing, id]],
+            last_updated: new Date().toISOString()
+          });
+      }
+    } catch {}
+  } catch {}
+}
+
+async function fetchDeletedPostIds(): Promise<Set<string>> {
+  const set = new Set<string>(loadDeletedPostIds());
+  try {
+    const { data } = await supabaseAdmin
+      .from('ai_user_memory')
+      .select('facts')
+      .eq('user_id', '__deleted_community_posts__')
+      .maybeSingle();
+    if (data?.facts && Array.isArray(data.facts[0])) {
+      data.facts[0].forEach((id: string) => set.add(id));
+    }
+  } catch {}
+  return set;
+}
 
 function getSupabaseForRequest(req: VercelRequest) {
   const authHeader = req.headers.authorization;
@@ -344,6 +412,11 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         }
       } catch (_) {}
 
+      // Persistently record deleted post ID to prevent resurrection across Vercel / serverless / client cache
+      try {
+        await recordDeletedPostId(postId);
+      } catch (_) {}
+
       return res.status(200).json({ success: true, deleted: postId });
     }
 
@@ -435,6 +508,59 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       });
     }
 
+    // UPDATE COMMENT
+    if (action === 'update-comment') {
+      const body = parseBody(req);
+      const commentId = body.commentId || body.id;
+      const postId = body.postId || body.post_id;
+      const content = (body.content || '').trim();
+
+      if (!commentId || !content) {
+        return res.status(400).json({ error: 'Comment ID and content are required' });
+      }
+
+      let updatedComment: any = null;
+
+      try {
+        const { data, error } = await supabaseAdmin
+          .from('post_comments')
+          .update({ content })
+          .eq('id', commentId)
+          .select()
+          .maybeSingle();
+
+        if (!error && data) {
+          updatedComment = data;
+        }
+      } catch (err: any) {
+        console.warn('[Community API] Error updating comment in Supabase:', err?.message || err);
+      }
+
+      // Update in local comments file
+      try {
+        const commentsMap = loadLocalComments();
+        let foundInMap = false;
+        for (const pid of Object.keys(commentsMap)) {
+          const list = commentsMap[pid] || [];
+          const idx = list.findIndex(c => c.id === commentId);
+          if (idx !== -1) {
+            list[idx].content = content;
+            commentsMap[pid] = list;
+            foundInMap = true;
+            if (!updatedComment) updatedComment = list[idx];
+          }
+        }
+        if (foundInMap) {
+          saveLocalComments(commentsMap);
+        }
+      } catch (_) {}
+
+      return res.status(200).json({
+        success: true,
+        comment: updatedComment || { id: commentId, postId, content }
+      });
+    }
+
     // 5. DELETE COMMENT
     if (action === 'delete-comment') {
       const body = parseBody(req);
@@ -506,7 +632,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         }
       }
 
-      const merged = Array.from(postsMap.values());
+      const deletedIds = await fetchDeletedPostIds();
+      const merged = Array.from(postsMap.values()).filter(p => p && p.id && !deletedIds.has(p.id));
       // Sort newest first by created_at (descending)
       merged.sort((a, b) => {
         const timeA = a.created_at ? new Date(a.created_at).getTime() : 0;
