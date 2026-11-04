@@ -64,13 +64,19 @@ export async function generateContentWithRetry(
 ): Promise<{ text: string; modelUsed: string; response: GenerateContentResponse }> {
   const {
     ai,
-    candidateModels = ['gemini-3.1-flash-lite', 'gemini-flash-latest', 'gemini-3.8-flash'],
+    candidateModels = [
+      'gemini-3-flash-preview',
+      'gemini-3.8-flash',
+      'gemini-3.1-flash-lite',
+      'gemini-3.5-flash-lite',
+      'gemini-flash-latest'
+    ],
     contents,
     config,
     maxAttemptsPerModel = 1,
-    baseDelayMs = 300,
-    perCallTimeoutMs = 7500,
-    totalBudgetMs = 9200,
+    baseDelayMs = 200,
+    perCallTimeoutMs = 5000,
+    totalBudgetMs = 8200,
     logPrefix = '[Gemini Call]'
   } = options;
 

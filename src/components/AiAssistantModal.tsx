@@ -852,7 +852,7 @@ export default function AiAssistantModal({ userId, userEmail, userName, userAvat
       content: m.content
     }));
 
-    const MAX_CLIENT_ATTEMPTS = 3;
+    const MAX_CLIENT_ATTEMPTS = 4;
     let finalSuccessReply: string | null = null;
     let finalErrorMessage: string = errorMessage;
 
@@ -867,8 +867,10 @@ export default function AiAssistantModal({ userId, userEmail, userName, userAvat
           setStatusText(`${expertName} is reading your message and writing...`);
         } else if (attempt === 2) {
           setStatusText(`${expertName} is connecting and consulting...`);
-        } else {
+        } else if (attempt === 3) {
           setStatusText(`${expertName} is preparing detailed guidance for you...`);
+        } else {
+          setStatusText(`${expertName} is finalizing your personalized guidance...`);
         }
 
         const controller = new AbortController();

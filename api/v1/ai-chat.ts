@@ -120,7 +120,14 @@ function getAiClient(): GoogleGenAI {
   }
   if (!aiInstance || lastUsedApiKey !== apiKey) {
     lastUsedApiKey = apiKey;
-    aiInstance = new GoogleGenAI({ apiKey });
+    aiInstance = new GoogleGenAI({
+      apiKey,
+      httpOptions: {
+        headers: {
+          'User-Agent': 'aistudio-build',
+        },
+      },
+    });
   }
   return aiInstance;
 }
@@ -503,13 +510,13 @@ function parseRequestBody(req: VercelRequest): Record<string, any> {
   return typeof body === 'object' ? body : {};
 }
 
-// --- Fast Multi-Model Generator with Strict Budget ---
+// --- Fast Multi-Model Generator with Strict Vercel Budget ---
 async function generateWithModelFallback(
   ai: GoogleGenAI,
   candidateModels: string[],
   contents: any[],
   systemInstruction: string,
-  totalBudgetMs: number = 8800
+  totalBudgetMs: number = 8200
 ): Promise<{ text: string; modelUsed: string }> {
   const startTime = Date.now();
   let lastError: any = null;
@@ -518,13 +525,13 @@ async function generateWithModelFallback(
     const modelName = candidateModels[i];
     const elapsed = Date.now() - startTime;
     const remainingTime = totalBudgetMs - elapsed;
-    if (remainingTime < 1000) {
+    if (remainingTime < 1400) {
       console.info(`[Ask Victoria] Time budget reached (${elapsed}ms). Responding safely.`);
       break;
     }
 
-    // Allocate up to 6800ms to first model to absorb Cold Starts, remaining budget to fallbacks
-    const perCallTimeout = i === 0 ? Math.min(6800, remainingTime - 150) : Math.min(2600, remainingTime - 150);
+    // Allocate up to 5500ms for primary model, remaining budget for fast fallbacks
+    const perCallTimeout = i === 0 ? Math.min(5500, remainingTime - 200) : Math.min(2800, remainingTime - 200);
 
     try {
       let timer: NodeJS.Timeout | null = null;
@@ -534,29 +541,35 @@ async function generateWithModelFallback(
         }, perCallTimeout);
       });
 
+      const genConfig: any = {
+        systemInstruction,
+        maxOutputTokens: 400,
+      };
+      if (modelName.includes('gemini-3')) {
+        genConfig.thinkingConfig = { thinkingBudget: 0 };
+      }
+
       const callPromise = ai.models.generateContent({
         model: modelName,
         contents,
-        config: {
-          systemInstruction,
-          temperature: 0.7,
-          maxOutputTokens: 400,
-        }
+        config: genConfig,
       });
 
       const response = await Promise.race([callPromise, timeoutPromise]).finally(() => {
         if (timer) clearTimeout(timer);
       });
 
-      if (response && response.text) {
+      if (response && response.text && response.text.trim().length > 0) {
         return {
-          text: response.text,
+          text: response.text.trim(),
           modelUsed: modelName,
         };
       }
     } catch (err: any) {
       lastError = err;
       console.info(`[Ask Victoria] Model ${modelName} note: ${err?.message || err}. Trying next fallback...`);
+      // Brief jitter backoff on high demand (503/429) to let the platform cool down
+      await new Promise(r => setTimeout(r, 150));
       continue;
     }
   }
@@ -719,12 +732,13 @@ ${userContext?.userName ? `User's Name: ${userContext.userName}` : ''}${memoryIn
       ? `Primary Language: Respond in clear, warm American English (unless the user writes in another language).\n\n${customSystemPrompt.trim()}\n\nIMPORTANT FORMATTING RULE: Do NOT use markdown bold stars (**text**) or asterisks in output. Write in natural plain text.\n\n${userContext?.userName ? `User's Name: ${userContext.userName}` : ''}${memoryInstruction}`
       : defaultSystemInstruction;
 
-    // Prioritize high-volume Flash-Lite models with independent quota pools
+    // Prioritize ultra-fast Flash models with immediate responsiveness
     const candidateModels = [
-      'gemini-flash-lite-latest',   // Highest free volume & fastest response (~600ms)
-      'gemini-3.1-flash-lite',      // Ultra-economical ($0.075/1M), independent quota pool (~600ms)
-      'gemini-3.5-flash-lite',      // High-speed fallback (~600ms)
-      'gemini-3.1-flash-lite-preview'
+      'gemini-3-flash-preview',     // Ultra-fast (~2.6s), highest consistency
+      'gemini-3.5-flash',           // Comprehensive quality fallback
+      'gemini-3.6-flash',           // Fast fallback
+      'gemini-3.8-flash',           // Advanced reasoning model
+      'gemini-flash-latest'         // Stable flash alias fallback
     ];
 
     const result = await generateWithModelFallback(
@@ -732,7 +746,7 @@ ${userContext?.userName ? `User's Name: ${userContext.userName}` : ''}${memoryIn
       candidateModels,
       contents,
       systemInstruction,
-      8800
+      8200
     );
 
     const responseText = result.text;
