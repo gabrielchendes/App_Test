@@ -319,7 +319,7 @@ async function loadChatMessagesFromDb(
 
     return await Promise.race([
       queryPromise,
-      new Promise<{ messages: any[]; hasMore: boolean }>((resolve) => setTimeout(() => resolve({ messages: [], hasMore: false }), 1800))
+      new Promise<{ messages: any[]; hasMore: boolean }>((resolve) => setTimeout(() => resolve({ messages: [], hasMore: false }), 5500))
     ]);
   } catch (err) {
     console.warn('[AI Chat] loadChatMessagesFromDb note:', err);
@@ -352,7 +352,7 @@ async function saveChatMessageToDb(
     });
     await Promise.race([
       insertPromise,
-      new Promise((resolve) => setTimeout(resolve, 1000))
+      new Promise((resolve) => setTimeout(resolve, 3500))
     ]);
   } catch (_) {}
 }
@@ -650,10 +650,10 @@ export async function handleAiChat(req: VercelRequest, res: VercelResponse) {
 
     const userIdentifier = candidateIds[0] || (userContext?.userName || 'student').trim().toLowerCase();
 
-    // 1. Immediately persist incoming student message in the background (fire and forget)
+    // 1. Persist incoming student message
     const lastUserMsg = [...messages].reverse().find(m => m.role === 'user');
     if (lastUserMsg && candidateIds.length > 0) {
-      saveChatMessageToDb(supabaseAdmin, candidateIds, lastUserMsg).catch(() => {});
+      await saveChatMessageToDb(supabaseAdmin, candidateIds, lastUserMsg).catch(() => {});
     }
 
     // Check if client explicitly sent that user is VIP (e.g. from authenticated session/profile)
@@ -755,9 +755,9 @@ ${userContext?.userName ? `User's Name: ${userContext.userName}` : ''}${memoryIn
 
     let updatedMemory: UserMemoryProfile | null = existingMemory;
 
-    // 6. On success: Persist assistant reply & update Student Memory in the background (fire and forget)
+    // 6. On success: Persist assistant reply & update Student Memory in DB
     if (responseText && candidateIds.length > 0) {
-      saveChatMessageToDb(supabaseAdmin, candidateIds, {
+      await saveChatMessageToDb(supabaseAdmin, candidateIds, {
         id: `ast_${Date.now()}`,
         role: 'assistant',
         content: reply,

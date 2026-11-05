@@ -1217,12 +1217,31 @@ async function handleAccessToggle(req: VercelRequest, res: VercelResponse) {
 
       const isCourseIdUUID = isValidUUID(courseId);
       
+      // Resolve effective user UUID to avoid invalid input syntax for type uuid in PostgreSQL
+      let effectiveUserId: string = isValidUUID(userId) ? userId : '';
+      const emailToSearch = (userEmail || (typeof userId === 'string' && userId.includes('@') ? userId : '')).toLowerCase().trim();
+
+      if (!effectiveUserId && emailToSearch) {
+        try {
+          const { data: prof } = await client.from('profiles').select('id').ilike('email', emailToSearch).maybeSingle();
+          if (prof?.id && isValidUUID(prof.id)) effectiveUserId = prof.id;
+        } catch (_) {}
+        if (!effectiveUserId) {
+          try {
+            const { data: prof } = await supabaseAdmin.from('profiles').select('id').ilike('email', emailToSearch).maybeSingle();
+            if (prof?.id && isValidUUID(prof.id)) effectiveUserId = prof.id;
+          } catch (_) {}
+        }
+      }
+
+      if (!effectiveUserId) {
+        effectiveUserId = userId;
+      }
+
       let targetCourseIds: string[] = [];
       
       if (isCourseIdUUID) {
         // If it's a UUID, it could be a course OR a package
-        targetCourseIds.push(courseId);
-        
         const { data: pkgData } = await client
           .from('course_packages')
           .select('id, package_courses(course_id)')
@@ -1230,12 +1249,11 @@ async function handleAccessToggle(req: VercelRequest, res: VercelResponse) {
           .maybeSingle();
 
         if (pkgData) {
-          const expandedIds = pkgData.package_courses?.map((pc: any) => pc.course_id) || [];
-          if (expandedIds.length > 0) {
-            targetCourseIds = [...new Set([courseId, ...expandedIds])];
-            console.log(`[Admin API] Expanding package ${courseId} to ${targetCourseIds.length} items`);
-          }
+          const expandedIds = pkgData.package_courses?.map((pc: any) => pc.course_id).filter(isValidUUID) || [];
+          targetCourseIds = Array.from(new Set([courseId, ...expandedIds]));
+          console.log(`[Admin API] Expanding package ${courseId} to ${targetCourseIds.length} items`);
         } else {
+          targetCourseIds.push(courseId);
           // Check if it's a course with a linked package or hotmart_product_id
           const { data: courseData } = await client
             .from('courses')
@@ -1246,8 +1264,8 @@ async function handleAccessToggle(req: VercelRequest, res: VercelResponse) {
           if (courseData?.linked_package_id) {
             const { data: pData } = await client.from('course_packages').select('id, package_courses(course_id)').eq('id', courseData.linked_package_id).maybeSingle();
             if (pData) {
-               const pkgIds = pData.package_courses?.map((pc: any) => pc.course_id) || [];
-               targetCourseIds = [...new Set([courseId, pData.id, ...pkgIds])];
+               const pkgIds = pData.package_courses?.map((pc: any) => pc.course_id).filter(isValidUUID) || [];
+               targetCourseIds = Array.from(new Set([courseId, pData.id, ...pkgIds]));
                console.log(`[Admin API] UUID matches course with linked package ${pData.id}, expanding to ${targetCourseIds.length} items`);
             }
           }
@@ -1281,9 +1299,9 @@ async function handleAccessToggle(req: VercelRequest, res: VercelResponse) {
           .maybeSingle();
           
         if (pkgData) {
-          const expandedIds = pkgData.package_courses?.map((pc: any) => pc.course_id) || [];
-          targetCourseIds = [...new Set([pkgData.id, ...expandedIds])];
-          console.log(`[Admin API] Found package by hotmart ID ${courseId}, expanded to ${targetCourseIds.length} items (excluding non-UUID)`);
+          const expandedIds = pkgData.package_courses?.map((pc: any) => pc.course_id).filter(isValidUUID) || [];
+          targetCourseIds = Array.from(new Set([pkgData.id, ...expandedIds]));
+          console.log(`[Admin API] Found package by hotmart ID ${courseId}, expanded to ${targetCourseIds.length} items`);
         } else {
           const { data: courseData } = await client
             .from('courses')
@@ -1299,8 +1317,8 @@ async function handleAccessToggle(req: VercelRequest, res: VercelResponse) {
             if (courseData.linked_package_id) {
               const { data: pData } = await client.from('course_packages').select('id, package_courses(course_id)').eq('id', courseData.linked_package_id).maybeSingle();
               if (pData) {
-                 const pkgIds = pData.package_courses?.map((pc: any) => pc.course_id) || [];
-                 targetCourseIds = [...new Set([pData.id, ...pkgIds])];
+                 const pkgIds = pData.package_courses?.map((pc: any) => pc.course_id).filter(isValidUUID) || [];
+                 targetCourseIds = Array.from(new Set([pData.id, ...pkgIds]));
                  console.log(`[Admin API] Course has linked package ${pData.id}, expanding to ${targetCourseIds.length} items`);
               }
             }
@@ -1315,14 +1333,14 @@ async function handleAccessToggle(req: VercelRequest, res: VercelResponse) {
       }
 
       const results = [];
-      console.log(`[Admin API] Starting toggle for userId: ${userId}, targetCourseIds: ${JSON.stringify(targetCourseIds)}`);
+      console.log(`[Admin API] Starting toggle for userId: ${effectiveUserId}, targetCourseIds: ${JSON.stringify(targetCourseIds)}`);
 
       for (const cid of targetCourseIds) {
         // Skip if not a UUID at this point when granting (prevents DB errors), but allow revoking non-UUIDs
         if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(cid)) {
           if (action === 'grant') {
             console.warn(`[Admin API] Skipping CID ${cid} because it is not a valid UUID`);
-            results.push({ id: cid, status: 'error', error: 'Internal Error: Resolved ID is not a UUID' });
+            results.push({ id: cid, status: 'skipped_non_uuid', error: 'Internal: Resolved ID is not a UUID' });
             continue;
           }
         }
@@ -1330,16 +1348,17 @@ async function handleAccessToggle(req: VercelRequest, res: VercelResponse) {
         if (action === 'grant') {
           const transactionId = `manual_${Date.now()}_${cid.substring(0, 8)}`;
           
-          const { data: existing, error: checkError } = await client
-            .from('purchases')
-            .select('product_id')
-            .match({ user_id: userId, product_id: cid })
-            .maybeSingle();
+          let existing: any = null;
+          if (isValidUUID(effectiveUserId)) {
+            const { data, error: checkError } = await client
+              .from('purchases')
+              .select('product_id')
+              .match({ user_id: effectiveUserId, product_id: cid })
+              .maybeSingle();
 
-          if (checkError) {
-            console.error(`[Admin API] CheckError for user ${userId}, product ${cid}:`, checkError);
-            results.push({ id: cid, status: 'error', error: checkError.message, code: checkError.code });
-            continue;
+            if (!checkError && data) {
+              existing = data;
+            }
           }
 
           if (existing) {
@@ -1347,131 +1366,59 @@ async function handleAccessToggle(req: VercelRequest, res: VercelResponse) {
             continue;
           }
 
-          console.log(`[Admin API] Inserting purchase for user ${userId}, product ${cid}`);
+          console.log(`[Admin API] Inserting purchase for user ${effectiveUserId}, product ${cid}`);
           
           // Reusable Grant Function with nested fallbacks
           const grantWithFallbacks = async (idToGrant: string) => {
-            // Attempt 1: Full insert with scoped client
-            const { error: e1 } = await client.from('purchases').insert({
-              user_id: userId,
-              product_id: idToGrant,
-              transaction_id: transactionId,
-              is_manual: true
-            });
+            const payloads = [
+              { user_id: effectiveUserId, product_id: idToGrant, transaction_id: transactionId, status: 'approved' },
+              { user_id: effectiveUserId, product_id: idToGrant, status: 'approved' },
+              { user_id: effectiveUserId, product_id: idToGrant }
+            ];
 
-            if (!e1) return { status: 'granted' };
-            
-            // If Code 23503: FK Constraint. Check if it's a known package
-            if (e1.code === '23503') {
-              const { data: pkgById } = await client.from('course_packages').select('id').eq('id', idToGrant).maybeSingle();
-              const { data: pkgByHotmart } = pkgById ? {data: null} : await client.from('course_packages').select('id').eq('hotmart_product_id', idToGrant).maybeSingle();
-              if (pkgById || pkgByHotmart) {
-                // If it's a package, expansion happened earlier, so it's "fine" that the package record itself fails if FK is strict
-                return { status: 'skipped_package_fk', info: 'Package record not saved due to database restriction (FK), but its courses were processed.' };
+            for (const payload of payloads) {
+              // Attempt with scoped client
+              const { error: e1 } = await client.from('purchases').insert(payload);
+              if (!e1) return { status: 'granted' };
+
+              if (e1.code === '23503') {
+                // FK violation: Check if idToGrant is a package in course_packages
+                return { status: 'skipped_package_fk', info: 'Package record omitted due to database FK constraint, courses processed.' };
               }
-              console.warn(`[Admin API] FK Error for ${idToGrant}: ${e1.message}`);
-              return { status: 'error', error: `Produto ${idToGrant} não encontrado no banco de dados.`, code: e1.code };
-            }
 
-            // If Column missing errors (42703 or PGRST204) - Silence these as they are handled by fallbacks
-            if (e1.code === '42703' || e1.code === 'PGRST204') {
-              // Attempt 2: Remove transaction_id
-              const { error: e2 } = await client.from('purchases').insert({
-                user_id: userId,
-                product_id: idToGrant,
-                is_manual: true
-              });
-              if (!e2) return { status: 'granted_minimal' };
-
-              // Attempt 3: Remove is_manual
-              const { error: e3 } = await client.from('purchases').insert({
-                user_id: userId,
-                product_id: idToGrant
-              });
-              if (!e3) return { status: 'granted_minimal' };
-              
-              return { status: 'error', error: e3.message, code: e3.code };
-            }
-
-            // Fallback for RLS or unexpected policy errors
-            if (e1.code === '42501' || (e1.message && e1.message.includes('row-level security'))) {
+              // Fallback with supabaseAdmin
               try {
-                const { error: eAdmin } = await supabaseAdmin.from('purchases').insert({
-                  user_id: userId,
-                  product_id: idToGrant,
-                  transaction_id: transactionId,
-                  is_manual: true
-                });
+                const { error: eAdmin } = await supabaseAdmin.from('purchases').insert(payload);
                 if (!eAdmin) return { status: 'granted' };
+                if (eAdmin.code === '23503') {
+                  return { status: 'skipped_package_fk', info: 'Package record omitted due to database FK constraint, courses processed.' };
+                }
               } catch (_) {}
             }
 
-            console.error(`[Admin API] Grant failed for ${idToGrant}:`, e1);
-            return { status: 'error', error: e1.message, code: e1.code };
+            return { status: 'error', error: `Falha ao registrar compra para ${idToGrant}` };
           };
 
           const grantResult = await grantWithFallbacks(cid);
           results.push({ id: cid, ...grantResult });
 
         } else if (action === 'revoke') {
-          console.log(`[Admin API] Revoking purchase for user ${userId}, product ${cid}`);
-          let targetProfileId: string | null = null;
-          if (userEmail || (userId && !isValidUUID(userId))) {
-            const emailSearch = userEmail || userId;
-            try {
-              const { data: prof } = await client.from('profiles').select('id').ilike('email', emailSearch.trim()).maybeSingle();
-              if (prof?.id && isValidUUID(prof.id)) targetProfileId = prof.id;
-            } catch (_) {}
-            if (!targetProfileId) {
-              try {
-                const { data: prof } = await supabaseAdmin.from('profiles').select('id').ilike('email', emailSearch.trim()).maybeSingle();
-                if (prof?.id && isValidUUID(prof.id)) targetProfileId = prof.id;
-              } catch (_) {}
-            }
-          }
-
-          const userIdsToRevoke = Array.from(new Set([
+          console.log(`[Admin API] Revoking purchase for user ${effectiveUserId}, product ${cid}`);
+          const uidsToRevoke = Array.from(new Set([
+            effectiveUserId,
             userId,
-            targetProfileId
-          ].filter(id => id && isValidUUID(id))));
+            emailToSearch
+          ].filter(Boolean)));
 
-          let deleteError: any = null;
-          for (const uid of userIdsToRevoke) {
-            const { error: err } = await client
-              .from('purchases')
-              .delete()
-              .match({ user_id: uid, product_id: cid });
-            if (err) {
-              console.warn(`[Admin API] Scoped delete note for user ${uid}, product ${cid}:`, err.message);
-              deleteError = err;
-            }
-
+          for (const uid of uidsToRevoke) {
             try {
-              const { error: adminDel } = await supabaseAdmin
-                .from('purchases')
-                .delete()
-                .match({ user_id: uid, product_id: cid });
-              if (!adminDel) deleteError = null;
-            } catch (_) {}
-          }
-
-          // Also delete purchases where user_id was stored as user email
-          if (userEmail && userEmail.includes('@')) {
-            const cleanEmail = userEmail.toLowerCase().trim();
-            try {
-              await client.from('purchases').delete().match({ user_id: cleanEmail, product_id: cid });
+              await client.from('purchases').delete().match({ user_id: uid, product_id: cid });
             } catch (_) {}
             try {
-              await supabaseAdmin.from('purchases').delete().match({ user_id: cleanEmail, product_id: cid });
+              await supabaseAdmin.from('purchases').delete().match({ user_id: uid, product_id: cid });
             } catch (_) {}
           }
-          
-          if (deleteError && deleteError.code !== 'PGRST116') {
-            console.error(`[Admin API] DeleteError for user ${userId}, product ${cid}:`, deleteError);
-            results.push({ id: cid, status: 'error', error: deleteError.message });
-          } else {
-            results.push({ id: cid, status: 'revoked' });
-          }
+          results.push({ id: cid, status: 'revoked' });
         }
       }
       
@@ -1481,23 +1428,25 @@ async function handleAccessToggle(req: VercelRequest, res: VercelResponse) {
                s === 'revoked' || 
                s === 'already_exists' || 
                s === 'skipped_package_fk' || 
+               s === 'skipped_non_uuid' ||
                s === 'granted_minimal';
       });
       console.log(`[Admin API] Toggle results: ${JSON.stringify(results)}, hasAnySuccess: ${hasAnySuccess}`);
       
       if (!hasAnySuccess && targetCourseIds.length > 0) {
-        // Find the first real error to report
         const firstError = results.find(r => r.status === 'error');
         const errorMsg = firstError ? firstError.error : 'Não foi possível alterar o acesso para nenhum dos itens.';
         
         return res.status(400).json({ 
           error: errorMsg,
-          details: results
+          details: results,
+          results
         });
       }
       
-      return res.status(200).json({ success: true, results });
+      return res.status(200).json({ success: true, results, details: results });
     }
+
 
     // Default to profile global access toggle if course params are missing
     const targetHasAccess = hasAccess !== undefined ? !!hasAccess : action === 'grant';

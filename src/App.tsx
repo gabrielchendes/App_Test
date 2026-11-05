@@ -10,6 +10,7 @@ import LoginPage from './pages/LoginPage';
 import Dashboard from './pages/Dashboard';
 import { GlowingSpinner } from './components/GlowingSpinner';
 import { OfflineNotice } from './components/OfflineNotice';
+import { preloadCoursesCatalog } from './lib/coursePreload';
 
 // Smooth hardware-accelerated Loading Screen
 function LoadingScreen() {
@@ -222,21 +223,7 @@ export default function App() {
     checkMagicLink();
 
     // Pre-warm public courses catalog gently in the background so that upon login, Home loads with 0ms delay
-    try {
-      const cached = dataCache.getSync('global_public_courses_catalog', null);
-      if (!cached) {
-        supabase
-          .from('courses')
-          .select('*')
-          .order('order_index', { ascending: true })
-          .then(({ data }) => {
-            if (data && data.length > 0) {
-              dataCache.set('global_public_courses_catalog', data.filter((c: any) => c.is_active !== false), 86400000);
-            }
-          })
-          .catch(() => {});
-      }
-    } catch {}
+    preloadCoursesCatalog().catch(() => {});
 
     // Fast safety fallback ceiling to ensure we never get stuck on loading screen
     const forceStopLoading = setTimeout(() => {

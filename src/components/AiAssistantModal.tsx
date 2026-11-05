@@ -37,10 +37,35 @@ const DEFAULT_QUICK_PROMPTS = [
   'Navigating long-distance relationship challenges'
 ];
 
+function getFallbackAuthUser(): { id?: string; email?: string; name?: string } | null {
+  if (typeof window === 'undefined') return null;
+  try {
+    const raw = window.localStorage.getItem('maternidade_premium_auth');
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      const user = parsed?.currentSession?.user || parsed?.user;
+      if (user?.id || user?.email) {
+        return {
+          id: user.id || undefined,
+          email: user.email || undefined,
+          name: user.user_metadata?.full_name || undefined
+        };
+      }
+    }
+  } catch (_) {}
+  return null;
+}
+
 export default function AiAssistantModal({ userId, userEmail, userName, userAvatar, isOpen: externalIsOpen, onClose: externalOnClose, hasUnlimitedAi }: AiAssistantModalProps) {
   const { settings } = useSettings();
   const [internalIsOpen, setInternalIsOpen] = useState(false);
   const isOpen = externalIsOpen !== undefined ? externalIsOpen : internalIsOpen;
+
+  // Immediate synchronous fallback resolution from persisted auth session
+  const fallbackAuth = React.useMemo(() => getFallbackAuthUser(), []);
+  const effectiveUserId = (userId || fallbackAuth?.id || '').trim();
+  const effectiveUserEmail = (userEmail || fallbackAuth?.email || '').trim().toLowerCase();
+  const effectiveUserName = userName || fallbackAuth?.name || (effectiveUserEmail ? effectiveUserEmail.split('@')[0] : '');
 
   // Custom AI Expert settings from custom_texts
   const isAiEnabled = settings?.custom_texts?.['ai_expert.enabled'] !== 'false';
@@ -425,24 +450,27 @@ export default function AiAssistantModal({ userId, userEmail, userName, userAvat
   };
 
   // Clean user identifier for personal chat history and memory storage
-  const userIdentifier = (userId || userEmail || userName || 'guest').trim().toLowerCase();
+  const userIdentifier = (effectiveUserId || effectiveUserEmail || effectiveUserName || 'guest').trim().toLowerCase();
   const chatStorageKey = `ai_expert_messages_${userIdentifier}`;
 
   const getCandidateStorageKeys = React.useCallback(() => {
     return Array.from(new Set([
-      `ai_expert_messages_${userIdentifier}`,
-      userEmail ? `ai_expert_messages_${userEmail.trim().toLowerCase()}` : '',
-      userId ? `ai_expert_messages_${userId.trim().toLowerCase()}` : '',
+      effectiveUserId ? `ai_expert_messages_${effectiveUserId.toLowerCase()}` : '',
+      effectiveUserEmail ? `ai_expert_messages_${effectiveUserEmail}` : '',
+      userIdentifier ? `ai_expert_messages_${userIdentifier}` : '',
+      'ai_expert_messages_latest',
+      'ai_expert_messages_guest'
     ].filter(Boolean)));
-  }, [userIdentifier, userEmail, userId]);
+  }, [effectiveUserId, effectiveUserEmail, userIdentifier]);
 
   // Instant local cache initialization so past conversation renders at 0ms
   const [messages, setMessages] = useState<Message[]>(() => {
     try {
       const keys = [
-        `ai_expert_messages_${userIdentifier}`,
-        userEmail ? `ai_expert_messages_${userEmail.trim().toLowerCase()}` : '',
-        userId ? `ai_expert_messages_${userId.trim().toLowerCase()}` : '',
+        effectiveUserId ? `ai_expert_messages_${effectiveUserId.toLowerCase()}` : '',
+        effectiveUserEmail ? `ai_expert_messages_${effectiveUserEmail}` : '',
+        userIdentifier ? `ai_expert_messages_${userIdentifier}` : '',
+        'ai_expert_messages_latest',
       ].filter(Boolean);
 
       for (const k of keys) {
@@ -466,7 +494,7 @@ export default function AiAssistantModal({ userId, userEmail, userName, userAvat
     ];
   });
 
-  // Re-check local storage when user logs in or switches identifier
+  // Re-check local storage when user credentials or identifier change
   useEffect(() => {
     if (!userIdentifier || userIdentifier === 'guest') return;
     try {
@@ -487,38 +515,99 @@ export default function AiAssistantModal({ userId, userEmail, userName, userAvat
   // Fast message pagination states & refs
   const [hasMoreMessages, setHasMoreMessages] = useState<boolean>(false);
   const [isLoadingEarlier, setIsLoadingEarlier] = useState<boolean>(false);
-  const [isInitialLoadingHistory, setIsInitialLoadingHistory] = useState<boolean>(true);
+  
+  // Only show the loading spinner if we don't already have real past messages rendered from cache!
+  const [isInitialLoadingHistory, setIsInitialLoadingHistory] = useState<boolean>(() => {
+    try {
+      const keys = [
+        effectiveUserId ? `ai_expert_messages_${effectiveUserId.toLowerCase()}` : '',
+        effectiveUserEmail ? `ai_expert_messages_${effectiveUserEmail}` : '',
+        userIdentifier ? `ai_expert_messages_${userIdentifier}` : '',
+        'ai_expert_messages_latest',
+      ].filter(Boolean);
+      for (const k of keys) {
+        const stored = localStorage.getItem(k);
+        if (stored) {
+          const parsed = JSON.parse(stored);
+          if (Array.isArray(parsed) && parsed.length > 1) {
+            return false;
+          }
+        }
+      }
+    } catch (_) {}
+    return true;
+  });
+
   const chatContainerRef = useRef<HTMLDivElement>(null);
   const prevIsOpenRef = useRef<boolean>(false);
 
-  // Fetch real chat history from Supabase database when modal opens (loads history FIRST before revealing)
+  // Background pre-fetch so database connection is warm and history is pre-cached
+  useEffect(() => {
+    const activeId = effectiveUserId || effectiveUserEmail;
+    if (!activeId) return;
+
+    const queryParams = new URLSearchParams();
+    if (effectiveUserId) queryParams.set('userId', effectiveUserId);
+    if (effectiveUserEmail) queryParams.set('userEmail', effectiveUserEmail);
+    queryParams.set('limit', '30');
+
+    fetch(`/api/v1/ai-chat?${queryParams.toString()}`, {
+      method: 'GET',
+      headers: { 'Accept': 'application/json' }
+    })
+      .then(r => (r.ok ? r.json() : null))
+      .then(data => {
+        if (data?.success && Array.isArray(data.messages) && data.messages.length > 0) {
+          const keys = getCandidateStorageKeys();
+          const jsonStr = JSON.stringify(data.messages.slice(-30));
+          keys.forEach(k => {
+            try { localStorage.setItem(k, jsonStr); } catch (_) {}
+          });
+
+          // Pre-populate state if user only has welcome message
+          setMessages(prev => {
+            if (prev.length <= 1) {
+              let fullHistory: Message[] = data.messages;
+              const hasWelcome = fullHistory.some(m => m.id === 'welcome' || (m.role === 'assistant' && m.content.includes(expertName)));
+              if (!hasWelcome) {
+                fullHistory = [
+                  {
+                    id: 'welcome',
+                    role: 'assistant',
+                    content: defaultWelcomeText,
+                    timestamp: fullHistory[0]?.timestamp || new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+                  },
+                  ...fullHistory
+                ];
+              }
+              return fullHistory;
+            }
+            return prev;
+          });
+          setIsInitialLoadingHistory(false);
+        }
+      })
+      .catch(() => {});
+  }, [effectiveUserId, effectiveUserEmail, expertName, defaultWelcomeText, getCandidateStorageKeys]);
+
+  // Fetch real chat history from Supabase database when modal opens
   useEffect(() => {
     let isMounted = true;
 
     if (isOpen) {
-      const isJustOpened = !prevIsOpenRef.current;
-      prevIsOpenRef.current = true;
+      const activeId = effectiveUserId || effectiveUserEmail;
 
-      if (!userIdentifier || userIdentifier === 'guest') {
-        setIsInitialLoadingHistory(false);
-        return;
-      }
-
-      if (isJustOpened) {
-        setIsInitialLoadingHistory(true);
-      }
-
-      const loadHistory = async () => {
+      const loadHistory = async (retryCount = 0) => {
         try {
           const queryParams = new URLSearchParams();
-          if (userId) queryParams.set('userId', userId.trim());
-          if (userEmail) queryParams.set('userEmail', userEmail.trim());
-          queryParams.set('limit', '25');
+          if (effectiveUserId) queryParams.set('userId', effectiveUserId);
+          if (effectiveUserEmail) queryParams.set('userEmail', effectiveUserEmail);
+          queryParams.set('limit', '30');
 
           const controller = new AbortController();
           const timeoutId = setTimeout(() => {
             try { controller.abort(); } catch (_) {}
-          }, 5000);
+          }, 8000);
 
           let res: Response | null = null;
           const queryStr = queryParams.toString();
@@ -550,10 +639,9 @@ export default function AiAssistantModal({ userId, userEmail, userName, userAvat
           if (res && res.ok) {
             const data = await res.json();
             if (data?.success && isMounted) {
-              // Update VIP status from server if confirmed
               if (data.isUserUnlimited === true) {
                 setIsUserUnlimited(true);
-                setCachedVipStatus(userId, userEmail, true);
+                setCachedVipStatus(effectiveUserId, effectiveUserEmail, true);
               }
 
               if (typeof data.hasMore === 'boolean') {
@@ -578,18 +666,32 @@ export default function AiAssistantModal({ userId, userEmail, userName, userAvat
                 setMessages(fullHistory);
                 try {
                   const keys = getCandidateStorageKeys();
-                  const jsonStr = JSON.stringify(fullHistory.slice(-25));
+                  const jsonStr = JSON.stringify(fullHistory.slice(-30));
                   keys.forEach(k => localStorage.setItem(k, jsonStr));
                 } catch (_) {}
+              } else if (retryCount === 0 && activeId) {
+                // If the first request returned empty (e.g. database cold start latency), do a fast automatic retry!
+                setTimeout(() => {
+                  if (isMounted) {
+                    loadHistory(1);
+                  }
+                }, 400);
+                return;
               }
             }
+          } else if (retryCount === 0 && activeId) {
+            setTimeout(() => {
+              if (isMounted) {
+                loadHistory(1);
+              }
+            }, 500);
+            return;
           }
         } catch (err) {
           console.warn('[AI Assistant Modal] Error fetching chat history from server:', err);
         } finally {
           if (isMounted) {
             setIsInitialLoadingHistory(false);
-            // Pre-scroll directly to bottom before presenting messages
             requestAnimationFrame(() => {
               if (chatContainerRef.current) {
                 chatContainerRef.current.scrollTop = chatContainerRef.current.scrollHeight;
@@ -612,7 +714,7 @@ export default function AiAssistantModal({ userId, userEmail, userName, userAvat
     return () => {
       isMounted = false;
     };
-  }, [isOpen, userIdentifier, userId, userEmail, chatStorageKey, defaultWelcomeText, expertName, getCandidateStorageKeys]);
+  }, [isOpen, effectiveUserId, effectiveUserEmail, defaultWelcomeText, expertName, getCandidateStorageKeys]);
 
   // Load earlier messages on demand
   const loadEarlierMessages = async () => {
@@ -877,22 +979,22 @@ export default function AiAssistantModal({ userId, userEmail, userName, userAvat
         activeFetchAbortRef.current = controller;
         const timeoutId = setTimeout(() => controller.abort(), 9500);
 
-        const isUnlimitedNow = Boolean(isUserUnlimited || hasUnlimitedAi || getCachedVipStatus(userId, userEmail));
+        const isUnlimitedNow = Boolean(isUserUnlimited || hasUnlimitedAi || getCachedVipStatus(effectiveUserId, effectiveUserEmail));
 
         const requestPayload = JSON.stringify({
           action: 'ai-chat',
           messages: historyForApi,
           userContext: {
-            userName,
-            userId,
-            email: userEmail,
+            userName: effectiveUserName,
+            userId: effectiveUserId,
+            email: effectiveUserEmail,
             hasUnlimitedAi: isUnlimitedNow,
             isUserUnlimited: isUnlimitedNow
           },
           customSystemPrompt: systemPromptContext || undefined,
           expertName: expertName || undefined,
-          userId: userId || undefined,
-          email: userEmail || undefined,
+          userId: effectiveUserId || undefined,
+          email: effectiveUserEmail || undefined,
           hasUnlimitedAi: isUnlimitedNow,
           isUserUnlimited: isUnlimitedNow,
           messagesSentCount,

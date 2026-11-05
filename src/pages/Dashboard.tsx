@@ -30,6 +30,7 @@ import { GlowingSpinner } from '../components/GlowingSpinner';
 import { parseCourseHtmlFunnel } from '../utils/courseFunnel';
 import PWAInstallModal from '../components/PWAInstallModal';
 import { applyCourseOverrides, useCourseOverridesSync } from '../lib/courseOverrides';
+import { getPermanentCachedCourses } from '../lib/coursePreload';
 
 // Lazy load heavy components and modals
 const Profile = lazyWithRetry(() => import('../components/Profile'));
@@ -63,19 +64,21 @@ export default function Dashboard({ user }: DashboardProps) {
     if (userCached?.courses?.length) {
       return {
         ...userCached,
-        courses: applyCourseOverrides(userCached.courses)
+        courses: applyCourseOverrides(userCached.courses),
+        isFullUserCache: true
       };
     }
 
-    // Fallback: check global catalog cache so screen has courses immediately
-    const globalCached = dataCache.getSync('global_public_courses_catalog', null);
-    if (globalCached && Array.isArray(globalCached) && globalCached.length > 0) {
+    // Fallback: check global catalog cache (memory or localStorage permanent backup) so screen has courses immediately
+    const permanentCached = getPermanentCachedCourses();
+    if (permanentCached && Array.isArray(permanentCached) && permanentCached.length > 0) {
       return {
-        courses: applyCourseOverrides(globalCached),
+        courses: applyCourseOverrides(permanentCached),
         purchases: [],
         userProgress: [],
         courseStats: {},
-        courseChapters: {}
+        courseChapters: {},
+        isFullUserCache: false
       };
     }
     return null;
@@ -92,7 +95,8 @@ export default function Dashboard({ user }: DashboardProps) {
     }
     return null;
   });
-  const [loading, setLoading] = useState(() => !initialCached?.courses?.length);
+  // Loading is only false if we already have the full user cache (both courses and purchases)
+  const [loading, setLoading] = useState(() => !initialCached?.isFullUserCache);
   const [hasInitialFetchCompleted, setHasInitialFetchCompleted] = useState(false);
   const [refreshKey, setRefreshKey] = useState(0);
   const [viewingCourseId, setViewingCourseId] = useState<string | null>(null);
@@ -108,14 +112,27 @@ export default function Dashboard({ user }: DashboardProps) {
   const hasFetchedOnceRef = useRef(false);
   const prevViewingCourseIdRef = useRef<string | null>(null);
 
+  // Listen for background catalog preloads so if courses were empty, they populate immediately
+  useEffect(() => {
+    const handleCatalogUpdate = (e: any) => {
+      const updatedCourses = e.detail;
+      if (Array.isArray(updatedCourses) && updatedCourses.length > 0) {
+        setCourses(prev => prev.length === 0 ? applyCourseOverrides(updatedCourses) : prev);
+      }
+    };
+    window.addEventListener('app_courses_catalog_updated', handleCatalogUpdate);
+    return () => window.removeEventListener('app_courses_catalog_updated', handleCatalogUpdate);
+  }, []);
+
   // Safety ceiling to prevent permanent loading spinner in case of offline/network failure
   useEffect(() => {
     const safetyTimer = setTimeout(() => {
       setLoading(false);
-      setHasInitialFetchCompleted(true);
+      setHasInitialFetchCompleted(prev => prev || courses.length > 0);
     }, 8000);
     return () => clearTimeout(safetyTimer);
-  }, []);
+  }, [courses.length]);
+
 
   useEffect(() => {
     if (isAiModalOpen && user?.id) {
@@ -396,39 +413,53 @@ export default function Dashboard({ user }: DashboardProps) {
       setLoading(false);
     }
 
+    let fetchedCoursesData: Course[] = [];
+
     try {
       const isUUID = (str?: string) =>
         /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(str || '');
 
       // 1. Fetch Courses resiliently as a promise to execute in parallel with user data
       const fetchCoursesPromise = (async (): Promise<Course[]> => {
-        try {
-          let coursesRes = await supabase
-            .from('courses')
-            .select('*')
-            .order('order_index', { ascending: true });
-
-          if (coursesRes.error && (coursesRes.error.code === '42703' || coursesRes.error.message?.includes('order_index'))) {
-            coursesRes = await supabase
+        for (let attempt = 1; attempt <= 3; attempt++) {
+          try {
+            let coursesRes = await supabase
               .from('courses')
               .select('*')
-              .order('created_at', { ascending: true });
+              .order('order_index', { ascending: true });
+
+            if (coursesRes.error && (coursesRes.error.code === '42703' || coursesRes.error.message?.includes('order_index'))) {
+              coursesRes = await supabase
+                .from('courses')
+                .select('*')
+                .order('created_at', { ascending: true });
+            }
+
+            if (coursesRes.data && coursesRes.data.length > 0) {
+              return applyCourseOverrides(coursesRes.data.filter((c: any) => c.is_active !== false));
+            } else if (coursesRes.error) {
+              console.warn(`Courses query attempt ${attempt} warning, trying fallback select:`, coursesRes.error);
+              const fallbackRes = await supabase.from('courses').select('*');
+              if (fallbackRes.data && fallbackRes.data.length > 0) {
+                return applyCourseOverrides(fallbackRes.data.filter((c: any) => c.is_active !== false));
+              }
+            }
+          } catch (err) {
+            console.warn(`Courses query attempt ${attempt} error:`, err);
           }
 
-          if (coursesRes.data && coursesRes.data.length > 0) {
-            return applyCourseOverrides(coursesRes.data.filter((c: any) => c.is_active !== false));
-          } else if (coursesRes.error) {
-            console.warn('First courses fetch warning, trying fallback select:', coursesRes.error);
-            const fallbackRes = await supabase.from('courses').select('*');
-            if (fallbackRes.data && fallbackRes.data.length > 0) {
-              return applyCourseOverrides(fallbackRes.data.filter((c: any) => c.is_active !== false));
-            }
+          if (attempt < 3) {
+            await new Promise(r => setTimeout(r, attempt * 400));
           }
-          return [];
-        } catch (err) {
-          console.warn('Courses query error:', err);
-          return [];
         }
+
+        // Final fallback: check permanent cached courses
+        const permanentBackup = getPermanentCachedCourses();
+        if (permanentBackup && permanentBackup.length > 0) {
+          return applyCourseOverrides(permanentBackup);
+        }
+
+        return [];
       })();
 
       // 2. Fetch all Home data simultaneously in parallel (Zero waterfall, cuts mobile latency in half)
@@ -441,22 +472,23 @@ export default function Dashboard({ user }: DashboardProps) {
         isUUID(user.id) ? supabase.from('profiles').select('has_access, has_unlimited_ai, is_admin').eq('id', user.id).maybeSingle() : Promise.resolve({ data: null, error: null } as any)
       ]);
 
-      let fetchedCoursesData: Course[] = [];
-      if (coursesResult.status === 'fulfilled' && Array.isArray(coursesResult.value)) {
+      if (coursesResult.status === 'fulfilled' && Array.isArray(coursesResult.value) && coursesResult.value.length > 0) {
         fetchedCoursesData = coursesResult.value;
       }
+
 
       // If fetched courses is still empty, keep current courses or attempt catalog cache fallback
       if (fetchedCoursesData.length === 0) {
         if (courses.length > 0) {
           fetchedCoursesData = courses;
         } else {
-          const globalCatalog = dataCache.get('global_public_courses_catalog', true);
+          const globalCatalog = getPermanentCachedCourses();
           if (globalCatalog && Array.isArray(globalCatalog) && globalCatalog.length > 0) {
             fetchedCoursesData = globalCatalog;
           }
         }
       }
+
 
       let basePurchases: { product_id: string; created_at: any }[] = [];
       if (purchasesByIdResult.status === 'fulfilled' && (purchasesByIdResult.value as any)?.data) {
@@ -588,6 +620,11 @@ export default function Dashboard({ user }: DashboardProps) {
         setCourses(processedCourses);
         // Persist global catalog cache (24 hours TTL) for 0ms loads
         dataCache.set('global_public_courses_catalog', processedCourses, 86400000);
+        if (typeof window !== 'undefined') {
+          try {
+            localStorage.setItem('mp_permanent_courses_catalog', JSON.stringify(processedCourses));
+          } catch {}
+        }
       }
       setPurchases(allPurchases);
       setUserProgress(progData);
@@ -609,10 +646,20 @@ export default function Dashboard({ user }: DashboardProps) {
       console.warn('Notice during data fetch (retaining member session):', error?.message || error);
     } finally {
       setLoading(false);
-      setHasInitialFetchCompleted(true);
+      // Crucial: Only consider initial fetch completed if courses have actually resolved
+      // This prevents the jarring "YOU DO NOT HAVE ANY UNLOCKED COURSES YET" flash on initial cold starts
+      if (fetchedCoursesData.length > 0 || courses.length > 0) {
+        setHasInitialFetchCompleted(true);
+      } else {
+        // Auto-retry gently in the background if courses are still not loaded
+        setTimeout(() => {
+          fetchData(true);
+        }, 1200);
+      }
       fetchInProgressRef.current = false;
     }
   };
+
 
   const isAdmin = useMemo(() => {
     return !!user?.email && (
@@ -1084,7 +1131,7 @@ className="w-full py-3 text-[10px] text-gray-600 font-bold uppercase tracking-[0
                     <Carousel 
                       title={settings.custom_texts?.['dashboard.courses_paid'] || t('dashboard.courses_paid') || 'Your Main Journey 🔥'}
                     >
-                      {loading && mainCourses.length === 0 ? (
+                      {(loading || !hasInitialFetchCompleted || courses.length === 0) && mainCourses.length === 0 ? (
                         <>
                           <ProductCardSkeleton />
                           <ProductCardSkeleton />
@@ -1104,7 +1151,7 @@ className="w-full py-3 text-[10px] text-gray-600 font-bold uppercase tracking-[0
                             onPrefetch={prefetchCourse}
                           />
                         ))
-                      ) : hasInitialFetchCompleted ? (
+                      ) : (hasInitialFetchCompleted && courses.length > 0 && !loading) ? (
                         <div className="w-full h-48 flex flex-col items-center justify-center text-gray-600 border border-white/5 rounded-3xl bg-white/5">
                           <Book size={32} className="mb-4 opacity-20" />
                           <p className="font-bold text-xs uppercase tracking-widest text-center px-4">
@@ -1120,6 +1167,7 @@ className="w-full py-3 text-[10px] text-gray-600 font-bold uppercase tracking-[0
                         </>
                       )}
                     </Carousel>
+
 
                     {bonusCourses.length > 0 && (
                       <Carousel 
@@ -1143,7 +1191,7 @@ className="w-full py-3 text-[10px] text-gray-600 font-bold uppercase tracking-[0
                     <Carousel 
                       title={settings.custom_texts?.['dashboard.courses_free'] || t('dashboard.courses_free') || 'Acelere sua Evolução  🚀'}
                     >
-                      {loading && paidCourses.length === 0 ? (
+                      {(loading || !hasInitialFetchCompleted || courses.length === 0) && paidCourses.length === 0 ? (
                         <>
                           <ProductCardSkeleton />
                           <ProductCardSkeleton />
@@ -1162,7 +1210,7 @@ className="w-full py-3 text-[10px] text-gray-600 font-bold uppercase tracking-[0
                             onPrefetch={prefetchCourse}
                           />
                         ))
-                      ) : hasInitialFetchCompleted ? (
+                      ) : (hasInitialFetchCompleted && courses.length > 0 && !loading) ? (
                         <div className="w-full py-16 flex flex-col items-center justify-center text-gray-600 border-2 border-dashed border-white/5 rounded-3xl">
                           <p className="font-bold text-center px-4">{settings.custom_texts?.['dashboard.empty_all_unlocked'] || t('dashboard.empty_all_unlocked') || 'Você já possui todos os cursos disponíveis!'}</p>
                         </div>
@@ -1174,6 +1222,7 @@ className="w-full py-3 text-[10px] text-gray-600 font-bold uppercase tracking-[0
                         </>
                       )}
                     </Carousel>
+
 
                     <HomeTestimonialCard
                       settings={settings}
