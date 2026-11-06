@@ -463,13 +463,14 @@ export default function Dashboard({ user }: DashboardProps) {
       })();
 
       // 2. Fetch all Home data simultaneously in parallel (Zero waterfall, cuts mobile latency in half)
-      const [coursesResult, purchasesByIdResult, progressResult, packagesResult, chaptersResult, profileResult] = await Promise.allSettled([
+      const [coursesResult, purchasesByIdResult, progressResult, packagesResult, chaptersResult, profileResult, manualGrantsResult] = await Promise.allSettled([
         fetchCoursesPromise,
         supabase.from('purchases').select('product_id, created_at').eq('user_id', user.id),
         supabase.from('user_progress').select('chapter_id, completed, user_id').eq('user_id', user.id),
         supabase.from('course_packages').select('id, hotmart_product_id, hotmart_checkout_url, package_courses(course_id)'),
         supabase.from('chapters').select('id, content_type, modules!inner(course_id)'),
-        isUUID(user.id) ? supabase.from('profiles').select('has_access, has_unlimited_ai, is_admin').eq('id', user.id).maybeSingle() : Promise.resolve({ data: null, error: null } as any)
+        isUUID(user.id) ? supabase.from('profiles').select('has_access, has_unlimited_ai, is_admin').eq('id', user.id).maybeSingle() : Promise.resolve({ data: null, error: null } as any),
+        supabase.from('ai_user_memory').select('facts').eq('user_id', '__global_manual_purchases__').maybeSingle()
       ]);
 
       if (coursesResult.status === 'fulfilled' && Array.isArray(coursesResult.value) && coursesResult.value.length > 0) {
@@ -513,6 +514,28 @@ export default function Dashboard({ user }: DashboardProps) {
           }
         } catch {
           // Ignore type mismatch errors
+        }
+      }
+
+      // Merge persistent manual grants from cloud memory (ai_user_memory)
+      if (manualGrantsResult.status === 'fulfilled' && (manualGrantsResult.value as any)?.data?.facts?.[0]) {
+        try {
+          const cloudMap = (manualGrantsResult.value as any).data.facts[0];
+          const userKeys = [user.id?.toLowerCase(), user.email?.toLowerCase()].filter(Boolean) as string[];
+          const existingProductIds = new Set(basePurchases.map(p => p.product_id));
+          for (const k of userKeys) {
+            const grantedCourses = cloudMap[k];
+            if (Array.isArray(grantedCourses)) {
+              for (const cid of grantedCourses) {
+                if (cid && !existingProductIds.has(cid)) {
+                  basePurchases.push({ product_id: cid, created_at: new Date().toISOString() });
+                  existingProductIds.add(cid);
+                }
+              }
+            }
+          }
+        } catch (mErr) {
+          console.warn('[Dashboard] Cloud manual grants merge note:', mErr);
         }
       }
 

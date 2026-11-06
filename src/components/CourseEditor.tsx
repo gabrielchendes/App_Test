@@ -1627,7 +1627,7 @@ export default function CourseEditor({
                           <>
                             <div className="space-y-1">
                               <div className="flex justify-between items-center ml-1">
-                                <label className="text-[9px] font-black text-gray-600 uppercase tracking-widest">Preço (R$)</label>
+                                <label className="text-[9px] font-black text-gray-600 uppercase tracking-widest">Preço (Opcional)</label>
                                 {course.linked_package_id && course.linked_package_id !== 'locked' && <span className="text-[7px] text-emerald-500 font-black uppercase italic tracking-tighter animate-pulse">Sincronizado com Pacote</span>}
                               </div>
                               <input 
@@ -1640,7 +1640,7 @@ export default function CourseEditor({
                             </div>
                             <div className="space-y-4">
                               <div className="space-y-1">
-                                <label className="text-[9px] font-black text-gray-600 uppercase tracking-widest ml-1">Link de Check-out (Hotmart)</label>
+                                <label className="text-[9px] font-black text-gray-600 uppercase tracking-widest ml-1">Link de Check-out (Opcional)</label>
                                 <input 
                                   type="text" 
                                   value={course.checkout_url || ''}
