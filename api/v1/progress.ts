@@ -66,7 +66,39 @@ const isUUID = (str?: string) =>
 const MODAL_HTML_MARKER = '<!--__PWA_MODAL_HTML__-->';
 const HIDE_SINGLE_MODULE_TRUE_MARKER = '<!--__HIDE_SINGLE_MOD_TRUE__-->';
 const HIDE_SINGLE_MODULE_FALSE_MARKER = '<!--__HIDE_SINGLE_MOD_FALSE__-->';
-const CATALOG_CACHE_TTL_MS = 45000;
+const CATALOG_CACHE_TTL_MS = 300000;
+
+const LIGHTWEIGHT_COURSE_COLUMNS = [
+  'id', 'title', 'description', 'cover_url', 'is_active', 'is_bonus', 'is_free',
+  'price', 'checkout_url', 'hotmart_product_id', 'created_at', 'pdf_url',
+  'category', 'subtitle', 'old_price', 'benefits', 'cta_text',
+  'preview_url', 'preview_text', 'preview_enabled', 'social_proof',
+  'show_lifetime_badge', 'premium_badge_text', 'offer_badge_text',
+  'premium_cover_url', 'lifetime_badge_text', 'payment_label_text',
+  'secure_payment_label', 'instant_access_label', 'preview_rating',
+  'preview_students_label', 'preview_guarantee_label', 'preview_support_vip_label',
+  'preview_bonus_title', 'preview_title', 'preview_subtitle',
+  'preview_show_social_proof', 'preview_show_bonus', 'preview_show_trust',
+  'preview_support_type', 'preview_type', 'preview_link_text',
+  'preview_link_url', 'preview_link_color', 'preview_video_url',
+  'preview_pdf_url', 'preview_modules_label', 'preview_students_tag',
+  'preview_risk_zero_label', 'preview_support_label', 'preview_guarantee_title',
+  'preview_guarantee_subtitle', 'preview_guarantee_description', 'preview_footer_cta',
+  'order_index', 'linked_package_id', 'is_package_exclusive_bonus', 'is_package_exclusive'
+].join(', ');
+
+function isJwtExpired(token?: string): boolean {
+  if (!token) return true;
+  try {
+    const parts = token.split('.');
+    if (parts.length !== 3) return false;
+    const payload = JSON.parse(Buffer.from(parts[1].replace(/-/g, '+').replace(/_/g, '/'), 'base64').toString('utf8'));
+    if (typeof payload?.exp === 'number') {
+      return payload.exp * 1000 <= Date.now() + 5000;
+    }
+  } catch {}
+  return false;
+}
 
 interface CachedCatalogBundle {
   courses: any[];
@@ -170,14 +202,22 @@ async function fetchAllChaptersPaginated(client: any): Promise<any[]> {
 async function fetchCoursesCatalog(client: any): Promise<any[]> {
   let coursesRes = await client
     .from('courses')
-    .select('*')
+    .select(LIGHTWEIGHT_COURSE_COLUMNS)
     .order('order_index', { ascending: true });
 
-  if (coursesRes.error && (coursesRes.error.code === '42703' || coursesRes.error.message?.includes('order_index'))) {
+  if (coursesRes.error && (coursesRes.error.code === '42703' || coursesRes.error.message?.includes('column'))) {
+    // Fallback to select('*') ordered by order_index or created_at if schema differs
     coursesRes = await client
       .from('courses')
       .select('*')
-      .order('created_at', { ascending: true });
+      .order('order_index', { ascending: true });
+
+    if (coursesRes.error && (coursesRes.error.code === '42703' || coursesRes.error.message?.includes('order_index'))) {
+      coursesRes = await client
+        .from('courses')
+        .select('*')
+        .order('created_at', { ascending: true });
+    }
   }
 
   if (coursesRes.error || !coursesRes.data) {
@@ -305,32 +345,40 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   try {
     const authHeader = req.headers.authorization;
     const hasBearerToken = Boolean(authHeader && authHeader.startsWith('Bearer ') && authHeader.length > 16);
-    const userScopedClient = (hasBearerToken && supabaseAnonKey)
+    const token = hasBearerToken ? authHeader!.replace(/^Bearer\s+/i, '').trim() : '';
+    const tokenValid = Boolean(token && token !== 'undefined' && token !== 'null' && !isJwtExpired(token));
+
+    const userScopedClient = (tokenValid && supabaseAnonKey)
       ? createClient(supabaseUrl || 'https://placeholder.supabase.co', supabaseAnonKey, {
           auth: { persistSession: false, autoRefreshToken: false, detectSessionInUrl: false },
-          global: { headers: { Authorization: authHeader! } }
+          global: { headers: { Authorization: `Bearer ${token}` } }
         })
       : null;
 
-    // Prefer supabaseAdmin for public catalog if service key is valid, otherwise userScopedClient or anon
-    const catalogClient = supabaseServiceRoleKey ? supabaseAdmin : (userScopedClient || supabaseAdmin);
+    // Public catalog always uses supabaseAdmin (service key if valid, otherwise anon key — never an expiring user JWT)
+    const catalogClient = supabaseAdmin;
+    const canReadPrivateUserData = Boolean(supabaseServiceRoleKey) || Boolean(userScopedClient);
     const userClient = supabaseServiceRoleKey ? supabaseAdmin : (userScopedClient || supabaseAdmin);
 
     let authUserId: string | null = null;
-    const token = hasBearerToken ? authHeader!.replace(/^Bearer\s+/i, '').trim() : '';
 
     if (req.method === 'GET' && req.query?.action === 'bootstrap') {
-      res.setHeader('Cache-Control', 'no-store');
       const requestedUserId = (req.query?.userId as string) || '';
       const requestedEmail = ((req.query?.email as string) || '').trim().toLowerCase();
       const forceRefresh = req.query?.refresh === '1' || req.query?.refresh === 'true';
+
+      if (!requestedUserId) {
+        res.setHeader('Cache-Control', 'public, max-age=30, s-maxage=60, stale-while-revalidate=300');
+      } else {
+        res.setHeader('Cache-Control', 'no-store');
+      }
 
       // Start public catalog fetch immediately (0 wait on auth check)
       const catalogBundlePromise = loadPublicCatalogBundle(catalogClient, forceRefresh);
 
       // Verify JWT only when running with service role key (to prevent userId spoofing) or when userId is missing
       const needsServerAuthCheck =
-        Boolean(token && token !== 'undefined' && token !== 'null') &&
+        tokenValid &&
         (Boolean(supabaseServiceRoleKey) || !isUUID(requestedUserId));
 
       if (needsServerAuthCheck) {
@@ -344,34 +392,34 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
       const targetUserId = (authUserId && isUUID(authUserId)) ? authUserId : requestedUserId;
 
-      const userProgressPromise = (targetUserId && isUUID(targetUserId))
+      const userProgressPromise = (canReadPrivateUserData && targetUserId && isUUID(targetUserId))
         ? userClient
             .from('user_progress')
             .select('chapter_id, completed, user_id')
             .eq('user_id', targetUserId)
-        : Promise.resolve({ data: [], error: null });
+        : Promise.resolve({ data: null, error: { message: 'unauthenticated_or_missing_user' } });
 
-      const purchasesPromise = targetUserId
+      const purchasesPromise = (canReadPrivateUserData && targetUserId)
         ? userClient
             .from('purchases')
             .select('product_id, created_at')
             .eq('user_id', targetUserId)
-        : Promise.resolve({ data: [], error: null });
+        : Promise.resolve({ data: null, error: { message: 'unauthenticated_or_missing_user' } });
 
-      const emailPurchasesPromise = (requestedEmail && targetUserId && requestedEmail !== targetUserId.toLowerCase() && !isUUID(targetUserId))
+      const emailPurchasesPromise = (canReadPrivateUserData && requestedEmail && targetUserId && requestedEmail !== targetUserId.toLowerCase() && !isUUID(targetUserId))
         ? userClient
             .from('purchases')
             .select('product_id, created_at')
             .eq('user_id', requestedEmail)
         : Promise.resolve({ data: [], error: null });
 
-      const profilePromise = (targetUserId && isUUID(targetUserId))
+      const profilePromise = (canReadPrivateUserData && targetUserId && isUUID(targetUserId))
         ? userClient
             .from('profiles')
             .select('has_access, has_unlimited_ai, is_admin, full_name, avatar_url')
             .eq('id', targetUserId)
             .maybeSingle()
-        : (requestedEmail
+        : (canReadPrivateUserData && requestedEmail
             ? userClient
                 .from('profiles')
                 .select('has_access, has_unlimited_ai, is_admin, full_name, avatar_url')
@@ -400,14 +448,15 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
             fetchedAt: 0
           };
 
-      const progressOk = progressRes.status === 'fulfilled' && !(progressRes.value as any)?.error;
+      const progressOk = canReadPrivateUserData && progressRes.status === 'fulfilled' && !(progressRes.value as any)?.error;
       const userProgress = (progressOk && Array.isArray((progressRes.value as any)?.data))
         ? (progressRes.value as any).data
         : [];
 
+      const purchasesOk = canReadPrivateUserData && purchasesRes.status === 'fulfilled' && !(purchasesRes.value as any)?.error;
       const purchases: { product_id: string; created_at: any }[] = [];
       const seenPurchaseIds = new Set<string>();
-      if (purchasesRes.status === 'fulfilled' && Array.isArray((purchasesRes.value as any)?.data)) {
+      if (purchasesOk && Array.isArray((purchasesRes.value as any)?.data)) {
         for (const p of (purchasesRes.value as any).data) {
           if (p?.product_id && !seenPurchaseIds.has(p.product_id)) {
             purchases.push(p);
@@ -415,7 +464,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           }
         }
       }
-      if (emailPurchasesRes.status === 'fulfilled' && Array.isArray((emailPurchasesRes.value as any)?.data)) {
+      if (canReadPrivateUserData && emailPurchasesRes.status === 'fulfilled' && Array.isArray((emailPurchasesRes.value as any)?.data)) {
         for (const p of (emailPurchasesRes.value as any).data) {
           if (p?.product_id && !seenPurchaseIds.has(p.product_id)) {
             purchases.push(p);
@@ -437,7 +486,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         }
       }
 
-      const profile = (profileRes.status === 'fulfilled' && (profileRes.value as any)?.data)
+      const profile = (canReadPrivateUserData && profileRes.status === 'fulfilled' && (profileRes.value as any)?.data)
         ? (profileRes.value as any).data
         : null;
 
@@ -451,6 +500,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         chapterOverrides: catalog.chapterOverrides,
         manualGrantedIds,
         purchases,
+        purchasesSynced: purchasesOk,
         userProgress,
         userProgressSynced: progressOk,
         profile

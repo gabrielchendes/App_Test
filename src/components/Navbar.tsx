@@ -17,6 +17,7 @@ interface NavbarProps {
   canInstall?: boolean;
   onInstall?: () => void;
   totalProgress?: number;
+  progressLoading?: boolean;
   onOpenProgress?: () => void;
 }
 
@@ -29,6 +30,7 @@ const Navbar = memo(({
   canInstall, 
   onInstall,
   totalProgress = 0,
+  progressLoading = false,
   onOpenProgress
 }: NavbarProps) => {
   const { settings } = useSettings();
@@ -174,16 +176,16 @@ const Navbar = memo(({
                     cx="16"
                     cy="16"
                     r="13"
-                    className="stroke-blue-700"
+                    className={progressLoading ? "stroke-blue-700/40 animate-pulse" : "stroke-blue-700 transition-all duration-500"}
                     strokeWidth="2"
                     fill="transparent"
                     strokeDasharray={2 * Math.PI * 13}
-                    strokeDashoffset={2 * Math.PI * 13 * (1 - totalProgress / 100)}
+                    strokeDashoffset={progressLoading ? 2 * Math.PI * 13 * 0.75 : 2 * Math.PI * 13 * (1 - totalProgress / 100)}
                     strokeLinecap="round"
                   />
                 </svg>
                 <span className="text-[9px] font-black text-zinc-100 italic relative z-10 leading-none">
-                  {totalProgress}%
+                  {progressLoading ? '...' : `${totalProgress}%`}
                 </span>
               </div>
             </button>
@@ -293,16 +295,16 @@ const Navbar = memo(({
                   cx="18"
                   cy="18"
                   r="15"
-                  className="stroke-blue-700"
+                  className={progressLoading ? "stroke-blue-700/40 animate-pulse" : "stroke-blue-700 transition-all duration-500"}
                   strokeWidth="2"
                   fill="transparent"
                   strokeDasharray={2 * Math.PI * 15}
-                  strokeDashoffset={2 * Math.PI * 15 * (1 - totalProgress / 100)}
+                  strokeDashoffset={progressLoading ? 2 * Math.PI * 15 * 0.75 : 2 * Math.PI * 15 * (1 - totalProgress / 100)}
                   strokeLinecap="round"
                 />
               </svg>
               <span className="text-[10px] font-black text-zinc-100 italic relative z-10 leading-none">
-                {totalProgress}%
+                {progressLoading ? '...' : `${totalProgress}%`}
               </span>
             </div>
           </button>

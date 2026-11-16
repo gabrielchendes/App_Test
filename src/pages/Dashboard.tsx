@@ -30,10 +30,29 @@ import { GlowingSpinner } from '../components/GlowingSpinner';
 import { parseCourseHtmlFunnel } from '../utils/courseFunnel';
 import PWAInstallModal from '../components/PWAInstallModal';
 import { applyCourseOverrides, hydrateOverridesFromBootstrap, syncOverridesFromServer, useCourseOverridesSync } from '../lib/courseOverrides';
-import { getPermanentCachedCourses, stripHeavyCourseDataForCache } from '../lib/coursePreload';
+import { getPermanentCachedCatalogMeta, getPermanentCachedCourses, savePermanentCatalogMeta, stripHeavyCourseDataForCache } from '../lib/coursePreload';
 
 const isUUID = (str?: string) =>
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(str || '');
+
+function isTokenFresh(token: string, explicitExpiresAt?: number): boolean {
+  const now = Date.now();
+  if (typeof explicitExpiresAt === 'number' && explicitExpiresAt > 0) {
+    const expMs = explicitExpiresAt > 1e12 ? explicitExpiresAt : explicitExpiresAt * 1000;
+    if (expMs <= now + 15000) return false;
+  }
+  try {
+    const parts = token.split('.');
+    if (parts.length === 3) {
+      const base64 = parts[1].replace(/-/g, '+').replace(/_/g, '/');
+      const payload = JSON.parse(atob(base64));
+      if (typeof payload?.exp === 'number') {
+        return payload.exp * 1000 > now + 15000;
+      }
+    }
+  } catch {}
+  return true;
+}
 
 function readFastAccessToken(): string | null {
   if (typeof window === 'undefined') return null;
@@ -41,10 +60,27 @@ function readFastAccessToken(): string | null {
     const raw = localStorage.getItem('maternidade_premium_auth');
     if (raw) {
       const parsed = JSON.parse(raw);
-      return parsed?.access_token || parsed?.currentSession?.access_token || null;
+      const token = parsed?.access_token || parsed?.currentSession?.access_token || null;
+      const expiresAt = parsed?.expires_at ?? parsed?.currentSession?.expires_at;
+      if (token && isTokenFresh(token, expiresAt)) {
+        return token;
+      }
     }
   } catch {}
   return null;
+}
+
+function saveCompactUserProgress(userId: string | undefined, progressList: any[]) {
+  if (typeof window === 'undefined' || !userId || !Array.isArray(progressList)) return;
+  try {
+    const completedIds: string[] = [];
+    for (const p of progressList) {
+      if (p?.completed && p.chapter_id) {
+        completedIds.push(p.chapter_id);
+      }
+    }
+    localStorage.setItem(`mp_user_progress_${userId}`, JSON.stringify(completedIds));
+  } catch {}
 }
 
 function mergeLocalProgress(userId: string | undefined, serverProgress: any[]): any[] {
@@ -57,6 +93,19 @@ function mergeLocalProgress(userId: string | undefined, serverProgress: any[]): 
     }
   }
   if (typeof window !== 'undefined' && userId) {
+    try {
+      const compactRaw = localStorage.getItem(`mp_user_progress_${userId}`);
+      if (compactRaw) {
+        const compactIds = JSON.parse(compactRaw);
+        if (Array.isArray(compactIds)) {
+          for (const chapId of compactIds) {
+            if (typeof chapId === 'string' && chapId && !map.has(chapId)) {
+              map.set(chapId, { user_id: userId, chapter_id: chapId, completed: true });
+            }
+          }
+        }
+      }
+    } catch {}
     try {
       const prefix = `user_progress_${userId}_`;
       for (let i = 0; i < localStorage.length; i++) {
@@ -109,22 +158,29 @@ export default function Dashboard({ user }: DashboardProps) {
   const initialCached = useMemo(() => {
     const userCached = user?.id ? dataCache.getSync(cacheKey, null) : null;
     if (userCached?.courses?.length) {
+      const hasChapters = Boolean(userCached.courseChapters && Object.keys(userCached.courseChapters).length > 0);
+      const fallbackMeta = hasChapters ? null : getPermanentCachedCatalogMeta();
+      const resolvedChapters = hasChapters ? userCached.courseChapters : (fallbackMeta?.courseChapters || {});
+      const resolvedStats = hasChapters ? (userCached.courseStats || {}) : (fallbackMeta?.courseStats || {});
       return {
         ...userCached,
         courses: applyCourseOverrides(userCached.courses),
-        isFullUserCache: true
+        courseChapters: resolvedChapters,
+        courseStats: resolvedStats,
+        isFullUserCache: Object.keys(resolvedChapters).length > 0
       };
     }
 
-    // Fallback: check global catalog cache (memory or localStorage permanent backup) so screen has courses immediately
+    // Fallback: check global catalog cache (memory or localStorage permanent backup) so screen has catalog ready
     const permanentCached = getPermanentCachedCourses();
     if (permanentCached && Array.isArray(permanentCached) && permanentCached.length > 0) {
+      const meta = getPermanentCachedCatalogMeta();
       return {
         courses: applyCourseOverrides(permanentCached),
         purchases: [],
         userProgress: [],
-        courseStats: {},
-        courseChapters: {},
+        courseStats: meta?.courseStats || {},
+        courseChapters: meta?.courseChapters || {},
         isFullUserCache: false
       };
     }
@@ -142,8 +198,9 @@ export default function Dashboard({ user }: DashboardProps) {
     }
     return null;
   });
-  // Loading is only false if we already have the full user cache (both courses and purchases)
+  // Loading is only false if we already have the full user cache (courses, chapters, and progress snapshot)
   const [loading, setLoading] = useState(() => !initialCached?.isFullUserCache);
+  const [progressReady, setProgressReady] = useState(() => Boolean(initialCached?.isFullUserCache));
   const [hasInitialFetchCompleted, setHasInitialFetchCompleted] = useState(false);
   const [refreshKey, setRefreshKey] = useState(0);
   const [viewingCourseId, setViewingCourseId] = useState<string | null>(null);
@@ -165,6 +222,7 @@ export default function Dashboard({ user }: DashboardProps) {
 
   const syncProgressToDashboardCache = useCallback((nextProgress: any[]) => {
     if (!user?.id) return;
+    saveCompactUserProgress(user.id, nextProgress);
     const existing = dataCache.get(cacheKey, true);
     if (existing && Array.isArray(existing.courses) && existing.courses.length > 0) {
       dataCache.set(cacheKey, { ...existing, userProgress: nextProgress }, 600000);
@@ -187,6 +245,7 @@ export default function Dashboard({ user }: DashboardProps) {
   useEffect(() => {
     const safetyTimer = setTimeout(() => {
       setLoading(false);
+      setProgressReady(true);
       setHasInitialFetchCompleted(prev => prev || courses.length > 0);
     }, 8000);
     return () => clearTimeout(safetyTimer);
@@ -488,15 +547,16 @@ export default function Dashboard({ user }: DashboardProps) {
 
     let fetchedCoursesData: Course[] = [];
 
-    const finalizeAndCache = (
-      rawCourses: any[],
-      basePurchases: { product_id: string; created_at: any }[],
-      packagesList: any[],
-      stats: Record<string, { lessons: number; materials: number }>,
-      chapterMap: Record<string, string[]>,
-      progData: any[],
-      profileData: any
-    ) => {
+      const finalizeAndCache = (
+        rawCourses: any[],
+        basePurchases: { product_id: string; created_at: any }[],
+        packagesList: any[],
+        stats: Record<string, { lessons: number; materials: number }>,
+        chapterMap: Record<string, string[]>,
+        progData: any[],
+        profileData: any,
+        progressSynced = true
+      ) => {
       if (profileData) {
         setUserProfile(profileData);
         dataCache.set(profileCacheKey, profileData, 86400000);
@@ -573,19 +633,33 @@ export default function Dashboard({ user }: DashboardProps) {
       if (processedCourses.length > 0) {
         setCourses(processedCourses);
         const lightweightForCatalog = processedCourses.map(stripHeavyCourseDataForCache);
-        dataCache.set('global_public_courses_catalog', lightweightForCatalog, 86400000);
+        dataCache.set('global_public_courses_catalog', lightweightForCatalog, 86400000, false);
         if (typeof window !== 'undefined') {
           try {
             localStorage.setItem('mp_permanent_courses_catalog', JSON.stringify(lightweightForCatalog));
           } catch {}
         }
       }
+      if (Object.keys(chapterMap).length > 0) {
+        savePermanentCatalogMeta(chapterMap, stats);
+      }
+
       setPurchases(allPurchases);
-      setUserProgress(mergedProgress);
       setCourseStats(stats);
       setCourseChapters(chapterMap);
 
-      if (processedCourses.length > 0) {
+      if (progressSynced || mergedProgress.length > 0) {
+        setUserProgress(mergedProgress);
+        if (progressSynced) {
+          saveCompactUserProgress(user.id, mergedProgress);
+        }
+      }
+
+      if (progressSynced) {
+        setProgressReady(true);
+      }
+
+      if (processedCourses.length > 0 && progressSynced) {
         const lightweightCourses = processedCourses.map(stripHeavyCourseDataForCache);
         dataCache.set(cacheKey, {
           courses: lightweightCourses,
@@ -597,6 +671,7 @@ export default function Dashboard({ user }: DashboardProps) {
       }
     };
 
+    let deferProgressReady = false;
     try {
       // FAST PATH: Single consolidated server bootstrap (server-cached catalog + parallel user progress/purchases)
       let bootstrapHandled = false;
@@ -605,9 +680,12 @@ export default function Dashboard({ user }: DashboardProps) {
         if (!token) {
           const { data: sess } = await Promise.race([
             supabase.auth.getSession(),
-            new Promise<any>((resolve) => setTimeout(() => resolve({ data: { session: null } }), 350))
+            new Promise<any>((resolve) => setTimeout(() => resolve({ data: { session: null } }), 1500))
           ]);
-          token = sess?.session?.access_token || null;
+          const sessionToken = sess?.session?.access_token || null;
+          if (sessionToken && isTokenFresh(sessionToken, sess?.session?.expires_at)) {
+            token = sessionToken;
+          }
         }
 
         const params = new URLSearchParams({
@@ -633,7 +711,51 @@ export default function Dashboard({ user }: DashboardProps) {
             hydrateOverridesFromBootstrap(boot.courseOverrides, boot.chapterOverrides);
             fetchedCoursesData = boot.courses;
 
-            const basePurchases: { product_id: string; created_at: any }[] = Array.isArray(boot.purchases) ? [...boot.purchases] : [];
+            let rawPurchases: { product_id: string; created_at: any }[] = Array.isArray(boot.purchases) ? [...boot.purchases] : [];
+            let progData: any[] = Array.isArray(boot.userProgress) ? boot.userProgress : [];
+            let progressActuallySynced = Boolean(boot.userProgressSynced) || !isUUID(user.id);
+
+            // If server bootstrap couldn't read private user tables (e.g. token expired/missing and no service key), fetch directly via authenticated client in parallel
+            const needDirectProgress = !boot.userProgressSynced && isUUID(user.id);
+            const needDirectPurchases = boot.purchasesSynced === false && isUUID(user.id);
+
+            if (needDirectProgress || needDirectPurchases) {
+              const [directProgRes, directPurchasesRes] = await Promise.allSettled([
+                needDirectProgress
+                  ? supabase
+                      .from('user_progress')
+                      .select('chapter_id, completed, user_id')
+                      .eq('user_id', user.id)
+                  : Promise.resolve(null),
+                needDirectPurchases
+                  ? supabase
+                      .from('purchases')
+                      .select('product_id, created_at')
+                      .eq('user_id', user.id)
+                  : Promise.resolve(null)
+              ]);
+
+              if (
+                directProgRes.status === 'fulfilled' &&
+                directProgRes.value &&
+                !directProgRes.value.error &&
+                Array.isArray(directProgRes.value.data)
+              ) {
+                progData = directProgRes.value.data;
+                progressActuallySynced = true;
+              }
+
+              if (
+                directPurchasesRes.status === 'fulfilled' &&
+                directPurchasesRes.value &&
+                !directPurchasesRes.value.error &&
+                Array.isArray(directPurchasesRes.value.data)
+              ) {
+                rawPurchases = directPurchasesRes.value.data;
+              }
+            }
+
+            const basePurchases: { product_id: string; created_at: any }[] = [...rawPurchases];
             const existingProductIds = new Set(basePurchases.map(p => p.product_id));
             if (Array.isArray(boot.manualGrantedIds)) {
               for (const cid of boot.manualGrantedIds) {
@@ -644,21 +766,6 @@ export default function Dashboard({ user }: DashboardProps) {
               }
             }
 
-            let progData: any[] = Array.isArray(boot.userProgress) ? boot.userProgress : [];
-
-            // If server bootstrap couldn't read user_progress directly (e.g. missing token/service key), fetch it directly on client
-            if (!boot.userProgressSynced && isUUID(user.id)) {
-              try {
-                const { data: directProg } = await supabase
-                  .from('user_progress')
-                  .select('chapter_id, completed, user_id')
-                  .eq('user_id', user.id);
-                if (Array.isArray(directProg)) {
-                  progData = directProg;
-                }
-              } catch {}
-            }
-
             finalizeAndCache(
               fetchedCoursesData,
               basePurchases,
@@ -666,8 +773,30 @@ export default function Dashboard({ user }: DashboardProps) {
               boot.courseStats || {},
               boot.courseChapters || {},
               progData,
-              boot.profile || null
+              boot.profile || null,
+              progressActuallySynced
             );
+
+            // If progress still couldn't sync due to transient auth refresh timing, retry once shortly in background
+            if (!progressActuallySynced && isUUID(user.id)) {
+              deferProgressReady = true;
+              setTimeout(async () => {
+                try {
+                  await supabase.auth.getSession();
+                  const { data: retryProg, error: retryErr } = await supabase
+                    .from('user_progress')
+                    .select('chapter_id, completed, user_id')
+                    .eq('user_id', user.id);
+                  if (!retryErr && Array.isArray(retryProg)) {
+                    const merged = mergeLocalProgress(user.id, retryProg);
+                    setUserProgress(merged);
+                    syncProgressToDashboardCache(merged);
+                  }
+                } finally {
+                  setProgressReady(true);
+                }
+              }, 800);
+            }
 
             bootstrapHandled = true;
           }
@@ -873,12 +1002,16 @@ export default function Dashboard({ user }: DashboardProps) {
         liveStats,
         liveChapterMap,
         liveProgress,
-        profileData
+        profileData,
+        true
       );
     } catch (error: any) {
       console.warn('Notice during data fetch (retaining member session):', error?.message || error);
     } finally {
       setLoading(false);
+      if (!deferProgressReady) {
+        setProgressReady(true);
+      }
       if (fetchedCoursesData.length > 0 || courses.length > 0) {
         setHasInitialFetchCompleted(true);
       } else {
@@ -1007,7 +1140,7 @@ export default function Dashboard({ user }: DashboardProps) {
           modules: cleanModules,
           chapters: chaptersList,
           progress: userProgressRef.current || []
-        }, 600000);
+        }, 600000, false);
       }
     } catch (_) {}
   }, [courses]);
@@ -1164,8 +1297,8 @@ export default function Dashboard({ user }: DashboardProps) {
 
   // Track milestones and show "Parabéns"
   useEffect(() => {
-    // Check if progress actually increased
-    const hasIncreased = globalStats.totalProgress > lastProgressRef.current;
+    // Wait until initial progress snapshot is ready so first load never triggers false milestone delta
+    const hasIncreased = progressReady && globalStats.totalProgress > lastProgressRef.current;
     lastProgressRef.current = globalStats.totalProgress;
 
     if (!hasIncreased || globalStats.totalProgress <= 0) return;
@@ -1343,6 +1476,7 @@ className="w-full py-3 text-[10px] text-gray-600 font-bold uppercase tracking-[0
           }
         }}
         totalProgress={globalStats.totalProgress}
+        progressLoading={!progressReady}
         onOpenProgress={() => setShowProgressModal(true)}
       />
 
@@ -1388,7 +1522,7 @@ className="w-full py-3 text-[10px] text-gray-600 font-bold uppercase tracking-[0
                     <Carousel 
                       title={settings.custom_texts?.['dashboard.courses_paid'] || t('dashboard.courses_paid') || 'Your Main Journey 🔥'}
                     >
-                      {(loading || !hasInitialFetchCompleted || courses.length === 0) && mainCourses.length === 0 ? (
+                      {!progressReady || ((loading || !hasInitialFetchCompleted || courses.length === 0) && mainCourses.length === 0) ? (
                         <>
                           <ProductCardSkeleton />
                           <ProductCardSkeleton />
@@ -1426,7 +1560,7 @@ className="w-full py-3 text-[10px] text-gray-600 font-bold uppercase tracking-[0
                     </Carousel>
 
 
-                    {bonusCourses.length > 0 && (
+                    {progressReady && bonusCourses.length > 0 && (
                       <Carousel 
                         title={settings.custom_texts?.['dashboard.courses_bonus'] || t('dashboard.courses_bonus') || 'Exclusive Prizes and Bonuses 🎁'}
                       >
@@ -1448,7 +1582,7 @@ className="w-full py-3 text-[10px] text-gray-600 font-bold uppercase tracking-[0
                     <Carousel 
                       title={settings.custom_texts?.['dashboard.courses_free'] || t('dashboard.courses_free') || 'Acelere sua Evolução  🚀'}
                     >
-                      {(loading || !hasInitialFetchCompleted || courses.length === 0) && paidCourses.length === 0 ? (
+                      {!progressReady || ((loading || !hasInitialFetchCompleted || courses.length === 0) && paidCourses.length === 0) ? (
                         <>
                           <ProductCardSkeleton />
                           <ProductCardSkeleton />

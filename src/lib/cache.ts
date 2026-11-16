@@ -37,7 +37,7 @@ class DataCache {
     return DataCache.instance;
   }
 
-  set(key: string, data: any, ttl = 300000) { // Default 5 minutes TTL
+  set(key: string, data: any, ttl = 300000, persist = true) { // Default 5 minutes TTL
     const entry: CacheEntry<any> = {
       data,
       timestamp: Date.now() + ttl
@@ -45,11 +45,25 @@ class DataCache {
     
     this.cache.set(key, entry);
 
-    if (typeof window !== 'undefined') {
+    if (persist && typeof window !== 'undefined') {
+      const serialized = JSON.stringify(entry);
       try {
-        localStorage.setItem(this.storagePrefix + key, JSON.stringify(entry));
-      } catch (e) {
-        console.warn('Failed to save to local cache storage:', e);
+        localStorage.setItem(this.storagePrefix + key, serialized);
+      } catch {
+        // Evict heavy course_full_* entries if storage quota is full so critical dashboard/progress caches always persist
+        try {
+          const toDelete: string[] = [];
+          for (let i = 0; i < localStorage.length; i++) {
+            const k = localStorage.key(i);
+            if (k && k.startsWith(this.storagePrefix + 'course_full_')) {
+              toDelete.push(k);
+            }
+          }
+          toDelete.forEach(k => localStorage.removeItem(k));
+          localStorage.setItem(this.storagePrefix + key, serialized);
+        } catch (e) {
+          console.warn('Failed to save to local cache storage:', e);
+        }
       }
     }
   }

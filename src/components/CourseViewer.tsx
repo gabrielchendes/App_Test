@@ -300,13 +300,13 @@ export default function CourseViewer({ courseId, userId, onClose, initialCourse,
 
       setChapters(finalChapters);
 
-      // Save to memory cache for instantaneous subsequent views (10 minutes)
+      // Save to memory cache for instantaneous subsequent views (10 minutes, memory-only to protect localStorage quota)
       dataCache.set(cacheKey, {
         course: currentCourse,
         modules: modulesData,
         chapters: finalChapters,
         progress: progressData
-      }, 600000);
+      }, 600000, false);
 
       // Setup initial view without overwriting an active chapter or kicking user out of player mode
       if (activeChapterRef.current) {
