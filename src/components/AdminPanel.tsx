@@ -11816,7 +11816,7 @@ export default function AdminPanel({ user }: AdminPanelProps) {
 
               <div className="space-y-2">
                 <div className="flex items-center justify-between">
-                  <label className="text-xs font-bold text-gray-300 uppercase tracking-wider">Nome Produto *</label>
+                  <label className="text-xs font-bold text-gray-300 uppercase tracking-wider">Nome do Produto *</label>
                   {(productForm.product_type === 'course' || productForm.product_type === 'package') && (
                     <span className="text-[10px] text-amber-400 font-semibold">
                       Exatamente igual ao {productForm.product_type === 'package' ? 'Pacote' : 'Curso'} Correspondente
@@ -11851,7 +11851,7 @@ export default function AdminPanel({ user }: AdminPanelProps) {
               </div>
 
               <div className="space-y-2">
-                <label className="text-xs font-bold text-gray-300 uppercase tracking-wider">Descrição / Observações Internas (Opcional)</label>
+                <label className="text-xs font-bold text-gray-300 uppercase tracking-wider">Observações Internas (Opcional)</label>
                 <input
                   type="text"
                   value={productForm.description}
