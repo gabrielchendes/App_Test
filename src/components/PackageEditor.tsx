@@ -210,7 +210,7 @@ export default function PackageEditor({ packageId, onClose, onSave, courses }: P
               </div>
 
               <div className="space-y-2">
-                <label className="text-[10px] font-black text-gray-500 uppercase tracking-widest">Preço do Pacote (R$)</label>
+                <label className="text-[10px] font-black text-gray-500 uppercase tracking-widest">Preço do Pacote (Opcional)</label>
                 <input 
                   type="text" 
                   value={(price / 100).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
@@ -236,7 +236,7 @@ export default function PackageEditor({ packageId, onClose, onSave, courses }: P
               </div>
 
               <div className="space-y-2">
-                <label className="text-[10px] font-black text-gray-500 uppercase tracking-widest">Link de Venda (Checkout Hotmart)</label>
+                <label className="text-[10px] font-black text-gray-500 uppercase tracking-widest">Link de Venda / Checkout (Opcional)</label>
                 <input 
                   type="url" 
                   value={checkoutUrl}

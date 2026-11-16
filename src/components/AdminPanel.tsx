@@ -11310,7 +11310,7 @@ export default function AdminPanel({ user }: AdminPanelProps) {
 
             <div className="space-y-4">
               <div className="space-y-1">
-                <label className="text-[9px] font-black text-gray-400 uppercase tracking-widest ml-1">Preço do Produto Principal (R$)</label>
+                <label className="text-[9px] font-black text-gray-400 uppercase tracking-widest ml-1">Preço do Produto Principal (Opcional)</label>
                 <input
                   type="text"
                   value={(() => {
@@ -11341,7 +11341,7 @@ export default function AdminPanel({ user }: AdminPanelProps) {
               </div>
 
               <div className="space-y-1">
-                <label className="text-[9px] font-black text-gray-400 uppercase tracking-widest ml-1">Link de Check-out (Hotmart)</label>
+                <label className="text-[9px] font-black text-gray-400 uppercase tracking-widest ml-1">Link de Check-out (Opcional)</label>
                 <input
                   type="text"
                   value={mainCheckoutUrlInput}
@@ -11816,7 +11816,7 @@ export default function AdminPanel({ user }: AdminPanelProps) {
 
               <div className="space-y-2">
                 <div className="flex items-center justify-between">
-                  <label className="text-xs font-bold text-gray-300 uppercase tracking-wider">Nome Comercial do Produto *</label>
+                  <label className="text-xs font-bold text-gray-300 uppercase tracking-wider">Nome Produto *</label>
                   {(productForm.product_type === 'course' || productForm.product_type === 'package') && (
                     <span className="text-[10px] text-amber-400 font-semibold">
                       Exatamente igual ao {productForm.product_type === 'package' ? 'Pacote' : 'Curso'} Correspondente
@@ -11840,7 +11840,7 @@ export default function AdminPanel({ user }: AdminPanelProps) {
               </div>
 
               <div className="space-y-2">
-                <label className="text-xs font-bold text-gray-300 uppercase tracking-wider">Link de Checkout da Hotmart (Opcional)</label>
+                <label className="text-xs font-bold text-gray-300 uppercase tracking-wider">Link de Checkout (Opcional)</label>
                 <input
                   type="text"
                   value={productForm.checkout_url}
@@ -11851,7 +11851,7 @@ export default function AdminPanel({ user }: AdminPanelProps) {
               </div>
 
               <div className="space-y-2">
-                <label className="text-xs font-bold text-gray-300 uppercase tracking-wider">Descrição / Observações Internas</label>
+                <label className="text-xs font-bold text-gray-300 uppercase tracking-wider">Descrição / Observações Internas (Opcional)</label>
                 <input
                   type="text"
                   value={productForm.description}
