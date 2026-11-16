@@ -17,52 +17,15 @@ interface TenantContextType {
 const TenantContext = createContext<TenantContextType | undefined>(undefined);
 
 export function TenantProvider({ children }: { children: ReactNode }) {
-  const [tenant, setTenant] = useState<Tenant | null>(null);
-  const [loading, setLoading] = useState(true);
-
-  useEffect(() => {
-    const fetchTenant = async () => {
-      try {
-        // In a real SaaS, we'd identify the tenant by subdomain:
-        // const hostname = window.location.hostname;
-        // const subdomain = hostname.split('.')[0];
-        
-        // For this demo, we'll use a default tenant or fetch the first one with fast timeout
-        const queryPromise = supabase
-          .from('tenants')
-          .select('*')
-          .limit(1)
-          .single();
-        const timeoutPromise = new Promise<{ data: any; error: any }>((resolve) =>
-          setTimeout(() => resolve({ data: null, error: new Error('Timeout') }), 1000)
-        );
-        const { data, error } = await Promise.race([queryPromise, timeoutPromise]);
-
-        if (error) {
-          // Fallback for demo if table doesn't exist
-
-          // Fallback for demo if table doesn't exist
-          setTenant({
-            id: 'default-tenant',
-            name: 'Missing Trigger',
-            subdomain: 'app',
-            primary_color: '#ef4444'
-          });
-        } else {
-          setTenant(data);
-        }
-      } catch (err) {
-        console.error('Error fetching tenant:', err);
-      } finally {
-        setLoading(false);
-      }
-    };
-
-    fetchTenant();
-  }, []);
+  const [tenant] = useState<Tenant | null>({
+    id: 'default-tenant',
+    name: 'Missing Trigger',
+    subdomain: 'app',
+    primary_color: '#ef4444'
+  });
 
   return (
-    <TenantContext.Provider value={{ tenant, loading }}>
+    <TenantContext.Provider value={{ tenant, loading: false }}>
       {children}
     </TenantContext.Provider>
   );

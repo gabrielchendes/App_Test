@@ -9,22 +9,60 @@ import { TenantProvider } from './contexts/TenantContext';
 import ErrorBoundary from './components/ErrorBoundary';
 
 import { registerSW } from 'virtual:pwa-register';
+import {
+  is12HourSwCheckDue,
+  mark12HourSwChecked,
+  canApplySwReloadOnce,
+  markSwReloadApplied
+} from './lib/pwa';
 
-// Faster SW registration safely wrapped to prevent sandbox iframe exceptions
+// Unified Service Worker registration (strictly 12h check cycle, zero-flicker guards)
 const isIframe = typeof window !== 'undefined' && window.self !== window.top;
 if (typeof window !== 'undefined' && 'serviceWorker' in navigator && !isIframe) {
   try {
-    registerSW({
+    let swUpdateCheckAttached = false;
+    let updateSWFn: ((reloadPage?: boolean) => Promise<void>) | undefined;
+
+    const triggerControlledSwCheck = (registration?: ServiceWorkerRegistration) => {
+      if (!registration) return;
+      if (typeof document !== 'undefined' && document.visibilityState === 'hidden') return;
+      if (!is12HourSwCheckDue()) return;
+
+      mark12HourSwChecked();
+      registration.update().catch(() => {});
+    };
+
+    updateSWFn = registerSW({
       immediate: true,
+      onRegisteredSW(_swUrl, registration) {
+        if (!registration) return;
+        // Initial 12h-gated check
+        triggerControlledSwCheck(registration);
+
+        if (!swUpdateCheckAttached) {
+          swUpdateCheckAttached = true;
+          const handleResume = () => triggerControlledSwCheck(registration);
+          window.addEventListener('visibilitychange', () => {
+            if (document.visibilityState === 'visible') {
+              handleResume();
+            }
+          });
+          window.addEventListener('focus', handleResume);
+        }
+      },
+      onNeedRefresh() {
+        // Apply new app shell at most once per 12h & session, never mid-lesson or mid-admin edit
+        if (canApplySwReloadOnce()) {
+          markSwReloadApplied();
+          updateSWFn?.(true).catch(() => {});
+        }
+      },
       onOfflineReady() {
         console.log('App ready for offline use');
       }
     });
   } catch (err) {
     console.warn('Service Worker registration skipped or failed under this environment context:', err);
-    navigator.serviceWorker.register('/sw.js', { scope: '/' }).catch(e => {
-      console.warn('Fallback SW registration error:', e);
-    });
   }
 }
 

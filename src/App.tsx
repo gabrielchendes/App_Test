@@ -10,7 +10,6 @@ import LoginPage from './pages/LoginPage';
 import Dashboard from './pages/Dashboard';
 import { GlowingSpinner } from './components/GlowingSpinner';
 import { OfflineNotice } from './components/OfflineNotice';
-import { preloadCoursesCatalog } from './lib/coursePreload';
 
 // Smooth hardware-accelerated Loading Screen
 function LoadingScreen() {
@@ -222,13 +221,10 @@ export default function App() {
 
     checkMagicLink();
 
-    // Pre-warm public courses catalog gently in the background so that upon login, Home loads with 0ms delay
-    preloadCoursesCatalog().catch(() => {});
-
     // Fast safety fallback ceiling to ensure we never get stuck on loading screen
     const forceStopLoading = setTimeout(() => {
       setAuthLoading(false);
-    }, 1500);
+    }, 1000);
 
     // Listen for auth changes
     const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, session) => {
@@ -361,7 +357,7 @@ export default function App() {
     };
   }, [settings?.gtm_id]);
 
-  if (settingsLoading || authLoading) {
+  if (authLoading || (settingsLoading && !user)) {
     return <LoadingScreen />;
   }
 

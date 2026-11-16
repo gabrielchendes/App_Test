@@ -977,7 +977,9 @@ export default function AiAssistantModal({ userId, userEmail, userName, userAvat
 
         const controller = new AbortController();
         activeFetchAbortRef.current = controller;
-        const timeoutId = setTimeout(() => controller.abort(), 9500);
+        const timeoutId = setTimeout(() => {
+          try { controller.abort(); } catch (_) {}
+        }, 25000);
 
         const isUnlimitedNow = Boolean(isUserUnlimited || hasUnlimitedAi || getCachedVipStatus(effectiveUserId, effectiveUserEmail));
 

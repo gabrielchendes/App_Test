@@ -5,6 +5,19 @@ import { Course } from '../types/lms';
 const PERMANENT_CATALOG_KEY = 'mp_permanent_courses_catalog';
 let preloadPromise: Promise<Course[]> | null = null;
 
+export function stripHeavyCourseDataForCache(course: any): Course {
+  if (!course || typeof course !== 'object') return course;
+  const { preview_rich_text: _prt, modal_html: _mh, ...rest } = course;
+  const cleanBenefits = Array.isArray(rest.benefits)
+    ? rest.benefits.filter((b: any) => typeof b === 'string' && !b.startsWith('<!--__PWA_MODAL_HTML__-->')).slice(0, 12)
+    : rest.benefits;
+  return {
+    ...rest,
+    benefits: cleanBenefits,
+    _lightweight: true
+  } as Course;
+}
+
 export function getPermanentCachedCourses(): Course[] | null {
   // 1. Try in-memory / dataCache first
   const memory = dataCache.get('global_public_courses_catalog', true);
@@ -45,7 +58,7 @@ export async function preloadCoursesCatalog(): Promise<Course[]> {
   }
 
   preloadPromise = (async () => {
-    for (let attempt = 1; attempt <= 3; attempt++) {
+    for (let attempt = 1; attempt <= 2; attempt++) {
       try {
         let res = await supabase
           .from('courses')
@@ -68,7 +81,9 @@ export async function preloadCoursesCatalog(): Promise<Course[]> {
         }
 
         if (coursesData && coursesData.length > 0) {
-          const active = coursesData.filter((c: any) => c.is_active !== false);
+          const active = coursesData
+            .filter((c: any) => c.is_active !== false)
+            .map(stripHeavyCourseDataForCache);
           if (active.length > 0) {
             dataCache.set('global_public_courses_catalog', active, 86400000);
             if (typeof window !== 'undefined') {
@@ -84,8 +99,8 @@ export async function preloadCoursesCatalog(): Promise<Course[]> {
         console.warn(`Preload courses attempt ${attempt} warning:`, err);
       }
 
-      if (attempt < 3) {
-        await new Promise(r => setTimeout(r, attempt * 400));
+      if (attempt < 2) {
+        await new Promise(r => setTimeout(r, 300));
       }
     }
 

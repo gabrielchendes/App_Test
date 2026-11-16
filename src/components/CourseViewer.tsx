@@ -59,10 +59,11 @@ interface CourseViewerProps {
   onClose: () => void;
   initialCourse?: Course | null;
   initialProgress?: UserProgress[];
+  onProgressChange?: (updatedProgress: UserProgress[]) => void;
   isProfessor?: boolean;
 }
 
-export default function CourseViewer({ courseId, userId, onClose, initialCourse, initialProgress, isProfessor = false }: CourseViewerProps) {
+export default function CourseViewer({ courseId, userId, onClose, initialCourse, initialProgress, onProgressChange, isProfessor = false }: CourseViewerProps) {
   useCourseOverridesSync();
   const { t } = useI18n();
   const { settings } = useSettings();
@@ -421,10 +422,11 @@ export default function CourseViewer({ courseId, userId, onClose, initialCourse,
       // 1. Optimistic UI update for instantaneous 0ms responsiveness
       setProgress(prev => {
         const exists = prev.some(p => p.chapter_id === chapterId);
-        if (exists) {
-          return prev.map(p => p.chapter_id === chapterId ? { ...p, completed: targetState } : p);
-        }
-        return [...prev, { user_id: userId, chapter_id: chapterId, completed: targetState }];
+        const next = exists
+          ? prev.map(p => p.chapter_id === chapterId ? { ...p, completed: targetState } : p)
+          : [...prev, { user_id: userId, chapter_id: chapterId, completed: targetState }];
+        onProgressChange?.(next);
+        return next;
       });
 
       if (targetState) {
@@ -451,10 +453,11 @@ export default function CourseViewer({ courseId, userId, onClose, initialCourse,
       // 1. Optimistic UI update
       setProgress(prev => {
         const exists = prev.some(p => p.chapter_id === chapterId);
-        if (exists) {
-          return prev.map(p => p.chapter_id === chapterId ? { ...p, completed: true } : p);
-        }
-        return [...prev, { user_id: userId, chapter_id: chapterId, completed: true }];
+        const next = exists
+          ? prev.map(p => p.chapter_id === chapterId ? { ...p, completed: true } : p)
+          : [...prev, { user_id: userId, chapter_id: chapterId, completed: true }];
+        onProgressChange?.(next);
+        return next;
       });
 
       showToast.success('Lesson completed!', {

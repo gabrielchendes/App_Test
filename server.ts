@@ -184,6 +184,7 @@ async function startServer() {
   app.all(['/api/v1/clear-cache', '/api/clear-cache'], (_req, res) => {
     cachedAppSettings = null;
     lastSettingsFetchTime = 0;
+    (globalThis as any).__mpBootstrapCatalogCache = null;
     imageStreamCache.clear();
     res.setHeader('Cache-Control', 'no-store');
     return res.json({ success: true, cleared: true, timestamp: Date.now() });

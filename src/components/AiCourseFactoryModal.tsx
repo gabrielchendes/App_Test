@@ -45,6 +45,7 @@ import { dataCache } from '../lib/cache';
 import { showToast } from '../lib/customToast';
 import { BlockLessonViewer } from './BlockLessonViewer';
 import { prepareChapterForDb } from '../utils/htmlAppHelper';
+import { saveChapterViaApi } from '../lib/courseOverrides';
 import { useI18n } from '../contexts/I18nContext';
 
 interface AiCourseFactoryModalProps {
@@ -321,6 +322,7 @@ export const AiCourseFactoryModal: React.FC<AiCourseFactoryModalProps> = ({
             secure_payment_label: generatedCourse.secure_payment_label || '',
             instant_access_label: generatedCourse.instant_access_label || '',
             preview_enabled: true,
+            preview_type: 'html',
             preview_title: generatedCourse.preview_title || generatedCourse.title,
             preview_subtitle: generatedCourse.preview_subtitle || generatedCourse.subtitle,
             preview_rating: generatedCourse.preview_rating || '4.9 ⭐',
@@ -349,16 +351,34 @@ export const AiCourseFactoryModal: React.FC<AiCourseFactoryModalProps> = ({
       const courseId = createdCourse.id;
 
       // 2. Insert Modules and Chapters sequentially to preserve order
-      for (let mIdx = 0; mIdx < generatedModules.length; mIdx++) {
-        const mod = generatedModules[mIdx];
-        setPublishingProgress(`Creating module ${mIdx + 1} of ${generatedModules.length}...`);
+      let modulesToProcess = Array.isArray(generatedModules) && generatedModules.length > 0
+        ? [...generatedModules]
+        : [];
 
-        const { data: createdMod, error: modError } = await supabase
+      // If no modules exist, create a default "Módulo Geral"
+      if (modulesToProcess.length === 0) {
+        modulesToProcess = [
+          {
+            title: 'Módulo Geral',
+            order_index: 0,
+            chapters: Array.isArray((generatedCourse as any)?.chapters) ? (generatedCourse as any).chapters : []
+          }
+        ];
+      }
+
+      let lastValidModuleId: string | null = null;
+      let totalCreatedModules = 0;
+
+      for (let mIdx = 0; mIdx < modulesToProcess.length; mIdx++) {
+        const mod = modulesToProcess[mIdx];
+        setPublishingProgress(`Creating module ${mIdx + 1} of ${modulesToProcess.length}...`);
+
+        let { data: createdMod, error: modError } = await supabase
           .from('modules')
           .insert([
             {
               course_id: courseId,
-              title: mod.title,
+              title: mod.title || (mIdx === 0 ? 'Módulo Geral' : `Módulo ${mIdx + 1}`),
               order_index: mIdx
             }
           ])
@@ -366,12 +386,34 @@ export const AiCourseFactoryModal: React.FC<AiCourseFactoryModalProps> = ({
           .single();
 
         if (modError || !createdMod) {
-          console.warn('Module insert issue:', modError);
-          continue;
+          console.warn('[AI Course Factory] Module insert issue, retrying Módulo Geral fallback:', modError);
+          const retryMod = await supabase
+            .from('modules')
+            .insert([{ course_id: courseId, title: 'Módulo Geral', order_index: mIdx }])
+            .select()
+            .single();
+          createdMod = retryMod.data;
         }
 
-        const moduleId = createdMod.id;
-        const chapters = mod.chapters || [];
+        let moduleId = createdMod?.id || lastValidModuleId;
+        if (!moduleId) {
+          const { data: generalMod } = await supabase
+            .from('modules')
+            .insert([{ course_id: courseId, title: 'Módulo Geral', order_index: 0 }])
+            .select()
+            .single();
+          moduleId = generalMod?.id;
+        }
+
+        if (moduleId) {
+          lastValidModuleId = moduleId;
+          totalCreatedModules++;
+        } else {
+          continue;
+        }
+        const chapters = (Array.isArray(mod.chapters) && mod.chapters.length > 0)
+          ? mod.chapters
+          : (Array.isArray(mod.lessons) ? mod.lessons : []);
 
         for (let cIdx = 0; cIdx < chapters.length; cIdx++) {
           const chap = chapters[cIdx];
@@ -386,19 +428,42 @@ export const AiCourseFactoryModal: React.FC<AiCourseFactoryModalProps> = ({
             rich_text: richTextString
           });
 
-          await supabase.from('chapters').insert([
-            {
+          const chapterPayload: any = {
+            module_id: moduleId,
+            title: chap.title || `Aula ${cIdx + 1}`,
+            description: chap.description || '',
+            content_type: dbContentType,
+            rich_text: dbRichText,
+            cover_url: chap.cover_url || '',
+            duration_minutes: chap.duration_minutes || 15,
+            order_index: cIdx,
+            is_preview: cIdx === 0
+          };
+
+          let { data: insertedChap, error: chapError } = await supabase
+            .from('chapters')
+            .insert([chapterPayload])
+            .select()
+            .single();
+
+          if (chapError) {
+            console.warn('[AI Course Factory] Chapter insert error, retrying without optional fields:', chapError);
+            const fallbackPayload = {
               module_id: moduleId,
-              title: chap.title,
+              title: chap.title || `Aula ${cIdx + 1}`,
               description: chap.description || '',
-              content_type: dbContentType,
+              content_type: 'interactive',
               rich_text: dbRichText,
-              cover_url: chap.cover_url || '',
-              duration_minutes: chap.duration_minutes || 15,
               order_index: cIdx,
               is_preview: cIdx === 0
-            }
-          ]);
+            };
+            const retry2 = await supabase.from('chapters').insert([fallbackPayload]).select().single();
+            insertedChap = retry2.data;
+          }
+
+          if (insertedChap?.id) {
+            saveChapterViaApi(insertedChap.id, chapterPayload).catch(() => {});
+          }
         }
       }
 

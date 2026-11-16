@@ -14,9 +14,13 @@ const PRECACHE_ASSETS = [
 
 const MEDIA_EXTENSIONS = /\.(mp4|webm|mov|m4v|mp3|m4a|ogg|wav)$/i;
 
-self.addEventListener('install', (event) => {
-  self.skipWaiting();
+self.addEventListener('message', (event) => {
+  if (event.data && event.data.type === 'SKIP_WAITING') {
+    self.skipWaiting();
+  }
+});
 
+self.addEventListener('install', (event) => {
   event.waitUntil(
     caches.open(CACHE_NAME).then((cache) => {
       return cache.addAll(PRECACHE_ASSETS).catch((err) => {

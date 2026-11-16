@@ -56,11 +56,47 @@ export function useCourseOverridesSync(): number {
   return tick;
 }
 
+let lastSyncTime = 0;
+
+/**
+ * Hydrates overrides synchronously from the single Dashboard bootstrap response
+ * so zero extra network requests are needed on initial load.
+ */
+export function hydrateOverridesFromBootstrap(
+  courseOverrides?: Record<string, any> | null,
+  chapterOverrides?: Record<string, any> | null
+): void {
+  if (typeof window === 'undefined') return;
+  let changed = false;
+
+  if (courseOverrides && typeof courseOverrides === 'object' && Object.keys(courseOverrides).length > 0) {
+    courseOverridesMemory = { ...courseOverridesMemory, ...courseOverrides };
+    changed = true;
+    try {
+      localStorage.setItem(COURSE_OVERRIDES_CACHE_KEY, JSON.stringify(courseOverridesMemory));
+    } catch {}
+  }
+
+  if (chapterOverrides && typeof chapterOverrides === 'object' && Object.keys(chapterOverrides).length > 0) {
+    chapterOverridesMemory = { ...chapterOverridesMemory, ...chapterOverrides };
+    changed = true;
+    try {
+      localStorage.setItem(CHAPTER_OVERRIDES_CACHE_KEY, JSON.stringify(chapterOverridesMemory));
+    } catch {}
+  }
+
+  lastSyncTime = Date.now();
+  if (changed) {
+    notifyOverridesUpdated();
+  }
+}
+
 /**
  * Sync overrides from server endpoint in background
  */
-export async function syncOverridesFromServer(): Promise<void> {
+export async function syncOverridesFromServer(force = false): Promise<void> {
   if (isSyncing || typeof window === 'undefined') return;
+  if (!force && lastSyncTime > 0 && Date.now() - lastSyncTime < 60000) return;
   isSyncing = true;
   try {
     const [cRes, chRes] = await Promise.allSettled([
@@ -88,35 +124,33 @@ export async function syncOverridesFromServer(): Promise<void> {
 
     // Direct cloud sync from Supabase ai_user_memory for guaranteed Vercel persistence
     try {
-      const { data: cloudCourse } = await supabase
+      const { data: rows } = await supabase
         .from('ai_user_memory')
-        .select('facts')
-        .eq('user_id', '__global_course_overrides__')
-        .maybeSingle();
-      if (cloudCourse?.facts && Array.isArray(cloudCourse.facts) && cloudCourse.facts[0]) {
-        courseOverridesMemory = { ...courseOverridesMemory, ...cloudCourse.facts[0] };
-        changed = true;
-        try {
-          localStorage.setItem(COURSE_OVERRIDES_CACHE_KEY, JSON.stringify(courseOverridesMemory));
-        } catch {}
+        .select('user_id, facts')
+        .in('user_id', ['__global_course_overrides__', '__global_chapter_overrides__']);
+
+      if (Array.isArray(rows)) {
+        for (const row of rows) {
+          const first = Array.isArray(row?.facts) ? row.facts[0] : null;
+          if (!first || typeof first !== 'object') continue;
+          if (row.user_id === '__global_course_overrides__') {
+            courseOverridesMemory = { ...courseOverridesMemory, ...first };
+            changed = true;
+            try {
+              localStorage.setItem(COURSE_OVERRIDES_CACHE_KEY, JSON.stringify(courseOverridesMemory));
+            } catch {}
+          } else if (row.user_id === '__global_chapter_overrides__') {
+            chapterOverridesMemory = { ...chapterOverridesMemory, ...first };
+            changed = true;
+            try {
+              localStorage.setItem(CHAPTER_OVERRIDES_CACHE_KEY, JSON.stringify(chapterOverridesMemory));
+            } catch {}
+          }
+        }
       }
     } catch {}
 
-    try {
-      const { data: cloudChapter } = await supabase
-        .from('ai_user_memory')
-        .select('facts')
-        .eq('user_id', '__global_chapter_overrides__')
-        .maybeSingle();
-      if (cloudChapter?.facts && Array.isArray(cloudChapter.facts) && cloudChapter.facts[0]) {
-        chapterOverridesMemory = { ...chapterOverridesMemory, ...cloudChapter.facts[0] };
-        changed = true;
-        try {
-          localStorage.setItem(CHAPTER_OVERRIDES_CACHE_KEY, JSON.stringify(chapterOverridesMemory));
-        } catch {}
-      }
-    } catch {}
-
+    lastSyncTime = Date.now();
     if (changed) {
       notifyOverridesUpdated();
     }
@@ -125,13 +159,6 @@ export async function syncOverridesFromServer(): Promise<void> {
   } finally {
     isSyncing = false;
   }
-}
-
-// Automatically initiate sync in client environment
-if (typeof window !== 'undefined') {
-  setTimeout(() => {
-    syncOverridesFromServer();
-  }, 50);
 }
 
 /**

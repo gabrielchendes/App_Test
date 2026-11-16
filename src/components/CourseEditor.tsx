@@ -579,31 +579,42 @@ export default function CourseEditor({
             created_at: new Date().toISOString()
           });
 
-          if (Array.isArray(mod.chapters)) {
-            mod.chapters.forEach((ch: any, chIdx: number) => {
-              const chId = ch.id || `ch-temp-${mIdx}-${chIdx}-${Date.now()}`;
-              loadedChapters.push({
-                id: chId,
-                course_id: '',
-                module_id: modId,
-                title: ch.title,
-                description: ch.description || '',
-                order_index: ch.order_index ?? chIdx,
-                content_type: ch.content_type || 'rich_text',
-                video_url: ch.video_url || '',
-                rich_text: typeof ch.rich_text === 'object' ? JSON.stringify(ch.rich_text) : (ch.rich_text || ''),
-                cover_url: ch.cover_url || '',
-                is_free: Boolean(ch.is_free),
-                is_preview: Boolean(ch.is_preview),
-                duration_minutes: ch.duration_minutes || 10,
-                created_at: new Date().toISOString()
-              });
+          const rawChapters = (Array.isArray(mod.chapters) && mod.chapters.length > 0)
+            ? mod.chapters
+            : (Array.isArray(mod.lessons) ? mod.lessons : []);
+
+          rawChapters.forEach((ch: any, chIdx: number) => {
+            const chId = ch.id || `ch-temp-${mIdx}-${chIdx}-${Date.now()}`;
+            loadedChapters.push({
+              id: chId,
+              course_id: '',
+              module_id: modId,
+              title: ch.title || `Aula ${chIdx + 1}`,
+              description: ch.description || '',
+              order_index: ch.order_index ?? chIdx,
+              content_type: ch.content_type || 'rich_text',
+              video_url: ch.video_url || '',
+              rich_text: typeof ch.rich_text === 'object' ? JSON.stringify(ch.rich_text) : (ch.rich_text || ''),
+              cover_url: ch.cover_url || '',
+              is_free: Boolean(ch.is_free),
+              is_preview: Boolean(ch.is_preview),
+              duration_minutes: ch.duration_minutes || 10,
+              created_at: new Date().toISOString()
             });
-          }
+          });
         });
 
         setModules(loadedModules);
         setChapters(loadedChapters);
+      } else if (!courseId && initialCourseData && (!initialModulesData || initialModulesData.length === 0)) {
+        setModules([{
+          id: `mod-temp-0-${Date.now()}`,
+          course_id: '',
+          title: 'Módulo Geral',
+          order_index: 0,
+          description: 'Conteúdo principal',
+          created_at: new Date().toISOString()
+        }]);
       }
       setLoading(false);
     }
@@ -865,6 +876,8 @@ export default function CourseEditor({
       };
 
       const targetCourseId = getEffectiveCourseId();
+      let activeCourseId = targetCourseId;
+
       if (targetCourseId) {
         await saveCourseViaApi(targetCourseId, courseData);
         let { error } = await supabase.from('courses').update(courseData).eq('id', targetCourseId);
@@ -880,10 +893,6 @@ export default function CourseEditor({
           }
           throw error;
         }
-        dataCache.invalidate('course_full_' + targetCourseId);
-        dataCache.invalidate('global_public_courses_catalog');
-        dataCache.invalidate();
-        toast.success('Informações salvas!');
       } else {
         let { data, error } = await supabase.from('courses').insert([courseData]).select().single();
         if (error && error.message?.includes('hide_single_module_header')) {
@@ -899,15 +908,210 @@ export default function CourseEditor({
           }
           throw error;
         }
+        activeCourseId = data.id;
         setCourseId(data.id);
         setCourse(prev => ({
           ...prev,
           ...data,
           ...parseCourseHtmlFunnel(data)
         }));
-        dataCache.invalidate('global_public_courses_catalog');
-        dataCache.invalidate();
-        toast.success('Curso criado!');
+      }
+
+      // Persist all pending / temporary modules and chapters into Supabase
+      if (activeCourseId) {
+        const isValidUUID = (id?: string | null): boolean =>
+          Boolean(id && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id));
+
+        const updatedModules: Module[] = [];
+        const updatedChapters: Chapter[] = [];
+        const idMap = new Map<string, string>(); // oldModId -> realDbUUID
+
+        let currentModulesList = [...modules];
+
+        // 1. If no modules exist in state, check DB or create "Módulo Geral"
+        if (currentModulesList.length === 0) {
+          const { data: dbMods } = await supabase
+            .from('modules')
+            .select('*')
+            .eq('course_id', activeCourseId)
+            .order('order_index');
+
+          if (dbMods && dbMods.length > 0) {
+            currentModulesList = dbMods;
+          } else {
+            const { data: generalMod } = await supabase
+              .from('modules')
+              .insert([{
+                course_id: activeCourseId,
+                title: 'Módulo Geral',
+                order_index: 0,
+                description: 'Conteúdo principal do curso'
+              }])
+              .select()
+              .single();
+
+            if (generalMod) {
+              currentModulesList = [generalMod];
+            }
+          }
+        }
+
+        // 2. Persist modules and collect real UUIDs
+        for (let i = 0; i < currentModulesList.length; i++) {
+          const mod = currentModulesList[i];
+          const hasRealId = isValidUUID(mod.id);
+          let realModId = mod.id;
+
+          if (!hasRealId) {
+            const { data: createdMod, error: modErr } = await supabase
+              .from('modules')
+              .insert([{
+                course_id: activeCourseId,
+                title: mod.title || (i === 0 ? 'Módulo Geral' : `Módulo ${i + 1}`),
+                order_index: mod.order_index ?? i,
+                description: mod.description || ''
+              }])
+              .select()
+              .single();
+
+            if (!modErr && createdMod) {
+              realModId = createdMod.id;
+              idMap.set(mod.id, createdMod.id);
+              updatedModules.push(createdMod);
+            } else {
+              console.warn('[CourseEditor] Module insert issue, resolving fallback:', modErr);
+              const { data: genMod } = await supabase
+                .from('modules')
+                .select('*')
+                .eq('course_id', activeCourseId)
+                .limit(1)
+                .single();
+              if (genMod) {
+                realModId = genMod.id;
+                idMap.set(mod.id, genMod.id);
+                updatedModules.push(genMod);
+              } else {
+                updatedModules.push(mod);
+              }
+            }
+          } else {
+            realModId = mod.id;
+            idMap.set(mod.id, mod.id);
+            await supabase
+              .from('modules')
+              .update({
+                title: mod.title,
+                order_index: mod.order_index ?? i,
+                description: mod.description || ''
+              })
+              .eq('id', mod.id);
+            updatedModules.push(mod);
+          }
+        }
+
+        // Determine a guaranteed safe fallback module ID
+        let safeDefaultModuleId = updatedModules.find(m => isValidUUID(m.id))?.id;
+        if (!safeDefaultModuleId) {
+          const { data: genMod } = await supabase
+            .from('modules')
+            .insert([{ course_id: activeCourseId, title: 'Módulo Geral', order_index: 0 }])
+            .select()
+            .single();
+          if (genMod) {
+            safeDefaultModuleId = genMod.id;
+            updatedModules.push(genMod);
+          }
+        }
+
+        // 3. Persist all chapters, ensuring module_id is ALWAYS a valid PostgreSQL UUID
+        for (let j = 0; j < chapters.length; j++) {
+          const ch = chapters[j];
+          let targetModId = idMap.get(ch.module_id) || (isValidUUID(ch.module_id) ? ch.module_id : safeDefaultModuleId);
+          if (!isValidUUID(targetModId)) {
+            targetModId = safeDefaultModuleId;
+          }
+
+          const isTempCh = !isValidUUID(ch.id);
+          const { content_type: dbContentType, rich_text: dbRichText } = prepareChapterForDb(ch);
+
+          const chapterData: any = {
+            module_id: targetModId,
+            title: ch.title || `Aula ${j + 1}`,
+            description: ch.description || '',
+            content_type: dbContentType || 'rich_text',
+            video_url: ch.video_url || '',
+            pdf_url: ch.pdf_url || '',
+            button_link_text: ch.button_link_text || '',
+            button_link_url: ch.button_link_url || '',
+            button_link_color: ch.button_link_color || '',
+            cover_url: ch.cover_url || '',
+            rich_text: dbRichText || '',
+            duration_minutes: ch.duration_minutes || 10,
+            order_index: ch.order_index ?? j
+          };
+
+          if (ch.custom_icon) chapterData.custom_icon = ch.custom_icon;
+          if (ch.custom_badge !== undefined) chapterData.custom_badge = ch.custom_badge?.trim() || null;
+
+          if (isTempCh) {
+            let { data: newCh, error: chErr } = await supabase
+              .from('chapters')
+              .insert([chapterData])
+              .select()
+              .single();
+
+            if (chErr && (chErr.message?.includes('custom_icon') || chErr.message?.includes('custom_badge'))) {
+              delete chapterData.custom_icon;
+              delete chapterData.custom_badge;
+              const retryCh = await supabase.from('chapters').insert([chapterData]).select().single();
+              newCh = retryCh.data;
+              chErr = retryCh.error;
+            }
+
+            if (chErr) {
+              console.warn('[CourseEditor] Chapter insert error, retrying without optional fields:', chErr);
+              const fallbackPayload = {
+                module_id: targetModId,
+                title: ch.title || `Aula ${j + 1}`,
+                description: ch.description || '',
+                content_type: 'rich_text',
+                rich_text: dbRichText || '',
+                order_index: ch.order_index ?? j
+              };
+              const retry2 = await supabase.from('chapters').insert([fallbackPayload]).select().single();
+              newCh = retry2.data;
+            }
+
+            if (newCh?.id) {
+              saveChapterViaApi(newCh.id, chapterData).catch(() => {});
+              updatedChapters.push(fromDbChapter(newCh));
+            } else {
+              updatedChapters.push(ch);
+            }
+          } else {
+            let { error: updateErr } = await supabase.from('chapters').update(chapterData).eq('id', ch.id);
+            if (updateErr && (updateErr.message?.includes('custom_icon') || updateErr.message?.includes('custom_badge'))) {
+              delete chapterData.custom_icon;
+              delete chapterData.custom_badge;
+              await supabase.from('chapters').update(chapterData).eq('id', ch.id);
+            }
+            saveChapterViaApi(ch.id, chapterData).catch(() => {});
+            updatedChapters.push(ch);
+          }
+        }
+
+        if (updatedModules.length > 0) setModules(updatedModules);
+        if (updatedChapters.length > 0) setChapters(updatedChapters);
+      }
+
+      dataCache.invalidate('course_full_' + activeCourseId);
+      dataCache.invalidate('global_public_courses_catalog');
+      dataCache.invalidate();
+
+      if (targetCourseId) {
+        toast.success('Informações salvas!');
+      } else {
+        toast.success('Curso criado e aulas salvas com sucesso!');
       }
     } catch (err: any) {
       toast.error('Erro ao salvar: ' + err.message);
@@ -1017,16 +1221,35 @@ export default function CourseEditor({
         toast.success('Curso criado automaticamente!');
       }
       
-      let targetModuleId = editingChapter.module_id || modules[0]?.id;
+      const isValidUUID = (id?: string | null): boolean =>
+        Boolean(id && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id));
+
+      let targetModuleId = isValidUUID(editingChapter.module_id) ? editingChapter.module_id : undefined;
+
       if (!targetModuleId) {
-        const { data: newMod, error: modError } = await supabase
-          .from('modules')
-          .insert([{ course_id: currentCourseId, title: 'Conteúdo', order_index: 0 }])
-          .select()
-          .single();
-        if (modError) throw modError;
-        targetModuleId = newMod.id;
-        setModules([newMod]);
+        const validStateMod = modules.find(m => isValidUUID(m.id));
+        if (validStateMod) {
+          targetModuleId = validStateMod.id;
+        } else {
+          const { data: dbMods } = await supabase
+            .from('modules')
+            .select('id')
+            .eq('course_id', currentCourseId)
+            .limit(1);
+
+          if (dbMods && dbMods.length > 0 && isValidUUID(dbMods[0].id)) {
+            targetModuleId = dbMods[0].id;
+          } else {
+            const { data: newMod, error: modError } = await supabase
+              .from('modules')
+              .insert([{ course_id: currentCourseId, title: 'Módulo Geral', order_index: 0, description: 'Conteúdo principal do curso' }])
+              .select()
+              .single();
+            if (modError) throw modError;
+            targetModuleId = newMod.id;
+            setModules(prev => [...prev.filter(m => isValidUUID(m.id)), newMod]);
+          }
+        }
       }
 
       const { content_type: dbContentType, rich_text: dbRichText } = prepareChapterForDb(editingChapter);
@@ -3973,47 +4196,51 @@ export default function CourseEditor({
           ...data.course
         }));
 
-        if (Array.isArray(data.modules)) {
-          const loadedModules: Module[] = [];
-          const loadedChapters: Chapter[] = [];
+        const modulesToLoad = (Array.isArray(data.modules) && data.modules.length > 0)
+          ? data.modules
+          : [{ title: 'Módulo Geral', order_index: 0, chapters: [] }];
 
-          data.modules.forEach((mod: any, mIdx: number) => {
-            const modId = `mod-temp-${mIdx}-${Date.now()}`;
-            loadedModules.push({
-              id: modId,
-              course_id: courseId || '',
-              title: typeof mod.title === 'string' ? mod.title : (mod.title ?? ''),
-              order_index: mod.order_index ?? mIdx,
-              description: mod.description || '',
-              created_at: new Date().toISOString()
-            });
+        const loadedModules: Module[] = [];
+        const loadedChapters: Chapter[] = [];
 
-            if (Array.isArray(mod.chapters)) {
-              mod.chapters.forEach((ch: any, chIdx: number) => {
-                const chId = `ch-temp-${mIdx}-${chIdx}-${Date.now()}`;
-                loadedChapters.push({
-                  id: chId,
-                  course_id: courseId || '',
-                  module_id: modId,
-                  title: ch.title,
-                  description: ch.description || '',
-                  order_index: ch.order_index ?? chIdx,
-                  content_type: ch.content_type || 'rich_text',
-                  video_url: ch.video_url || '',
-                  rich_text: typeof ch.rich_text === 'object' ? JSON.stringify(ch.rich_text) : (ch.rich_text || ''),
-                  cover_url: ch.cover_url || '',
-                  is_free: Boolean(ch.is_free),
-                  is_preview: Boolean(ch.is_preview),
-                  duration_minutes: ch.duration_minutes || 10,
-                  created_at: new Date().toISOString()
-                });
-              });
-            }
+        modulesToLoad.forEach((mod: any, mIdx: number) => {
+          const modId = `mod-temp-${mIdx}-${Date.now()}`;
+          loadedModules.push({
+            id: modId,
+            course_id: courseId || '',
+            title: typeof mod.title === 'string' ? mod.title : (mod.title ?? (mIdx === 0 ? 'Módulo Geral' : `Módulo ${mIdx + 1}`)),
+            order_index: mod.order_index ?? mIdx,
+            description: mod.description || '',
+            created_at: new Date().toISOString()
           });
 
-          setModules(loadedModules);
-          setChapters(loadedChapters);
-        }
+          const rawChapters = (Array.isArray(mod.chapters) && mod.chapters.length > 0)
+            ? mod.chapters
+            : (Array.isArray(mod.lessons) ? mod.lessons : []);
+
+          rawChapters.forEach((ch: any, chIdx: number) => {
+            const chId = `ch-temp-${mIdx}-${chIdx}-${Date.now()}`;
+            loadedChapters.push({
+              id: chId,
+              course_id: courseId || '',
+              module_id: modId,
+              title: ch.title || `Aula ${chIdx + 1}`,
+              description: ch.description || '',
+              order_index: ch.order_index ?? chIdx,
+              content_type: ch.content_type || 'rich_text',
+              video_url: ch.video_url || '',
+              rich_text: typeof ch.rich_text === 'object' ? JSON.stringify(ch.rich_text) : (ch.rich_text || ''),
+              cover_url: ch.cover_url || '',
+              is_free: Boolean(ch.is_free),
+              is_preview: Boolean(ch.is_preview),
+              duration_minutes: ch.duration_minutes || 10,
+              created_at: new Date().toISOString()
+            });
+          });
+        });
+
+        setModules(loadedModules);
+        setChapters(loadedChapters);
         setIsAiFactoryModalOpen(false);
       }}
     />

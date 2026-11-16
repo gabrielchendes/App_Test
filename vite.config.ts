@@ -11,7 +11,7 @@ export default defineConfig(({mode}) => {
       react(), 
       tailwindcss(),
       VitePWA({
-        registerType: 'autoUpdate',
+        registerType: 'prompt',
         injectRegister: false,
         includeAssets: [
           'favicon.svg',
@@ -28,7 +28,7 @@ export default defineConfig(({mode}) => {
         workbox: {
           cleanupOutdatedCaches: true,
           clientsClaim: true,
-          skipWaiting: true,
+          skipWaiting: false,
           importScripts: ['/firebase-messaging-sw.js'],
           globPatterns: ['**/*.{js,css,html,ico,png,svg,webmanifest,json}'],
           globIgnores: [
@@ -50,12 +50,12 @@ export default defineConfig(({mode}) => {
                 request.destination !== 'video' &&
                 request.destination !== 'audio' &&
                 !/\.(mp4|webm|mov|m4v|mp3|m4a|ogg|wav|m3u8|ts)$/i.test(url.pathname),
-              handler: 'CacheFirst',
+              handler: 'StaleWhileRevalidate',
               options: {
                 cacheName: 'supabase-storage',
                 expiration: {
-                  maxEntries: 100,
-                  maxAgeSeconds: 60 * 60 * 24 * 30, // 30 days
+                  maxEntries: 120,
+                  maxAgeSeconds: 60 * 60 * 24 * 7, // 7 days (revalidates in background)
                 },
                 cacheableResponse: {
                   statuses: [0, 200],
@@ -64,12 +64,12 @@ export default defineConfig(({mode}) => {
             },
             {
               urlPattern: /^https:\/\/images\.unsplash\.com\/.*/,
-              handler: 'CacheFirst',
+              handler: 'StaleWhileRevalidate',
               options: {
                 cacheName: 'external-images',
                 expiration: {
-                  maxEntries: 50,
-                  maxAgeSeconds: 60 * 60 * 24 * 15, // 15 days
+                  maxEntries: 60,
+                  maxAgeSeconds: 60 * 60 * 24 * 7, // 7 days (revalidates in background)
                 }
               }
             }

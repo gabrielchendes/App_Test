@@ -169,3 +169,88 @@ if (typeof window !== 'undefined') {
     setDeferredPrompt(null);
   });
 }
+
+// ============================================================================
+// 12-Hour PWA Auto-Sync & Anti-Flicker Update Controls
+// ============================================================================
+
+export const PWA_SYNC_INTERVAL_MS = 12 * 60 * 60 * 1000; // 12 hours
+
+const CATALOG_SYNC_AT_KEY = 'pwa_last_12h_catalog_sync_at';
+const SW_CHECK_AT_KEY = 'pwa_last_12h_sw_check_at';
+const SW_RELOAD_AT_KEY = 'pwa_last_12h_sw_reload_at';
+const SW_SESSION_RELOAD_KEY = 'pwa_sw_reloaded_session';
+
+function readStoredTimestamp(key: string): number {
+  if (typeof window === 'undefined') return 0;
+  try {
+    const raw = localStorage.getItem(key);
+    const num = raw ? Number(raw) : 0;
+    return Number.isFinite(num) && num > 0 ? num : 0;
+  } catch {
+    return 0;
+  }
+}
+
+function writeStoredTimestamp(key: string, ts = Date.now()): void {
+  if (typeof window === 'undefined') return;
+  try {
+    localStorage.setItem(key, String(ts));
+  } catch {}
+}
+
+export function is12HourCatalogSyncDue(): boolean {
+  const last = readStoredTimestamp(CATALOG_SYNC_AT_KEY);
+  return Date.now() - last >= PWA_SYNC_INTERVAL_MS;
+}
+
+export function mark12HourCatalogSynced(): void {
+  writeStoredTimestamp(CATALOG_SYNC_AT_KEY, Date.now());
+}
+
+export function invalidate12HourCatalogSync(): void {
+  if (typeof window === 'undefined') return;
+  try {
+    localStorage.removeItem(CATALOG_SYNC_AT_KEY);
+  } catch {}
+}
+
+export function is12HourSwCheckDue(): boolean {
+  const last = readStoredTimestamp(SW_CHECK_AT_KEY);
+  return Date.now() - last >= PWA_SYNC_INTERVAL_MS;
+}
+
+export function mark12HourSwChecked(): void {
+  writeStoredTimestamp(SW_CHECK_AT_KEY, Date.now());
+}
+
+export function canApplySwReloadOnce(): boolean {
+  if (typeof window === 'undefined') return false;
+  try {
+    // Never reload if user is actively watching a lesson or editing in Admin
+    if ((window as any).__mtBusyInLesson || (window as any).__mtBusyInAdmin) {
+      return false;
+    }
+    // Never reload more than once per browser/PWA session
+    if (sessionStorage.getItem(SW_SESSION_RELOAD_KEY) === '1') {
+      return false;
+    }
+    // Never reload more than once every 12 hours
+    const lastReload = readStoredTimestamp(SW_RELOAD_AT_KEY);
+    if (Date.now() - lastReload < PWA_SYNC_INTERVAL_MS) {
+      return false;
+    }
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+export function markSwReloadApplied(): void {
+  if (typeof window === 'undefined') return;
+  try {
+    sessionStorage.setItem(SW_SESSION_RELOAD_KEY, '1');
+    localStorage.setItem(SW_RELOAD_AT_KEY, String(Date.now()));
+  } catch {}
+}
+

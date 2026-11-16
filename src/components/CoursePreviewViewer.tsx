@@ -28,6 +28,8 @@ import { getCloudflareStreamEmbedUrl, isCloudflareStreamUrl, isDirectVideoUrl } 
 import HtmlAppViewer from './HtmlAppViewer';
 import { parseCourseHtmlFunnel } from '../utils/courseFunnel';
 import { getPdfEmbedSources } from '../utils/pdfHelper';
+import { supabase } from '../lib/supabase';
+import { GlowingSpinner } from './GlowingSpinner';
 
 interface CoursePreviewViewerProps {
   course: Course;
@@ -36,11 +38,45 @@ interface CoursePreviewViewerProps {
 }
 
 export default function CoursePreviewViewer({ course: rawCourse, onClose, onPurchase }: CoursePreviewViewerProps) {
-  const course = parseCourseHtmlFunnel(rawCourse) as Course;
+  const [hydratedCourse, setHydratedCourse] = useState<Course>(rawCourse);
+  const [hydratingPreview, setHydratingPreview] = useState<boolean>(() => Boolean((rawCourse as any)?._lightweight && !rawCourse.preview_rich_text));
+  const course = parseCourseHtmlFunnel(hydratedCourse) as Course;
   const { settings } = useSettings();
   const { t } = useI18n();
   const [pdfViewerMode, setPdfViewerMode] = useState<'google' | 'direct'>('google');
   const [pdfReloadCount, setPdfReloadCount] = useState(0);
+
+  useEffect(() => {
+    setHydratedCourse(rawCourse);
+    const needsFetch = Boolean((rawCourse as any)?._lightweight && !rawCourse.preview_rich_text && rawCourse.id);
+    if (!needsFetch) {
+      setHydratingPreview(false);
+      return;
+    }
+    let active = true;
+    setHydratingPreview(true);
+    supabase
+      .from('courses')
+      .select('preview_rich_text, benefits, preview_type')
+      .eq('id', rawCourse.id)
+      .maybeSingle()
+      .then(({ data }) => {
+        if (!active) return;
+        if (data) {
+          setHydratedCourse(prev => ({
+            ...prev,
+            preview_rich_text: data.preview_rich_text ?? prev.preview_rich_text,
+            benefits: data.benefits ?? prev.benefits,
+            preview_type: data.preview_type ?? prev.preview_type,
+          }));
+        }
+      })
+      .catch(() => {})
+      .finally(() => {
+        if (active) setHydratingPreview(false);
+      });
+    return () => { active = false; };
+  }, [rawCourse]);
 
   const isHtmlPreview = course.preview_type === 'html' || 
     course.preview_type === 'text' ||
@@ -205,6 +241,13 @@ export default function CoursePreviewViewer({ course: rawCourse, onClose, onPurc
     }
 
     if (type === 'html' || type === 'text') {
+      if (hydratingPreview && !course.preview_rich_text) {
+        return (
+          <div className="w-full py-20 flex items-center justify-center bg-zinc-950/90 rounded-[2.5rem] border border-white/10">
+            <GlowingSpinner size="md" />
+          </div>
+        );
+      }
       const rawContent = course.preview_rich_text || '';
       const htmlContent = rawContent.replace('<!--__PWA_HTML_APP__-->', '');
       return (
@@ -264,13 +307,19 @@ export default function CoursePreviewViewer({ course: rawCourse, onClose, onPurc
 
         {/* Conteúdo HTML cobrindo a página inteira */}
         <div className="w-full flex-1 flex flex-col">
-          <HtmlAppViewer
-            htmlContent={htmlContent}
-            title={course.preview_title || course.title}
-            className="w-full flex-1"
-            minHeight="85vh"
-            onComplete={onPurchase}
-          />
+          {hydratingPreview && !htmlContent ? (
+            <div className="w-full flex-1 flex items-center justify-center min-h-[60vh]">
+              <GlowingSpinner size="lg" />
+            </div>
+          ) : (
+            <HtmlAppViewer
+              htmlContent={htmlContent}
+              title={course.preview_title || course.title}
+              className="w-full flex-1"
+              minHeight="85vh"
+              onComplete={onPurchase}
+            />
+          )}
         </div>
 
         {/* Opção de suporte embaixo da página */}

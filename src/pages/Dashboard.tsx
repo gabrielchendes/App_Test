@@ -29,8 +29,55 @@ import { lazyWithRetry } from '../lib/lazyWithRetry';
 import { GlowingSpinner } from '../components/GlowingSpinner';
 import { parseCourseHtmlFunnel } from '../utils/courseFunnel';
 import PWAInstallModal from '../components/PWAInstallModal';
-import { applyCourseOverrides, useCourseOverridesSync } from '../lib/courseOverrides';
-import { getPermanentCachedCourses } from '../lib/coursePreload';
+import { applyCourseOverrides, hydrateOverridesFromBootstrap, syncOverridesFromServer, useCourseOverridesSync } from '../lib/courseOverrides';
+import { getPermanentCachedCourses, stripHeavyCourseDataForCache } from '../lib/coursePreload';
+
+const isUUID = (str?: string) =>
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(str || '');
+
+function readFastAccessToken(): string | null {
+  if (typeof window === 'undefined') return null;
+  try {
+    const raw = localStorage.getItem('maternidade_premium_auth');
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      return parsed?.access_token || parsed?.currentSession?.access_token || null;
+    }
+  } catch {}
+  return null;
+}
+
+function mergeLocalProgress(userId: string | undefined, serverProgress: any[]): any[] {
+  const map = new Map<string, any>();
+  if (Array.isArray(serverProgress)) {
+    for (const p of serverProgress) {
+      if (p?.chapter_id) {
+        map.set(p.chapter_id, p);
+      }
+    }
+  }
+  if (typeof window !== 'undefined' && userId) {
+    try {
+      const prefix = `user_progress_${userId}_`;
+      for (let i = 0; i < localStorage.length; i++) {
+        const key = localStorage.key(i);
+        if (key && key.startsWith(prefix)) {
+          const chapId = key.substring(prefix.length);
+          const isDone = localStorage.getItem(key) === 'true';
+          const existing = map.get(chapId);
+          if (existing) {
+            if (isDone && !existing.completed) {
+              map.set(chapId, { ...existing, completed: true });
+            }
+          } else if (isDone) {
+            map.set(chapId, { user_id: userId, chapter_id: chapId, completed: true });
+          }
+        }
+      }
+    } catch {}
+  }
+  return Array.from(map.values());
+}
 
 // Lazy load heavy components and modals
 const Profile = lazyWithRetry(() => import('../components/Profile'));
@@ -88,7 +135,7 @@ export default function Dashboard({ user }: DashboardProps) {
   const [courseChapters, setCourseChapters] = useState<Record<string, string[]>>(() => initialCached?.courseChapters || {});
   const [courseStats, setCourseStats] = useState<Record<string, { lessons: number, materials: number }>>(() => initialCached?.courseStats || {});
   const [purchases, setPurchases] = useState<{product_id: string, created_at: any}[]>(() => initialCached?.purchases || []);
-  const [userProgress, setUserProgress] = useState<any[]>(() => initialCached?.userProgress || []);
+  const [userProgress, setUserProgress] = useState<any[]>(() => mergeLocalProgress(user?.id, initialCached?.userProgress || []));
   const [userProfile, setUserProfile] = useState<{ has_access?: boolean; has_unlimited_ai?: boolean; is_admin?: boolean } | null>(() => {
     if (user?.id) {
       return dataCache.getSync(profileCacheKey, null);
@@ -111,6 +158,18 @@ export default function Dashboard({ user }: DashboardProps) {
   const fetchInProgressRef = useRef(false);
   const hasFetchedOnceRef = useRef(false);
   const prevViewingCourseIdRef = useRef<string | null>(null);
+  const userProgressRef = useRef<any[]>(userProgress);
+  useEffect(() => {
+    userProgressRef.current = userProgress;
+  }, [userProgress]);
+
+  const syncProgressToDashboardCache = useCallback((nextProgress: any[]) => {
+    if (!user?.id) return;
+    const existing = dataCache.get(cacheKey, true);
+    if (existing && Array.isArray(existing.courses) && existing.courses.length > 0) {
+      dataCache.set(cacheKey, { ...existing, userProgress: nextProgress }, 600000);
+    }
+  }, [user?.id, cacheKey]);
 
   // Listen for background catalog preloads so if courses were empty, they populate immediately
   useEffect(() => {
@@ -225,19 +284,23 @@ export default function Dashboard({ user }: DashboardProps) {
   // Silently sync progress when user closes CourseViewer, WITHOUT fetching courses
   useEffect(() => {
     if (prevViewingCourseIdRef.current && !viewingCourseId && user?.id) {
-      supabase
-        .from('user_progress')
-        .select('chapter_id, completed, user_id')
-        .eq('user_id', user.id)
-        .then(({ data }) => {
-          if (data && data.length > 0) {
-            setUserProgress(data);
-          }
-        })
-        .catch(() => {});
+      if (isUUID(user.id)) {
+        supabase
+          .from('user_progress')
+          .select('chapter_id, completed, user_id')
+          .eq('user_id', user.id)
+          .then(({ data }) => {
+            if (data && data.length > 0) {
+              const merged = mergeLocalProgress(user.id, data);
+              setUserProgress(merged);
+              syncProgressToDashboardCache(merged);
+            }
+          })
+          .catch(() => {});
+      }
     }
     prevViewingCourseIdRef.current = viewingCourseId;
-  }, [viewingCourseId, user?.id]);
+  }, [viewingCourseId, user?.id, syncProgressToDashboardCache]);
 
   useEffect(() => {
     // Only update hash if it's not already correct to avoid unnecessary history changes
@@ -293,27 +356,36 @@ export default function Dashboard({ user }: DashboardProps) {
       mediaQuery.addEventListener('change', handleDisplayModeChange);
     }
 
-    // Prioritized preloading of chunks and assets according to user frequency:
-    // 1. High Priority: CourseViewer and CoursePreviewViewer (ensures 0ms delay on course click)
-    const courseViewerTimer = setTimeout(() => {
+    // Deferred background chunk preloading during idle time so initial progress & dashboard data load at top priority
+    const scheduleIdle = (cb: () => void, delayMs: number) => {
+      return setTimeout(() => {
+        if (typeof (window as any).requestIdleCallback === 'function') {
+          (window as any).requestIdleCallback(cb, { timeout: 2000 });
+        } else {
+          cb();
+        }
+      }, delayMs);
+    };
+
+    // 1. High Priority: CourseViewer and CoursePreviewViewer
+    const courseViewerTimer = scheduleIdle(() => {
       import('../components/CourseViewer');
       import('../components/CoursePreviewViewer');
-    }, 250);
+    }, 1400);
 
-    // 2. High Priority: Comunidade and IA Expert (Ask Victoria) - Warm up early
-    const highPriorityTimer = setTimeout(() => {
+    // 2. Medium Priority: Community and Ask Victoria
+    const highPriorityTimer = scheduleIdle(() => {
       import('../components/Community');
       import('../components/AiAssistantModal');
-      // Pre-warm Ask Victoria / Expert avatar asset
       const victoriaAvatar = settings?.custom_texts?.['ai_expert.avatar_url']?.trim() || 'https://fhnmpltilhongdofnzbj.supabase.co/storage/v1/object/public/contents/Victoria.webp';
       const img = new Image();
       img.src = victoriaAvatar;
-    }, 600);
+    }, 2600);
 
-    // 3. Medium Priority: Profile tab
-    const profileTimer = setTimeout(() => {
+    // 3. Low Priority: Profile tab
+    const profileTimer = scheduleIdle(() => {
       import('../components/Profile');
-    }, 2000);
+    }, 4000);
 
     // 4. Admin Panel is strictly on-demand (only loaded when an admin clicks the admin tab)
 
@@ -357,7 +429,9 @@ export default function Dashboard({ user }: DashboardProps) {
             .eq('user_id', user.id);
             
           if (mounted && progressData) {
-            setUserProgress(progressData);
+            const merged = mergeLocalProgress(user.id, progressData);
+            setUserProgress(merged);
+            syncProgressToDashboardCache(merged);
           }
         }
       )
@@ -367,7 +441,7 @@ export default function Dashboard({ user }: DashboardProps) {
       mounted = false;
       supabase.removeChannel(channel);
     };
-  }, [user.id]);
+  }, [user.id, syncProgressToDashboardCache]);
 
   useEffect(() => {
     // Preload top banner assets gently for instant display
@@ -401,13 +475,12 @@ export default function Dashboard({ user }: DashboardProps) {
     if (fetchInProgressRef.current) return;
     fetchInProgressRef.current = true;
 
-    const cacheKey = `dashboard_data_${user.id}`;
     const cachedData = forceNoCache ? null : dataCache.get(cacheKey, true);
     
     if (cachedData && cachedData.courses && cachedData.courses.length > 0) {
       setCourses(applyCourseOverrides(cachedData.courses));
       setPurchases(cachedData.purchases || []);
-      setUserProgress(cachedData.userProgress || []);
+      setUserProgress(mergeLocalProgress(user.id, cachedData.userProgress || []));
       setCourseStats(cachedData.courseStats || {});
       setCourseChapters(cachedData.courseChapters || {});
       setLoading(false);
@@ -415,158 +488,36 @@ export default function Dashboard({ user }: DashboardProps) {
 
     let fetchedCoursesData: Course[] = [];
 
-    try {
-      const isUUID = (str?: string) =>
-        /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(str || '');
-
-      // 1. Fetch Courses resiliently as a promise to execute in parallel with user data
-      const fetchCoursesPromise = (async (): Promise<Course[]> => {
-        for (let attempt = 1; attempt <= 3; attempt++) {
-          try {
-            let coursesRes = await supabase
-              .from('courses')
-              .select('*')
-              .order('order_index', { ascending: true });
-
-            if (coursesRes.error && (coursesRes.error.code === '42703' || coursesRes.error.message?.includes('order_index'))) {
-              coursesRes = await supabase
-                .from('courses')
-                .select('*')
-                .order('created_at', { ascending: true });
-            }
-
-            if (coursesRes.data && coursesRes.data.length > 0) {
-              return applyCourseOverrides(coursesRes.data.filter((c: any) => c.is_active !== false));
-            } else if (coursesRes.error) {
-              console.warn(`Courses query attempt ${attempt} warning, trying fallback select:`, coursesRes.error);
-              const fallbackRes = await supabase.from('courses').select('*');
-              if (fallbackRes.data && fallbackRes.data.length > 0) {
-                return applyCourseOverrides(fallbackRes.data.filter((c: any) => c.is_active !== false));
-              }
-            }
-          } catch (err) {
-            console.warn(`Courses query attempt ${attempt} error:`, err);
-          }
-
-          if (attempt < 3) {
-            await new Promise(r => setTimeout(r, attempt * 400));
-          }
-        }
-
-        // Final fallback: check permanent cached courses
-        const permanentBackup = getPermanentCachedCourses();
-        if (permanentBackup && permanentBackup.length > 0) {
-          return applyCourseOverrides(permanentBackup);
-        }
-
-        return [];
-      })();
-
-      // 2. Fetch all Home data simultaneously in parallel (Zero waterfall, cuts mobile latency in half)
-      const [coursesResult, purchasesByIdResult, progressResult, packagesResult, chaptersResult, profileResult, manualGrantsResult] = await Promise.allSettled([
-        fetchCoursesPromise,
-        supabase.from('purchases').select('product_id, created_at').eq('user_id', user.id),
-        supabase.from('user_progress').select('chapter_id, completed, user_id').eq('user_id', user.id),
-        supabase.from('course_packages').select('id, hotmart_product_id, hotmart_checkout_url, package_courses(course_id)'),
-        supabase.from('chapters').select('id, content_type, modules!inner(course_id)'),
-        isUUID(user.id) ? supabase.from('profiles').select('has_access, has_unlimited_ai, is_admin').eq('id', user.id).maybeSingle() : Promise.resolve({ data: null, error: null } as any),
-        supabase.from('ai_user_memory').select('facts').eq('user_id', '__global_manual_purchases__').maybeSingle()
-      ]);
-
-      if (coursesResult.status === 'fulfilled' && Array.isArray(coursesResult.value) && coursesResult.value.length > 0) {
-        fetchedCoursesData = coursesResult.value;
-      }
-
-
-      // If fetched courses is still empty, keep current courses or attempt catalog cache fallback
-      if (fetchedCoursesData.length === 0) {
-        if (courses.length > 0) {
-          fetchedCoursesData = courses;
-        } else {
-          const globalCatalog = getPermanentCachedCourses();
-          if (globalCatalog && Array.isArray(globalCatalog) && globalCatalog.length > 0) {
-            fetchedCoursesData = globalCatalog;
-          }
-        }
-      }
-
-
-      let basePurchases: { product_id: string; created_at: any }[] = [];
-      if (purchasesByIdResult.status === 'fulfilled' && (purchasesByIdResult.value as any)?.data) {
-        basePurchases = (purchasesByIdResult.value as any).data;
-      }
-
-      // Handle purchases by email if applicable
-      if (user.email && user.email.toLowerCase() !== user.id && !isUUID(user.id)) {
-        try {
-          const { data: emailPurchases, error: emailPurErr } = await supabase
-            .from('purchases')
-            .select('product_id, created_at')
-            .eq('user_id', user.email.toLowerCase());
-          if (!emailPurErr && emailPurchases && emailPurchases.length > 0) {
-            const existingProductIds = new Set(basePurchases.map(p => p.product_id));
-            emailPurchases.forEach(ep => {
-              if (!existingProductIds.has(ep.product_id)) {
-                basePurchases.push(ep);
-                existingProductIds.add(ep.product_id);
-              }
-            });
-          }
-        } catch {
-          // Ignore type mismatch errors
-        }
-      }
-
-      // Merge persistent manual grants from cloud memory (ai_user_memory)
-      if (manualGrantsResult.status === 'fulfilled' && (manualGrantsResult.value as any)?.data?.facts?.[0]) {
-        try {
-          const cloudMap = (manualGrantsResult.value as any).data.facts[0];
-          const userKeys = [user.id?.toLowerCase(), user.email?.toLowerCase()].filter(Boolean) as string[];
-          const existingProductIds = new Set(basePurchases.map(p => p.product_id));
-          for (const k of userKeys) {
-            const grantedCourses = cloudMap[k];
-            if (Array.isArray(grantedCourses)) {
-              for (const cid of grantedCourses) {
-                if (cid && !existingProductIds.has(cid)) {
-                  basePurchases.push({ product_id: cid, created_at: new Date().toISOString() });
-                  existingProductIds.add(cid);
-                }
-              }
-            }
-          }
-        } catch (mErr) {
-          console.warn('[Dashboard] Cloud manual grants merge note:', mErr);
-        }
-      }
-
-      // Handle profile safely
-      let profileData = null;
-      if (profileResult.status === 'fulfilled' && (profileResult.value as any)?.data) {
-        profileData = (profileResult.value as any).data;
-      }
-      if (!profileData && user.email) {
-        try {
-          const { data } = await supabase
-            .from('profiles')
-            .select('has_access, has_unlimited_ai, is_admin')
-            .eq('email', user.email.toLowerCase())
-            .maybeSingle();
-          profileData = data;
-        } catch {}
-      }
-
+    const finalizeAndCache = (
+      rawCourses: any[],
+      basePurchases: { product_id: string; created_at: any }[],
+      packagesList: any[],
+      stats: Record<string, { lessons: number; materials: number }>,
+      chapterMap: Record<string, string[]>,
+      progData: any[],
+      profileData: any
+    ) => {
       if (profileData) {
         setUserProfile(profileData);
         dataCache.set(profileCacheKey, profileData, 86400000);
+        if (profileData.full_name || profileData.avatar_url) {
+          try {
+            if (profileData.full_name) localStorage.setItem(`cached_full_name_${user.id}`, profileData.full_name);
+            if (profileData.avatar_url) localStorage.setItem(`cached_avatar_url_${user.id}`, profileData.avatar_url);
+            window.dispatchEvent(new CustomEvent('user-profile-updated', {
+              detail: { full_name: profileData.full_name, avatar_url: profileData.avatar_url }
+            }));
+          } catch {}
+        }
       }
 
       const purchasedIds = basePurchases.map(p => p.product_id);
       const unlockedByPackages = new Set<string>();
-      const packageUnlockDates: Record<string, string> = {}; 
+      const packageUnlockDates: Record<string, string> = {};
       const courseToPackageCheckout: Record<string, string> = {};
 
-      if (packagesResult.status === 'fulfilled' && (packagesResult.value as any)?.data) {
-        ((packagesResult.value as any).data as any[]).forEach(pkg => {
+      if (Array.isArray(packagesList)) {
+        packagesList.forEach((pkg: any) => {
           if (pkg.hotmart_checkout_url) {
             pkg.package_courses?.forEach((pc: any) => {
               if (!courseToPackageCheckout[pc.course_id]) {
@@ -588,7 +539,7 @@ export default function Dashboard({ user }: DashboardProps) {
       const mainPrice = parseFloat(settings?.custom_texts?.['main_price'] || '0') || 0;
       const mainCheckoutUrl = settings?.custom_texts?.['main_checkout_url'] || '';
 
-      const processedCourses = applyCourseOverrides(fetchedCoursesData).map(c => {
+      const processedCourses = applyCourseOverrides(rawCourses).map((c: any) => {
         const funnelParsed = parseCourseHtmlFunnel(c);
         const isMainCourse = !!c.is_free && !c.is_bonus;
         const effectivePdf = c.pdf_url || c.preview_pdf_url || '';
@@ -601,8 +552,7 @@ export default function Dashboard({ user }: DashboardProps) {
           checkout_url: isMainCourse ? mainCheckoutUrl : (courseToPackageCheckout[c.id] || c.checkout_url)
         };
       });
-      
-      // Combine base purchases with package-unlocked courses
+
       const allPurchases = [...basePurchases];
       Array.from(unlockedByPackages).forEach(id => {
         if (!purchasedIds.includes(id)) {
@@ -610,71 +560,328 @@ export default function Dashboard({ user }: DashboardProps) {
         }
       });
 
-      let stats: Record<string, { lessons: number, materials: number }> = {};
-      let chapterMap: Record<string, string[]> = {};
-
-      if (chaptersResult.status === 'fulfilled' && (chaptersResult.value as any)?.data) {
-        ((chaptersResult.value as any).data as any[]).forEach((ch: any) => {
-          const courseId = ch.modules?.course_id;
-          if (courseId) {
-            if (!stats[courseId]) stats[courseId] = { lessons: 0, materials: 0 };
-            if (!chapterMap[courseId]) chapterMap[courseId] = [];
-            
-            chapterMap[courseId].push(ch.id);
-            if (ch.content_type === 'video' || ch.content_type === 'audio' || ch.content_type === 'html' || ch.content_type === 'html_app') stats[courseId].lessons++;
-            else stats[courseId].materials++;
-          }
-        });
-      }
-
       // Ensure courses with PDF materials reflect at least 1 material in stats
-      processedCourses.forEach(c => {
+      processedCourses.forEach((c: any) => {
         if ((c.pdf_url || c.preview_pdf_url) && (!stats[c.id] || (stats[c.id].lessons === 0 && stats[c.id].materials === 0))) {
           if (!stats[c.id]) stats[c.id] = { lessons: 0, materials: 1 };
           else stats[c.id].materials = 1;
         }
       });
 
-      const progData = (progressResult.status === 'fulfilled' && (progressResult.value as any)?.data) 
-        ? (progressResult.value as any).data 
-        : [];
+      const mergedProgress = mergeLocalProgress(user.id, progData);
 
       if (processedCourses.length > 0) {
         setCourses(processedCourses);
-        // Persist global catalog cache (24 hours TTL) for 0ms loads
-        dataCache.set('global_public_courses_catalog', processedCourses, 86400000);
+        const lightweightForCatalog = processedCourses.map(stripHeavyCourseDataForCache);
+        dataCache.set('global_public_courses_catalog', lightweightForCatalog, 86400000);
         if (typeof window !== 'undefined') {
           try {
-            localStorage.setItem('mp_permanent_courses_catalog', JSON.stringify(processedCourses));
+            localStorage.setItem('mp_permanent_courses_catalog', JSON.stringify(lightweightForCatalog));
           } catch {}
         }
       }
       setPurchases(allPurchases);
-      setUserProgress(progData);
+      setUserProgress(mergedProgress);
       setCourseStats(stats);
       setCourseChapters(chapterMap);
 
       if (processedCourses.length > 0) {
-        // Save to persistent user cache (10 minutes TTL with SWR)
+        const lightweightCourses = processedCourses.map(stripHeavyCourseDataForCache);
         dataCache.set(cacheKey, {
-          courses: processedCourses,
+          courses: lightweightCourses,
           purchases: allPurchases,
-          userProgress: progData,
+          userProgress: mergedProgress,
           courseStats: stats,
           courseChapters: chapterMap
         }, 600000);
       }
+    };
 
+    try {
+      // FAST PATH: Single consolidated server bootstrap (server-cached catalog + parallel user progress/purchases)
+      let bootstrapHandled = false;
+      try {
+        let token = readFastAccessToken();
+        if (!token) {
+          const { data: sess } = await Promise.race([
+            supabase.auth.getSession(),
+            new Promise<any>((resolve) => setTimeout(() => resolve({ data: { session: null } }), 350))
+          ]);
+          token = sess?.session?.access_token || null;
+        }
+
+        const params = new URLSearchParams({
+          action: 'bootstrap',
+          userId: user.id
+        });
+        if (user.email) params.set('email', user.email);
+        if (forceNoCache) params.set('refresh', '1');
+
+        const headers: Record<string, string> = {};
+        if (token) headers['Authorization'] = `Bearer ${token}`;
+
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 4500);
+        const resp = await fetch(`/api/v1/progress?${params.toString()}`, {
+          headers,
+          signal: controller.signal
+        }).finally(() => clearTimeout(timeoutId));
+
+        if (resp.ok) {
+          const boot = await resp.json();
+          if (boot?.success && Array.isArray(boot.courses) && boot.courses.length > 0) {
+            hydrateOverridesFromBootstrap(boot.courseOverrides, boot.chapterOverrides);
+            fetchedCoursesData = boot.courses;
+
+            const basePurchases: { product_id: string; created_at: any }[] = Array.isArray(boot.purchases) ? [...boot.purchases] : [];
+            const existingProductIds = new Set(basePurchases.map(p => p.product_id));
+            if (Array.isArray(boot.manualGrantedIds)) {
+              for (const cid of boot.manualGrantedIds) {
+                if (cid && !existingProductIds.has(cid)) {
+                  basePurchases.push({ product_id: cid, created_at: new Date().toISOString() });
+                  existingProductIds.add(cid);
+                }
+              }
+            }
+
+            let progData: any[] = Array.isArray(boot.userProgress) ? boot.userProgress : [];
+
+            // If server bootstrap couldn't read user_progress directly (e.g. missing token/service key), fetch it directly on client
+            if (!boot.userProgressSynced && isUUID(user.id)) {
+              try {
+                const { data: directProg } = await supabase
+                  .from('user_progress')
+                  .select('chapter_id, completed, user_id')
+                  .eq('user_id', user.id);
+                if (Array.isArray(directProg)) {
+                  progData = directProg;
+                }
+              } catch {}
+            }
+
+            finalizeAndCache(
+              fetchedCoursesData,
+              basePurchases,
+              Array.isArray(boot.packages) ? boot.packages : [],
+              boot.courseStats || {},
+              boot.courseChapters || {},
+              progData,
+              boot.profile || null
+            );
+
+            bootstrapHandled = true;
+          }
+        }
+      } catch (bootErr) {
+        console.debug?.('[Dashboard] Bootstrap fast-path fallback to direct queries:', bootErr);
+      }
+
+      if (bootstrapHandled) {
+        return;
+      }
+
+      // FALLBACK PATH: Direct parallel Supabase queries with progressive immediate state updates (no waiting for slowest query!)
+      syncOverridesFromServer(forceNoCache).catch(() => {});
+      let liveProgress: any[] = [];
+      let liveStats: Record<string, { lessons: number; materials: number }> = {};
+      let liveChapterMap: Record<string, string[]> = {};
+
+      const fetchCoursesPromise = (async (): Promise<Course[]> => {
+        for (let attempt = 1; attempt <= 2; attempt++) {
+          try {
+            let coursesRes = await supabase
+              .from('courses')
+              .select('*')
+              .order('order_index', { ascending: true });
+
+            if (coursesRes.error && (coursesRes.error.code === '42703' || coursesRes.error.message?.includes('order_index'))) {
+              coursesRes = await supabase
+                .from('courses')
+                .select('*')
+                .order('created_at', { ascending: true });
+            }
+
+            if (coursesRes.data && coursesRes.data.length > 0) {
+              return applyCourseOverrides(
+                coursesRes.data
+                  .filter((c: any) => c.is_active !== false)
+                  .map(stripHeavyCourseDataForCache)
+              );
+            } else if (coursesRes.error) {
+              const fallbackRes = await supabase.from('courses').select('*');
+              if (fallbackRes.data && fallbackRes.data.length > 0) {
+                return applyCourseOverrides(
+                  fallbackRes.data
+                    .filter((c: any) => c.is_active !== false)
+                    .map(stripHeavyCourseDataForCache)
+                );
+              }
+            }
+          } catch (err) {
+            console.warn(`Courses query attempt ${attempt} error:`, err);
+          }
+
+          if (attempt < 2) {
+            await new Promise(r => setTimeout(r, 300));
+          }
+        }
+
+        const permanentBackup = getPermanentCachedCourses();
+        if (permanentBackup && permanentBackup.length > 0) {
+          return applyCourseOverrides(permanentBackup);
+        }
+
+        return [];
+      })();
+
+      // Progressive progress query: updates state IMMEDIATELY when it resolves
+      const progressPromise = isUUID(user.id)
+        ? supabase
+            .from('user_progress')
+            .select('chapter_id, completed, user_id')
+            .eq('user_id', user.id)
+            .then((res) => {
+              if (Array.isArray(res.data)) {
+                liveProgress = res.data;
+                setUserProgress(mergeLocalProgress(user.id, res.data));
+              }
+              return res;
+            })
+        : Promise.resolve({ data: [], error: null } as any);
+
+      // Progressive chapters query: updates courseChapters & courseStats IMMEDIATELY when it resolves
+      const chaptersPromise = supabase
+        .from('chapters')
+        .select('id, content_type, modules!inner(course_id)')
+        .then((res) => {
+          if (Array.isArray(res.data)) {
+            const s: Record<string, { lessons: number; materials: number }> = {};
+            const chMap: Record<string, string[]> = {};
+            res.data.forEach((ch: any) => {
+              const courseId = ch.modules?.course_id;
+              if (courseId) {
+                if (!s[courseId]) s[courseId] = { lessons: 0, materials: 0 };
+                if (!chMap[courseId]) chMap[courseId] = [];
+                chMap[courseId].push(ch.id);
+                if (ch.content_type === 'video' || ch.content_type === 'audio' || ch.content_type === 'html' || ch.content_type === 'html_app') {
+                  s[courseId].lessons++;
+                } else {
+                  s[courseId].materials++;
+                }
+              }
+            });
+            liveStats = s;
+            liveChapterMap = chMap;
+            setCourseStats(s);
+            setCourseChapters(chMap);
+          }
+          return res;
+        });
+
+      const [coursesResult, purchasesByIdResult, _progressResult, packagesResult, _chaptersResult, profileResult, manualGrantsResult] = await Promise.allSettled([
+        fetchCoursesPromise,
+        supabase.from('purchases').select('product_id, created_at').eq('user_id', user.id),
+        progressPromise,
+        supabase.from('course_packages').select('id, hotmart_product_id, hotmart_checkout_url, package_courses(course_id)'),
+        chaptersPromise,
+        isUUID(user.id) ? supabase.from('profiles').select('has_access, has_unlimited_ai, is_admin, full_name, avatar_url').eq('id', user.id).maybeSingle() : Promise.resolve({ data: null, error: null } as any),
+        supabase.from('ai_user_memory').select('facts').eq('user_id', '__global_manual_purchases__').maybeSingle()
+      ]);
+
+      if (coursesResult.status === 'fulfilled' && Array.isArray(coursesResult.value) && coursesResult.value.length > 0) {
+        fetchedCoursesData = coursesResult.value;
+      }
+
+      if (fetchedCoursesData.length === 0) {
+        if (courses.length > 0) {
+          fetchedCoursesData = courses;
+        } else {
+          const globalCatalog = getPermanentCachedCourses();
+          if (globalCatalog && Array.isArray(globalCatalog) && globalCatalog.length > 0) {
+            fetchedCoursesData = globalCatalog;
+          }
+        }
+      }
+
+      let basePurchases: { product_id: string; created_at: any }[] = [];
+      if (purchasesByIdResult.status === 'fulfilled' && (purchasesByIdResult.value as any)?.data) {
+        basePurchases = (purchasesByIdResult.value as any).data;
+      }
+
+      if (user.email && user.email.toLowerCase() !== user.id && !isUUID(user.id)) {
+        try {
+          const { data: emailPurchases, error: emailPurErr } = await supabase
+            .from('purchases')
+            .select('product_id, created_at')
+            .eq('user_id', user.email.toLowerCase());
+          if (!emailPurErr && emailPurchases && emailPurchases.length > 0) {
+            const existingProductIds = new Set(basePurchases.map(p => p.product_id));
+            emailPurchases.forEach(ep => {
+              if (!existingProductIds.has(ep.product_id)) {
+                basePurchases.push(ep);
+                existingProductIds.add(ep.product_id);
+              }
+            });
+          }
+        } catch {}
+      }
+
+      if (manualGrantsResult.status === 'fulfilled' && (manualGrantsResult.value as any)?.data?.facts?.[0]) {
+        try {
+          const cloudMap = (manualGrantsResult.value as any).data.facts[0];
+          const userKeys = [user.id?.toLowerCase(), user.email?.toLowerCase()].filter(Boolean) as string[];
+          const existingProductIds = new Set(basePurchases.map(p => p.product_id));
+          for (const k of userKeys) {
+            const grantedCourses = cloudMap[k];
+            if (Array.isArray(grantedCourses)) {
+              for (const cid of grantedCourses) {
+                if (cid && !existingProductIds.has(cid)) {
+                  basePurchases.push({ product_id: cid, created_at: new Date().toISOString() });
+                  existingProductIds.add(cid);
+                }
+              }
+            }
+          }
+        } catch (mErr) {
+          console.warn('[Dashboard] Cloud manual grants merge note:', mErr);
+        }
+      }
+
+      let profileData = null;
+      if (profileResult.status === 'fulfilled' && (profileResult.value as any)?.data) {
+        profileData = (profileResult.value as any).data;
+      }
+      if (!profileData && user.email) {
+        try {
+          const { data } = await supabase
+            .from('profiles')
+            .select('has_access, has_unlimited_ai, is_admin, full_name, avatar_url')
+            .eq('email', user.email.toLowerCase())
+            .maybeSingle();
+          profileData = data;
+        } catch {}
+      }
+
+      const packagesList = (packagesResult.status === 'fulfilled' && (packagesResult.value as any)?.data)
+        ? (packagesResult.value as any).data
+        : [];
+
+      finalizeAndCache(
+        fetchedCoursesData,
+        basePurchases,
+        packagesList,
+        liveStats,
+        liveChapterMap,
+        liveProgress,
+        profileData
+      );
     } catch (error: any) {
       console.warn('Notice during data fetch (retaining member session):', error?.message || error);
     } finally {
       setLoading(false);
-      // Crucial: Only consider initial fetch completed if courses have actually resolved
-      // This prevents the jarring "YOU DO NOT HAVE ANY UNLOCKED COURSES YET" flash on initial cold starts
       if (fetchedCoursesData.length > 0 || courses.length > 0) {
         setHasInitialFetchCompleted(true);
       } else {
-        // Auto-retry gently in the background if courses are still not loaded
         setTimeout(() => {
           fetchData(true);
         }, 1200);
@@ -745,24 +952,36 @@ export default function Dashboard({ user }: DashboardProps) {
     }
   }, [courses, viewingCourseId, isUnlocked, courseStats, user?.id]);
 
+  // O(1) Set of completed chapter IDs for instant progress calculation across all courses
+  const completedChapterIdSet = useMemo(() => {
+    const set = new Set<string>();
+    for (const p of userProgress) {
+      if (p?.completed && p.chapter_id) {
+        set.add(p.chapter_id);
+      }
+    }
+    return set;
+  }, [userProgress]);
+
   const getCourseProgress = useCallback((courseId: string) => {
-    const chaptersInCourse = courseChapters[courseId] || [];
-    if (chaptersInCourse.length === 0) return 0;
-    
-    // Filter progress to only include completions for this course's chapters
-    const completedCount = userProgress.filter(p => 
-      p.completed && chaptersInCourse.includes(p.chapter_id)
-    ).length;
-    
+    const chaptersInCourse = courseChapters[courseId];
+    if (!chaptersInCourse || chaptersInCourse.length === 0) return 0;
+
+    let completedCount = 0;
+    for (let i = 0; i < chaptersInCourse.length; i++) {
+      if (completedChapterIdSet.has(chaptersInCourse[i])) {
+        completedCount++;
+      }
+    }
+
     return Math.min(100, Math.round((completedCount / chaptersInCourse.length) * 100));
-  }, [courseChapters, userProgress]);
+  }, [courseChapters, completedChapterIdSet]);
 
   // High-performance course prefetching: fetches modules and chapters into cache ahead of time
   const prefetchCourse = useCallback(async (courseOrId: Course | string) => {
     const cId = typeof courseOrId === 'string' ? courseOrId : courseOrId?.id;
     if (!cId || dataCache.get(`course_full_${cId}`)) return;
     try {
-      // Pre-warm CourseViewer chunk
       import('../components/CourseViewer');
 
       const { data: modulesData } = await supabase
@@ -787,23 +1006,30 @@ export default function Dashboard({ user }: DashboardProps) {
           course: targetCourse || null,
           modules: cleanModules,
           chapters: chaptersList,
-          progress: userProgress || []
+          progress: userProgressRef.current || []
         }, 600000);
       }
     } catch (_) {}
-  }, [courses, userProgress]);
+  }, [courses]);
 
-  // Silently warm up the first 3 unlocked courses in background for 0ms open latency
+  // Silently warm up only the first 2 unlocked courses AFTER initial dashboard data settles
   useEffect(() => {
-    if (courses.length > 0) {
-      const unlocked = courses.filter(c => isUnlocked(c)).slice(0, 3);
-      unlocked.forEach((c, idx) => {
-        setTimeout(() => {
-          prefetchCourse(c);
-        }, 500 + idx * 300);
-      });
+    if (!hasInitialFetchCompleted || courses.length === 0) return;
+    const conn = (navigator as any)?.connection;
+    if (conn?.saveData || conn?.effectiveType === '2g' || conn?.effectiveType === 'slow-2g') {
+      return;
     }
-  }, [courses, isUnlocked, prefetchCourse]);
+
+    const unlocked = courses.filter(c => isUnlocked(c)).slice(0, 2);
+    const timers = unlocked.map((c, idx) =>
+      setTimeout(() => {
+        prefetchCourse(c);
+      }, 2000 + idx * 700)
+    );
+    return () => {
+      timers.forEach(tId => clearTimeout(tId));
+    };
+  }, [hasInitialFetchCompleted, courses, isUnlocked, prefetchCourse]);
 
   const unlockedCourses = useMemo(() => {
     return courses.filter(p => isUnlocked(p) && !p.is_bonus);
@@ -869,31 +1095,41 @@ export default function Dashboard({ user }: DashboardProps) {
         const lastViewed = JSON.parse(lastViewedStr);
         const course = allUnlocked.find(c => c.id === lastViewed.courseId);
         if (course) {
-           const progress = getCourseProgress(course.id);
-           if (progress < 100) {
-             lastActiveCourse = {
-               id: course.id,
-               title: course.title,
-               cover_url: course.cover_url,
-               progress: Math.round(progress)
-             };
-           }
+          const progress = getCourseProgress(course.id);
+          if (progress < 100) {
+            lastActiveCourse = {
+              id: course.id,
+              title: course.title,
+              cover_url: course.cover_url,
+              progress: Math.round(progress)
+            };
+          }
         }
       } catch (e) {}
     }
 
-    allUnlocked.forEach(course => {
+    let firstNotCompleted: Course | undefined;
+
+    for (let i = 0; i < allUnlocked.length; i++) {
+      const course = allUnlocked[i];
       try {
         const chapters = courseChapters[course.id] || [];
         totalChapters += chapters.length;
-        
-        const compCount = userProgress.filter(p => 
-          p && p.completed && chapters.includes(p.chapter_id)
-        ).length;
-        
+
+        let compCount = 0;
+        for (let j = 0; j < chapters.length; j++) {
+          if (completedChapterIdSet.has(chapters[j])) {
+            compCount++;
+          }
+        }
+
         completedChapters += compCount;
         const progress = chapters.length > 0 ? (compCount / chapters.length) * 100 : 0;
-        
+
+        if (!firstNotCompleted && progress < 100) {
+          firstNotCompleted = course;
+        }
+
         // Use highest progress that is not completed as "Continue watching"
         if (progress > 0 && progress < 100 && progress > maxProgress) {
           maxProgress = progress;
@@ -907,28 +1143,22 @@ export default function Dashboard({ user }: DashboardProps) {
       } catch (err) {
         console.warn('Error calculating stats for course:', course.id, err);
       }
-    });
+    }
 
     // Fallback if none are in progress
-    if (!lastActiveCourse && allUnlocked.length > 0) {
-      const firstNotCompleted = allUnlocked.find(c => {
-         const p = getCourseProgress(c.id);
-         return p < 100;
-      });
-      if (firstNotCompleted) {
-        lastActiveCourse = {
-          id: firstNotCompleted.id,
-          title: firstNotCompleted.title,
-          cover_url: firstNotCompleted.cover_url,
-          progress: getCourseProgress(firstNotCompleted.id)
-        };
-      }
+    if (!lastActiveCourse && firstNotCompleted) {
+      lastActiveCourse = {
+        id: firstNotCompleted.id,
+        title: firstNotCompleted.title,
+        cover_url: firstNotCompleted.cover_url,
+        progress: getCourseProgress(firstNotCompleted.id)
+      };
     }
 
     const totalProgress = totalChapters > 0 ? Math.round((completedChapters / totalChapters) * 100) : 0;
-    
+
     return { totalProgress, lastCourse: lastActiveCourse };
-  }, [unlockedCourses, bonusCourses, courseChapters, userProgress]);
+  }, [unlockedCourses, bonusCourses, courseChapters, completedChapterIdSet, getCourseProgress, user.id]);
 
   const lastProgressRef = useRef<number>(globalStats.totalProgress);
 
@@ -1013,6 +1243,10 @@ export default function Dashboard({ user }: DashboardProps) {
               courseId={viewingCourseId} 
               initialCourse={viewingCourse}
               initialProgress={userProgress}
+              onProgressChange={(updatedProgress) => {
+                setUserProgress(updatedProgress);
+                syncProgressToDashboardCache(updatedProgress);
+              }}
               userId={user.id} 
               onClose={() => {
                 setViewingCourseId(null);

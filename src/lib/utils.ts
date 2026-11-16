@@ -49,8 +49,8 @@ export async function safeFetch(url: string, options: RequestInit = {}, retries 
         return { error: 'Server response is not valid JSON' };
       }
     } catch (err: any) {
-      if (err?.name === 'AbortError') {
-        return { error: 'Request aborted' };
+      if (err?.name === 'AbortError' || err?.name === 'TimeoutError' || (err?.message && (err.message.includes('timed out') || err.message.includes('aborted')))) {
+        return { error: 'Request aborted or timed out', isTimeout: true };
       }
       if (attempt < retries) {
         await new Promise(resolve => setTimeout(resolve, 600));

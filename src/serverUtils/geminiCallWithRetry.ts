@@ -65,18 +65,16 @@ export async function generateContentWithRetry(
   const {
     ai,
     candidateModels = [
-      'gemini-3-flash-preview',
       'gemini-3.8-flash',
-      'gemini-3.1-flash-lite',
-      'gemini-3.5-flash-lite',
-      'gemini-flash-latest'
+      'gemini-flash-latest',
+      'gemini-3.1-flash-lite'
     ],
     contents,
     config,
     maxAttemptsPerModel = 1,
     baseDelayMs = 200,
-    perCallTimeoutMs = 5000,
-    totalBudgetMs = 8200,
+    perCallTimeoutMs = 35000,
+    totalBudgetMs = 80000,
     logPrefix = '[Gemini Call]'
   } = options;
 
@@ -84,21 +82,21 @@ export async function generateContentWithRetry(
   let lastError: any = null;
 
   for (const modelName of candidateModels) {
-    // If approaching serverless budget, break early to respond cleanly before Vercel kills the function
+    // If approaching overall budget, break early
     const timeElapsed = Date.now() - startTime;
-    if (timeElapsed >= totalBudgetMs - 1200) {
+    if (timeElapsed >= totalBudgetMs - 2000) {
       console.info(`${logPrefix} Approaching execution time budget (${timeElapsed}ms / ${totalBudgetMs}ms). Halting further model attempts.`);
       break;
     }
 
     for (let attempt = 1; attempt <= maxAttemptsPerModel; attempt++) {
       const remainingTime = totalBudgetMs - (Date.now() - startTime);
-      if (remainingTime < 1200) {
+      if (remainingTime < 2500) {
         console.info(`${logPrefix} Not enough time remaining (${remainingTime}ms) for attempt ${attempt} on ${modelName}.`);
         break;
       }
 
-      const effectiveCallTimeout = Math.min(perCallTimeoutMs, remainingTime - 300);
+      const effectiveCallTimeout = Math.min(perCallTimeoutMs, Math.max(remainingTime - 500, 10000));
 
       try {
         let timer: NodeJS.Timeout | null = null;
@@ -108,10 +106,18 @@ export async function generateContentWithRetry(
           }, effectiveCallTimeout);
         });
 
+        const effectiveConfig = config ? { ...config } : undefined;
+        if (effectiveConfig && (modelName.includes('3.8') || modelName.includes('argon'))) {
+          delete (effectiveConfig as any).temperature;
+          delete (effectiveConfig as any).topP;
+          delete (effectiveConfig as any).topK;
+          delete (effectiveConfig as any).candidateCount;
+        }
+
         const callPromise = ai.models.generateContent({
           model: modelName,
           contents,
-          config,
+          config: effectiveConfig,
         });
 
         const response = await Promise.race([callPromise, timeoutPromise]).finally(() => {

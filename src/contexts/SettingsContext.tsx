@@ -183,10 +183,10 @@ export function SettingsProvider({ children }: { children: React.ReactNode }) {
   });
 
   const fetchSettings = async () => {
-    // Fast safety timeout to prevent hanging on poor mobile connections
+    // Fast safety timeout so cold starts never block UI rendering on slow networks
     const timeoutId = setTimeout(() => {
       setLoading(false);
-    }, 1200);
+    }, 550);
 
     try {
       let data: any = null;

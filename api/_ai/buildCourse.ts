@@ -79,6 +79,229 @@ function selectThematicCovers(topic: string, count: number): string[] {
   return results;
 }
 
+export function buildPersuasiveSalesPageHtml(params: {
+  title: string;
+  subtitle: string;
+  command: string;
+  language?: string;
+  priceTier: number;
+  includeOldPrice?: boolean;
+}): string {
+  const { title, subtitle, command, priceTier, includeOldPrice = true } = params;
+  const priceFormatted = (Number(priceTier) || 97).toLocaleString('en-US', {
+    style: 'currency',
+    currency: 'USD'
+  });
+  const oldPriceFormatted = (Number(priceTier) * 2 || 197).toLocaleString('en-US', {
+    style: 'currency',
+    currency: 'USD'
+  });
+
+  const topic = command.trim()
+    .replace(/^crie\s+um\s+curso\s+(sobre\s+|de\s+)?/i, '')
+    .replace(/^create\s+a\s+course\s+(about\s+|on\s+)?/i, '') || title;
+
+  return `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>${title}</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; }
+    body { background: #07090e; color: #f1f5f9; padding: 32px 18px 72px; line-height: 1.6; }
+    .container { max-width: 820px; margin: 0 auto; }
+    .top-badge { display: inline-flex; align-items: center; gap: 8px; background: rgba(245, 158, 11, 0.12); color: #fbbf24; font-size: 11px; font-weight: 800; text-transform: uppercase; letter-spacing: 0.12em; padding: 6px 16px; border-radius: 9999px; border: 1px solid rgba(245, 158, 11, 0.3); margin-bottom: 16px; }
+    h1 { font-size: 34px; font-weight: 900; color: #ffffff; margin-bottom: 16px; line-height: 1.25; letter-spacing: -0.025em; text-align: center; }
+    .highlight { background: linear-gradient(135deg, #fbbf24, #f59e0b); -webkit-background-clip: text; -webkit-text-fill-color: transparent; }
+    .subhead { font-size: 16.5px; color: #94a3b8; margin-bottom: 28px; text-align: center; line-height: 1.55; max-width: 680px; margin-left: auto; margin-right: auto; }
+    
+    /* Key Highlights / Metrics Bar (Pure Text - Zero Video) */
+    .metrics-bar { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 14px; margin-bottom: 30px; }
+    .metric-card { background: rgba(255, 255, 255, 0.03); border: 1px solid rgba(255, 255, 255, 0.08); border-radius: 16px; padding: 18px; text-align: center; }
+    .metric-value { font-size: 18px; font-weight: 900; color: #fbbf24; margin-bottom: 4px; }
+    .metric-label { font-size: 12px; color: #94a3b8; text-transform: uppercase; letter-spacing: 0.05em; font-weight: 600; }
+
+    .cta-btn { display: flex; align-items: center; justify-content: center; gap: 10px; width: 100%; padding: 18px 24px; background: linear-gradient(135deg, #f59e0b, #d97706); color: #000; font-weight: 900; font-size: 15px; text-transform: uppercase; letter-spacing: 0.05em; border: none; border-radius: 16px; cursor: pointer; box-shadow: 0 12px 35px -5px rgba(245, 158, 11, 0.45); transition: transform 0.15s ease, filter 0.15s ease; text-decoration: none; }
+    .cta-btn:hover { filter: brightness(1.08); }
+    .cta-btn:active { transform: scale(0.98); }
+    .cta-sub { font-size: 11.5px; color: #64748b; text-align: center; margin-top: 10px; }
+    
+    .section-title { font-size: 22px; font-weight: 900; color: #fff; margin-bottom: 16px; letter-spacing: -0.01em; display: flex; align-items: center; gap: 8px; }
+    .card { background: rgba(255, 255, 255, 0.03); border: 1px solid rgba(255, 255, 255, 0.08); border-radius: 20px; padding: 24px; margin-bottom: 24px; }
+    .problem-box { background: rgba(239, 68, 68, 0.06); border: 1px solid rgba(239, 68, 68, 0.2); border-radius: 20px; padding: 24px; margin-bottom: 28px; }
+    .solution-box { background: rgba(16, 185, 129, 0.06); border: 1px solid rgba(16, 185, 129, 0.2); border-radius: 20px; padding: 24px; margin-bottom: 28px; }
+    .grid-2 { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 18px; margin-bottom: 28px; }
+    .pill { display: flex; align-items: flex-start; gap: 12px; margin-bottom: 14px; font-size: 13.5px; color: #cbd5e1; }
+    .pill:last-child { margin-bottom: 0; }
+    .check { color: #10b981; font-weight: 900; font-size: 16px; flex-shrink: 0; }
+    .cross { color: #f43f5e; font-weight: 900; font-size: 16px; flex-shrink: 0; }
+    .guarantee-box { background: linear-gradient(135deg, rgba(16, 185, 129, 0.1), rgba(6, 78, 59, 0.2)); border: 1px solid rgba(16, 185, 129, 0.3); border-radius: 22px; padding: 28px; text-align: center; margin-bottom: 32px; }
+    .faq-item { border-bottom: 1px solid rgba(255, 255, 255, 0.08); padding: 16px 0; }
+    .faq-q { font-size: 14.5px; font-weight: 800; color: #ffffff; margin-bottom: 6px; }
+    .faq-a { font-size: 13px; color: #94a3b8; line-height: 1.5; }
+    .price-box { text-align: center; padding: 28px 20px; background: rgba(255, 255, 255, 0.04); border: 1px solid rgba(245, 158, 11, 0.25); border-radius: 22px; margin-bottom: 24px; }
+    .old-price { font-size: 14px; color: #64748b; text-decoration: line-through; }
+    .new-price { font-size: 36px; font-weight: 900; color: #fbbf24; margin: 4px 0; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div style="text-align: center;">
+      <span class="top-badge">🔥 OFFICIAL MASTERCLASS • LIFETIME ACCESS</span>
+      <h1>End The Guesswork: Master <span class="highlight">${topic}</span> With Complete Clarity</h1>
+      <p class="subhead">${subtitle || 'A proven, actionable transformation system engineered for immediate clarity, strategic focus, and measurable mastery.'}</p>
+    </div>
+
+    <!-- Key Highlights / Metrics Bar (Pure Text - Zero Video) -->
+    <div class="metrics-bar">
+      <div class="metric-card">
+        <div class="metric-value">100% Practical</div>
+        <div class="metric-label">Step-by-Step Curriculum</div>
+      </div>
+      <div class="metric-card">
+        <div class="metric-value">Lifetime Access</div>
+        <div class="metric-label">Self-Paced Architecture</div>
+      </div>
+      <div class="metric-card">
+        <div class="metric-value">Zero Risk</div>
+        <div class="metric-label">7-Day Money-Back Guarantee</div>
+      </div>
+    </div>
+
+    <!-- CTA 1 -->
+    <div style="margin-bottom: 36px;">
+      <button type="button" class="cta-btn" onclick="window.parent.postMessage({ type: 'purchase' }, '*')">
+        ⚡ GET INSTANT ACCESS WITH SPECIAL DISCOUNT
+      </button>
+      <p class="cta-sub">🔒 256-Bit Encrypted & Safe Checkout • Immediate Lifetime Access • 7-Day Money-Back Guarantee</p>
+    </div>
+
+    <!-- The Core Problem -->
+    <div class="problem-box">
+      <h2 style="font-size: 19px; font-weight: 900; color: #fca5a5; margin-bottom: 10px;">
+        ❌ Why Traditional Approaches Keep You Stuck in Frustration
+      </h2>
+      <p style="font-size: 13.5px; color: #cbd5e1; line-height: 1.6; margin-bottom: 12px;">
+        Relying on guesswork, generic surface advice, or raw willpower inevitably leads to burnout and reactive mistakes. Without an organized, proven architecture, every choice feels uncertain and costly.
+      </p>
+      <div style="padding: 12px 16px; background: rgba(0,0,0,0.3); border-radius: 12px; font-size: 13px; color: #f87171; font-weight: 600;">
+        The Critical Bottleneck: Reacting emotionally without an actionable, structured system.
+      </div>
+    </div>
+
+    <!-- The 3 Pillars -->
+    <div class="card">
+      <h2 class="section-title">
+        ✨ The 3 Pillars of The Transformation Protocol
+      </h2>
+      <div class="grid-2">
+        <div style="background: rgba(255,255,255,0.02); padding: 18px; border-radius: 14px; border: 1px solid rgba(255,255,255,0.06);">
+          <div style="color: #fbbf24; font-weight: 900; font-size: 13px; text-transform: uppercase; margin-bottom: 6px;">Pillar 1 • Systematic Diagnostic</div>
+          <p style="font-size: 13px; color: #cbd5e1;">Pinpoint hidden behavioral bottlenecks, eliminate reactive pitfalls, and build your strategic foundation from day one.</p>
+        </div>
+        <div style="background: rgba(255,255,255,0.02); padding: 18px; border-radius: 14px; border: 1px solid rgba(255,255,255,0.06);">
+          <div style="color: #10b981; font-weight: 900; font-size: 13px; text-transform: uppercase; margin-bottom: 6px;">Pillar 2 • Tactical Execution</div>
+          <p style="font-size: 13px; color: #cbd5e1;">Actionable daily trackers, real-world decision trees, and systematic playbooks to execute with unwavering precision.</p>
+        </div>
+        <div style="background: rgba(255,255,255,0.02); padding: 18px; border-radius: 14px; border: 1px solid rgba(255,255,255,0.06);">
+          <div style="color: #60a5fa; font-weight: 900; font-size: 13px; text-transform: uppercase; margin-bottom: 6px;">Pillar 3 • Long-Term Grounding</div>
+          <p style="font-size: 13px; color: #cbd5e1;">Maintain consistent composure, psychological leverage, and sustainable habits that compound over time.</p>
+        </div>
+        <div style="background: rgba(255,255,255,0.02); padding: 18px; border-radius: 14px; border: 1px solid rgba(255,255,255,0.06);">
+          <div style="color: #c084fc; font-weight: 900; font-size: 13px; text-transform: uppercase; margin-bottom: 6px;">Pillar 4 • Continuous Support</div>
+          <p style="font-size: 13px; color: #cbd5e1;">Dedicated channels and resources to answer your questions and guide your transformation throughout your journey.</p>
+        </div>
+      </div>
+    </div>
+
+    <!-- What You Receive -->
+    <div class="solution-box">
+      <h2 style="font-size: 20px; font-weight: 900; color: #34d399; margin-bottom: 14px;">
+        🎯 What You Receive With Immediate Access:
+      </h2>
+      <div class="pill"><span class="check">✓</span><span>Full lifetime access to all curriculum modules and all future updates included.</span></div>
+      <div class="pill"><span class="check">✓</span><span>Interactive Habit & Progress Trackers to monitor consistency and compound daily progress.</span></div>
+      <div class="pill"><span class="check">✓</span><span>Real-World Scenario Decision Trees to stress-test your responses before executing under pressure.</span></div>
+      <div class="pill"><span class="check">✓</span><span>Diagnostic Frameworks to decode signals, remove blind spots, and eliminate costly missteps.</span></div>
+      <div class="pill"><span class="check">✓</span><span>Dedicated support channel to answer your specific questions and review your progress.</span></div>
+    </div>
+
+    <!-- For Who vs Not For Who -->
+    <div class="grid-2">
+      <div style="background: rgba(16,185,129,0.04); border: 1px solid rgba(16,185,129,0.18); border-radius: 18px; padding: 20px;">
+        <h3 style="font-size: 15px; font-weight: 900; color: #34d399; margin-bottom: 12px;">
+          ✅ This Protocol Is For You If:
+        </h3>
+        <div class="pill"><span class="check">✓</span><span>You are ready to stop second-guessing and execute with clear, decisive authority.</span></div>
+        <div class="pill"><span class="check">✓</span><span>You value proven, actionable frameworks applicable immediately in real situations.</span></div>
+        <div class="pill"><span class="check">✓</span><span>You seek genuine long-term mastery rather than superficial shortcuts.</span></div>
+      </div>
+      <div style="background: rgba(239,68,68,0.04); border: 1px solid rgba(239,68,68,0.18); border-radius: 18px; padding: 20px;">
+        <h3 style="font-size: 15px; font-weight: 900; color: #f87171; margin-bottom: 12px;">
+          ❌ This Is NOT For You If:
+        </h3>
+        <div class="pill"><span class="cross">✕</span><span>You expect effortless miracles without being willing to apply the principles.</span></div>
+        <div class="pill"><span class="cross">✕</span><span>You prefer staying in reactive patterns and blaming external circumstances.</span></div>
+        <div class="pill"><span class="cross">✕</span><span>You are not ready to commit 15 minutes a day to your personal development.</span></div>
+      </div>
+    </div>
+
+    <!-- 7-Day Guarantee -->
+    <div class="guarantee-box">
+      <div style="font-size: 36px; margin-bottom: 10px;">🛡️</div>
+      <h2 style="font-size: 21px; font-weight: 900; color: #ffffff; margin-bottom: 8px;">
+        100% Risk-Free 7-Day Money-Back Guarantee
+      </h2>
+      <p style="font-size: 13.5px; color: #cbd5e1; max-width: 600px; margin: 0 auto 16px; line-height: 1.55;">
+        Enroll today and review the entire curriculum and interactive tools. If within 7 days you do not feel this is the most empowering and practical masterclass you have ever experienced, simply email us for an immediate, hassle-free 100% refund.
+      </p>
+      <div style="display: inline-flex; align-items: center; gap: 6px; padding: 4px 12px; background: rgba(16,185,129,0.2); border-radius: 9999px; font-size: 11px; font-weight: 800; color: #6ee7b7; text-transform: uppercase;">
+        ✓ Full Refund With No Questions Asked
+      </div>
+    </div>
+
+    <!-- FAQ -->
+    <div class="card">
+      <h2 class="section-title">
+        ❓ Frequently Asked Questions
+      </h2>
+      <div class="faq-item">
+        <div class="faq-q">How and when do I receive my access?</div>
+        <div class="faq-a">Access is granted immediately upon enrollment confirmation. You will receive direct access credentials via email instantly.</div>
+      </div>
+      <div class="faq-item">
+        <div class="faq-q">How long will I have access to the masterclass?</div>
+        <div class="faq-a">You receive lifetime access! Study at your own pace, anytime, from your computer, tablet, or smartphone.</div>
+      </div>
+      <div class="faq-item">
+        <div class="faq-q">Does this work if I am starting from the beginning?</div>
+        <div class="faq-a">Yes. The curriculum is constructed with progressive, structured modules suitable from fundamentals to advanced execution.</div>
+      </div>
+      <div class="faq-item" style="border-bottom: none;">
+        <div class="faq-q">What if I have questions along the way?</div>
+        <div class="faq-a">You have access to dedicated expert support to clarify any questions about the methodology.</div>
+      </div>
+    </div>
+
+    <!-- Final Price & CTA Box -->
+    <div class="price-box">
+      <span class="top-badge">LIMITED ENROLLMENT DISCOUNT</span>
+      <div style="margin: 12px 0;">
+        ${includeOldPrice ? `<div class="old-price">Normally ${oldPriceFormatted}</div>` : ''}
+        <div class="new-price">Only ${priceFormatted}</div>
+        <div style="font-size: 12px; color: #94a3b8;">One-time payment • No recurring subscriptions • Lifetime Access</div>
+      </div>
+      <button type="button" class="cta-btn" onclick="window.parent.postMessage({ type: 'purchase' }, '*')">
+        🚀 UNLOCK MY LIFETIME ACCESS NOW
+      </button>
+      <p class="cta-sub">🔒 256-Bit Encrypted & Safe Checkout • 100% Satisfaction or Money-Back Guarantee</p>
+    </div>
+  </div>
+</body>
+</html>`;
+}
+
 /**
  * Robust fallback generator that guarantees a complete, high-value, pedagogically
  * structured course if upstream AI models experience prolonged service unavailability (503).
@@ -111,6 +334,15 @@ function buildResilientFallbackCourse(params: {
   const description = isPt
     ? `Um programa de transformação executivo desenvolvido para guiar você passo a passo através de dinâmicas práticas, rastreadores funcionais, simuladores de decisão e diagnósticos comportamentais.`
     : `An executive transformation curriculum engineered to guide you step-by-step through actionable frameworks, interactive trackers, scenario simulators, and behavioral diagnostics.`;
+
+  const salesPageHtml = buildPersuasiveSalesPageHtml({
+    title,
+    subtitle,
+    command,
+    language,
+    priceTier,
+    includeOldPrice
+  });
 
   const course = {
     title,
@@ -146,6 +378,7 @@ function buildResilientFallbackCourse(params: {
     secure_payment_label: isPt ? 'Ambiente 100% Criptografado & Protegido' : '256-Bit Encrypted & 100% Safe',
     instant_access_label: isPt ? 'Acesso liberado imediatamente no seu e-mail' : 'Instant lifetime access sent to your email',
     preview_enabled: true,
+    preview_type: 'html',
     preview_title: isPt ? `Como Dominar ${capitalizedTopic} sem Reatividade ou Erros Comuns` : `How to Master ${capitalizedTopic} without Reactive Mistakes`,
     preview_subtitle: isPt ? 'A ciência prática e comportamental por trás de resultados consistentes.' : 'The behavioral science and tactical protocol behind lasting results.',
     preview_rating: '4.9 ⭐ (1,240+ avaliações verificadas)',
@@ -162,27 +395,7 @@ function buildResilientFallbackCourse(params: {
       ? 'Entre hoje, acesse todas as aulas, utilize os rastreadores e simuladores práticos. Se dentro de 7 dias você não sentir clareza absoluta e transformação tangível, devolvemos 100% do seu investimento sem perguntas.'
       : 'Enroll today, complete the lessons, and use the interactive trackers. If you do not feel immediate clarity and tangible progress within 7 days, request a full 100% refund with zero questions asked.',
     preview_footer_cta: isPt ? 'GARANTIR MINHA VAGA COM DESCONTO' : 'CLAIM MY ENROLLMENT DISCOUNT',
-    preview_rich_text: isPt
-      ? `<div class="space-y-6 text-gray-200">
-          <h2 class="text-2xl font-bold text-white">O Fim da Incerteza e da Ansiedade</h2>
-          <p>A maioria das pessoas tenta resolver essa área com base em conselhos genéricos, impulsividade ou desespero emocional. O resultado quase sempre é desgaste, frustração e perda de controle.</p>
-          <div class="p-5 rounded-2xl bg-emerald-500/10 border-l-4 border-emerald-400 text-emerald-200 font-medium">
-            <strong>O Princípio Fundamental:</strong> Resultados reais não dependem de sorte — dependem de clareza estratégica, postura emocional inabalável e execução sistemática.
-          </div>
-          <h3 class="text-xl font-semibold text-white">Para Quem É Este Programa</h3>
-          <ul class="list-disc pl-6 space-y-2">
-            <li>Pessoas que desejam assumir o controle de suas escolhas com método comprovado.</li>
-            <li>Quem quer eliminar a reatividade e agir com postura magnética e segura.</li>
-            <li>Quem valoriza ferramentas práticas com exercícios diários aplicáveis.</li>
-          </ul>
-        </div>`
-      : `<div class="space-y-6 text-gray-200">
-          <h2 class="text-2xl font-bold text-white">Ending Confusion and Reactive Decision-Making</h2>
-          <p>Most individuals approach this challenge through impulse, over-thinking, or outdated advice. The outcome is almost always frustration and diminished self-worth.</p>
-          <div class="p-5 rounded-2xl bg-emerald-500/10 border-l-4 border-emerald-400 text-emerald-200 font-medium">
-            <strong>The Core Principle:</strong> Enduring success requires emotional grounding, psychological composure, and deliberate execution.
-          </div>
-        </div>`,
+    preview_rich_text: salesPageHtml,
     art_direction: {
       mood: 'Editorial luxury, grounded calm authority, high-contrast typography',
       color_palette: ['#0F172A', '#1E293B', '#10B981', '#F8FAFC'],
@@ -513,9 +726,9 @@ export async function handleBuildCompleteCourse(req: VercelRequest, res: VercelR
     const ai = getAiClient();
     // High-capacity models with independent quota pools
     const candidateModels = [
-      'gemini-3.1-flash-lite',
+      'gemini-3.8-flash',
       'gemini-flash-latest',
-      'gemini-3.8-flash'
+      'gemini-3.1-flash-lite'
     ];
 
     const targetPriceCents = Math.round(Number(priceTier) * 100) || 9700;
@@ -580,6 +793,7 @@ Return ONLY a valid JSON object matching this schema:
     "secure_payment_label": "256-Bit Encrypted & Safe",
     "instant_access_label": "Immediate Lifetime Access",
     "preview_enabled": true,
+    "preview_type": "html",
     "preview_title": "Headline in ${targetLangName}",
     "preview_subtitle": "Hook explaining psychological breakthrough",
     "preview_rating": "4.9 ⭐ (1,240+ verified reviews)",
@@ -594,7 +808,7 @@ Return ONLY a valid JSON object matching this schema:
     "preview_guarantee_subtitle": "Test the protocol with zero risk",
     "preview_guarantee_description": "Join today and test everything. If you do not experience deep transformation, receive an instant 100% refund.",
     "preview_footer_cta": "ENROLL IN THE COMPLETE ACADEMY NOW",
-    "preview_rich_text": "<div class='space-y-6 text-gray-200'><h3>Core Problem</h3><p>Insightful analysis...</p></div>",
+    "preview_rich_text": "<!DOCTYPE html><html lang='en'><head><meta charset='UTF-8'><meta name='viewport' content='width=device-width, initial-scale=1.0'><style>body{background:#07090e;color:#f1f5f9;font-family:sans-serif;padding:32px 18px;line-height:1.6}.container{max-width:820px;margin:0 auto}.badge{display:inline-block;padding:6px 16px;border-radius:9999px;background:rgba(245,158,11,0.15);color:#fbbf24;font-size:11px;font-weight:800;letter-spacing:0.1em;border:1px solid rgba(245,158,11,0.3);margin-bottom:14px}h1{font-size:34px;font-weight:900;line-height:1.2;text-align:center;margin-bottom:12px}.subhead{font-size:16px;color:#94a3b8;text-align:center;margin-bottom:28px}.metrics{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:14px;margin-bottom:24px}.m-card{background:rgba(255,255,255,0.03);border:1px solid rgba(255,255,255,0.08);border-radius:14px;padding:16px;text-align:center}.cta-btn{display:flex;align-items:center;justify-content:center;width:100%;padding:18px 24px;background:linear-gradient(135deg,#f59e0b,#d97706);color:#000;font-weight:900;font-size:15px;text-transform:uppercase;border-radius:16px;border:none;cursor:pointer;margin-bottom:8px}.card{background:rgba(255,255,255,0.03);border:1px solid rgba(255,255,255,0.08);border-radius:18px;padding:24px;margin-bottom:22px}.guarantee-box{background:rgba(16,185,129,0.1);border:1px solid rgba(16,185,129,0.3);border-radius:20px;padding:24px;text-align:center;margin-bottom:28px}</style></head><body><div class='container'><div style='text-align:center'><span class='badge'>🔥 OFFICIAL MASTERCLASS • LIFETIME ACCESS</span><h1>Complete Masterclass Architecture</h1><p class='subhead'>Actionable transformation protocol for measurable results.</p></div><button class='cta-btn' onclick='window.parent.postMessage({type:\\'purchase\\'},\"*\")'>⚡ CLAIM MY ENROLLMENT DISCOUNT NOW</button><div class='card'><h2>The 3 Pillars of Mastery</h2><p>Pillar 1: Systematic Diagnostic. Pillar 2: Tactical Execution. Pillar 3: Long-Term Grounding.</p></div><div class='guarantee-box'>🛡️ 100% Risk-Free 7-Day Money-Back Guarantee</div><button class='cta-btn' onclick='window.parent.postMessage({type:\\'purchase\\'},\"*\")'>🚀 UNLOCK LIFETIME ACCESS NOW</button></div></body></html>",
     "art_direction": {
       "mood": "Editorial luxury, grounded calm authority",
       "color_palette": ["#0F172A", "#1E293B", "#10B981", "#F8FAFC"],
@@ -692,11 +906,12 @@ REQUIREMENTS:
         contents,
         config: {
           systemInstruction,
-          temperature: 0.7,
           responseMimeType: 'application/json',
         },
         maxAttemptsPerModel: 2,
-        baseDelayMs: 1400,
+        baseDelayMs: 1200,
+        perCallTimeoutMs: 40000,
+        totalBudgetMs: 90000,
         logPrefix: '[AI Course Factory]'
       });
 
@@ -722,11 +937,35 @@ REQUIREMENTS:
 
     // Hydrate and validate the course structure
     const coursePayload = parsedData.course || {};
-    const modulesPayload = parsedData.modules || [];
+    coursePayload.preview_type = 'html';
+    const modulesPayload = Array.isArray(parsedData.modules) ? parsedData.modules : [];
+
+    // Always ensure preview_rich_text is a 100% English, text-only persuasive sales page (NO video, NO Portuguese)
+    const rawPreview = (coursePayload.preview_rich_text || '').trim();
+    const hasPortugueseOrVideo = rawPreview.includes('vsl-box') || 
+                                 rawPreview.includes('play-btn') || 
+                                 rawPreview.includes('PROTOCOLO') || 
+                                 rawPreview.includes('Garantia Incondicional') || 
+                                 rawPreview.includes('QUERO GARANTIR') || 
+                                 rawPreview.includes('Por Que a Maioria');
+
+    if (!rawPreview || rawPreview.length < 350 || !rawPreview.includes('<html') || hasPortugueseOrVideo) {
+      coursePayload.preview_rich_text = buildPersuasiveSalesPageHtml({
+        title: coursePayload.title || 'Mastery Protocol',
+        subtitle: coursePayload.subtitle || 'Complete Academy Architecture',
+        command,
+        language: 'en',
+        priceTier: Number(priceTier) || 97,
+        includeOldPrice
+      });
+    }
 
     // Assign coherent visual covers
-    const totalChapters = modulesPayload.reduce((acc: number, m: any) => acc + (m.chapters?.length || 0), 0);
-    const coverUrls = selectThematicCovers(command + ' ' + (coursePayload.title || ''), totalChapters + 1);
+    const totalChapters = modulesPayload.reduce((acc: number, m: any) => {
+      const chs = Array.isArray(m.chapters) ? m.chapters : (Array.isArray(m.lessons) ? m.lessons : []);
+      return acc + (chs.length || 0);
+    }, 0);
+    const coverUrls = selectThematicCovers(command + ' ' + (coursePayload.title || ''), Math.max(totalChapters + 1, 8));
 
     coursePayload.cover_url = coverUrls[0];
     coursePayload.premium_cover_url = coverUrls[0];
@@ -738,9 +977,70 @@ REQUIREMENTS:
     for (let mIdx = 0; mIdx < modulesPayload.length; mIdx++) {
       const mod = modulesPayload[mIdx];
       mod.order_index = mIdx;
-      if (!Array.isArray(mod.chapters)) {
-        mod.chapters = [];
+      mod.title = mod.title || mod.name || (language.startsWith('pt') ? `Módulo ${mIdx + 1}` : `Module ${mIdx + 1}`);
+
+      // Support either chapters or lessons
+      let rawChapters: any[] = [];
+      if (Array.isArray(mod.chapters) && mod.chapters.length > 0) {
+        rawChapters = mod.chapters;
+      } else if (Array.isArray(mod.lessons) && mod.lessons.length > 0) {
+        rawChapters = mod.lessons;
       }
+
+      // If empty, supply default rich lessons
+      if (rawChapters.length === 0) {
+        rawChapters = [
+          {
+            order_index: 0,
+            title: language.startsWith('pt') ? `Aula 1: Fundamentos & Diagnóstico Prático` : `Lesson 1: Foundations & Practical Diagnostic`,
+            description: language.startsWith('pt') ? `Compreensão do cenário e primeiros passos estratégicos.` : `Understanding the context and strategic first steps.`,
+            duration_minutes: 20,
+            content_type: 'interactive',
+            interactive_content: {
+              title: language.startsWith('pt') ? `Aula 1: Fundamentos & Diagnóstico Prático` : `Lesson 1: Foundations & Practical Diagnostic`,
+              description: language.startsWith('pt') ? `Compreensão do cenário e primeiros passos estratégicos.` : `Understanding the context and strategic first steps.`,
+              language,
+              duration_minutes: 20,
+              blocks: [
+                {
+                  id: 'blk_1',
+                  type: 'text',
+                  title: language.startsWith('pt') ? 'Princípio Estratégico' : 'Strategic Principle',
+                  content: language.startsWith('pt')
+                    ? `<h3>Fundamentos Práticos</h3><p>Assista à introdução e aplique as diretrizes estratégicas para obter clareza e segurança no seu processo.</p>`
+                    : `<h3>Core Foundations</h3><p>Watch the introduction and apply the strategic guidelines to gain clarity and confidence in your process.</p>`
+                }
+              ]
+            }
+          },
+          {
+            order_index: 1,
+            title: language.startsWith('pt') ? `Aula 2: Protocolo de Ação Imediata` : `Lesson 2: Immediate Action Protocol`,
+            description: language.startsWith('pt') ? `Execução prática com foco em consistência e resultados reais.` : `Practical execution focused on consistency and lasting results.`,
+            duration_minutes: 25,
+            content_type: 'interactive',
+            interactive_content: {
+              title: language.startsWith('pt') ? `Aula 2: Protocolo de Ação Imediata` : `Lesson 2: Immediate Action Protocol`,
+              description: language.startsWith('pt') ? `Execução prática com foco em consistência e resultados reais.` : `Practical execution focused on consistency and lasting results.`,
+              language,
+              duration_minutes: 25,
+              blocks: [
+                {
+                  id: 'blk_2',
+                  type: 'text',
+                  title: language.startsWith('pt') ? 'Plano de Ação' : 'Action Plan',
+                  content: language.startsWith('pt')
+                    ? `<h3>Plano de Ação Imediato</h3><p>Siga o passo a passo diário detalhado para construir resultados consistentes.</p>`
+                    : `<h3>Immediate Action Plan</h3><p>Follow the detailed daily protocol to build consistent and measurable outcomes.</p>`
+                }
+              ]
+            }
+          }
+        ];
+      }
+
+      mod.chapters = rawChapters;
+      mod.lessons = rawChapters;
 
       for (let cIdx = 0; cIdx < mod.chapters.length; cIdx++) {
         const chap = mod.chapters[cIdx];

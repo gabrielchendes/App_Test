@@ -48,6 +48,7 @@ export async function fetchCloudCourseOverrides(): Promise<Record<string, any>> 
 }
 
 export function saveCourseOverride(courseId: string, fields: Record<string, any>): void {
+  (globalThis as any).__mpBootstrapCatalogCache = null;
   loadCourseOverrides();
   inMemoryCourseOverrides[courseId] = { ...(inMemoryCourseOverrides[courseId] || {}), ...fields };
   try {
@@ -107,6 +108,7 @@ export async function fetchCloudChapterOverrides(): Promise<Record<string, any>>
 }
 
 export function saveChapterOverride(chapterId: string, fields: Record<string, any>): void {
+  (globalThis as any).__mpBootstrapCatalogCache = null;
   loadChapterOverrides();
   inMemoryChapterOverrides[chapterId] = { ...(inMemoryChapterOverrides[chapterId] || {}), ...fields };
   try {

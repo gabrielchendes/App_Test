@@ -78,9 +78,9 @@ ${currentHtml || '<div class="space-y-6 text-gray-200"><h3>Mastery Transformatio
 Apply the user's instruction precisely, keeping the overall structure cohesive, luxurious, and ultra-high-converting.`;
 
     const candidateModels = [
-      'gemini-3.1-flash-lite',
+      'gemini-3.8-flash',
       'gemini-flash-latest',
-      'gemini-3.8-flash'
+      'gemini-3.1-flash-lite'
     ];
 
     const result = await generateContentWithRetry({

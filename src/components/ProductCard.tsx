@@ -69,16 +69,8 @@ const ProductCard = memo(({ product, isUnlocked, progress = 0, stats, settings, 
     >
       {/* Precision Uniform Border Glow Effect */}
       <div className="absolute inset-0 z-0 opacity-100 overflow-hidden pointer-events-none rounded-2xl">
-        <motion.div
-          className="absolute inset-0 z-0 transition-opacity duration-500 group-hover:opacity-100 opacity-80"
-          animate={{
-            opacity: [0.8, 1, 0.8],
-          }}
-          transition={{
-            duration: 2.5,
-            repeat: Infinity,
-            ease: "easeInOut"
-          }}
+        <div
+          className="absolute inset-0 z-0 transition-opacity duration-500 group-hover:opacity-100 opacity-85"
           style={{
             background: stateConfig.color === 'emerald' 
               ? 'linear-gradient(135deg, #10b981 0%, rgba(16,185,129,0.7) 50%, #10b981 100%)' 
@@ -112,18 +104,13 @@ const ProductCard = memo(({ product, isUnlocked, progress = 0, stats, settings, 
 
         {/* Aurora Glow Effect Layer */}
         <div className={cn(
-          "absolute -top-10 -left-10 w-40 h-40 blur-[60px] rounded-full opacity-0 group-hover:opacity-30 transition-opacity duration-1000 pointer-events-none z-0",
+          "absolute -top-10 -left-10 w-40 h-40 blur-[60px] rounded-full opacity-0 group-hover:opacity-30 transition-opacity duration-700 pointer-events-none z-0",
           isUnlocked ? "bg-emerald-500" : "bg-purple-600"
         )} />
 
         {/* Premium Shine Sweep (Visible on hover) */}
         <div className="absolute inset-0 z-20 pointer-events-none overflow-hidden">
-          <motion.div 
-            initial={{ x: '-100%', skewX: -20 }}
-            whileHover={{ x: '200%' }}
-            transition={{ duration: 0.8, ease: "easeOut" }}
-            className="absolute inset-y-0 w-1/2 bg-gradient-to-r from-transparent via-white/10 to-transparent"
-          />
+          <div className="absolute inset-y-0 w-1/2 -translate-x-full group-hover:translate-x-[250%] -skew-x-20 bg-gradient-to-r from-transparent via-white/10 to-transparent transition-transform duration-700 ease-out" />
         </div>
 
         {/* Thumbnail Area */}
@@ -133,7 +120,7 @@ const ProductCard = memo(({ product, isUnlocked, progress = 0, stats, settings, 
             alt={effectiveProduct.title}
             loading="lazy"
             decoding="async"
-            className="w-full h-full object-cover transition-all duration-500 group-hover:scale-105"
+            className="w-full h-full object-cover transition-transform duration-500 group-hover:scale-105"
             referrerPolicy="no-referrer"
           />
 
@@ -148,13 +135,9 @@ const ProductCard = memo(({ product, isUnlocked, progress = 0, stats, settings, 
                 <div className="absolute -inset-2 rounded-2xl bg-gradient-to-r from-amber-500/20 to-amber-300/20 blur-md opacity-40 group-hover:opacity-70 group-hover:blur-lg transition-all duration-500" />
                 
                 {/* Main Lock Badge Container */}
-                <motion.div 
-                  initial={{ scale: 0.9, opacity: 0 }}
-                  animate={{ scale: 1, opacity: 1 }}
-                  className="relative w-11 h-11 sm:w-14 sm:h-14 rounded-2xl bg-black/60 border border-amber-400/80 flex items-center justify-center text-amber-300 shadow-[0_8px_25px_rgba(0,0,0,0.7),0_0_15px_rgba(245,158,11,0.25)] group-hover:border-amber-300 group-hover:bg-black/70 group-hover:shadow-[0_8px_30px_rgba(245,158,11,0.45)] group-hover:scale-110 transition-all duration-500"
-                >
+                <div className="relative w-11 h-11 sm:w-14 sm:h-14 rounded-2xl bg-black/60 border border-amber-400/80 flex items-center justify-center text-amber-300 shadow-[0_8px_25px_rgba(0,0,0,0.7),0_0_15px_rgba(245,158,11,0.25)] group-hover:border-amber-300 group-hover:bg-black/70 group-hover:shadow-[0_8px_30px_rgba(245,158,11,0.45)] group-hover:scale-110 transition-all duration-300">
                   <Lock size={24} strokeWidth={2.2} className="text-amber-300 drop-shadow-[0_0_10px_rgba(251,191,36,0.9)] sm:size-[28px]" />
-                </motion.div>
+                </div>
               </div>
             </div>
           )}
@@ -182,27 +165,21 @@ const ProductCard = memo(({ product, isUnlocked, progress = 0, stats, settings, 
                     {progress}%
                   </span>
                   {isCompleted && (
-                    <motion.div
-                      initial={{ scale: 0 }}
-                      animate={{ scale: 1 }}
-                    >
-                      <CheckCircle2 size={8} className="text-emerald-500" />
-                    </motion.div>
+                    <CheckCircle2 size={8} className="text-emerald-500" />
                   )}
                 </div>
                 <div className="h-0.5 w-full bg-white/5 rounded-full overflow-hidden">
-                  <motion.div 
-                    initial={{ width: 0 }}
-                    animate={{ width: `${progress}%` }}
-                    className={cn("h-full transition-all duration-1000 ease-out", stateConfig.progressBar)}
+                  <div
+                    style={{ width: `${progress}%` }}
+                    className={cn("h-full transition-[width] duration-700 ease-out", stateConfig.progressBar)}
                   />
                 </div>
               </div>
             )}
             
-            <motion.div 
+            <div
               className={cn(
-                "w-full py-1.5 sm:py-2.5 rounded-lg sm:rounded-xl flex items-center justify-center gap-2 font-black text-[7.5px] sm:text-[9px] uppercase tracking-[0.2em] transition-all duration-700 relative overflow-hidden",
+                "w-full py-1.5 sm:py-2.5 rounded-lg sm:rounded-xl flex items-center justify-center gap-2 font-black text-[7.5px] sm:text-[9px] uppercase tracking-[0.2em] transition-all duration-300 relative overflow-hidden",
                 stateConfig.color === 'emerald' ? "bg-emerald-500/10 border border-emerald-500/30 text-emerald-400 group-hover:bg-emerald-600 group-hover:text-black group-hover:border-emerald-600" :
                 stateConfig.color === 'blue' ? "bg-blue-500/10 border border-blue-500/30 text-blue-400 group-hover:bg-blue-600 group-hover:text-black group-hover:border-blue-600" :
                 stateConfig.color === 'amber' ? "bg-amber-500/10 border border-amber-500/30 text-amber-500 group-hover:bg-amber-600 group-hover:text-black group-hover:border-amber-600" :
@@ -212,14 +189,14 @@ const ProductCard = memo(({ product, isUnlocked, progress = 0, stats, settings, 
               {/* Shimmer Button Effect */}
               <div className="absolute inset-x-0 top-0 h-[1px] bg-white/20 opacity-0 group-hover:opacity-100 transition-opacity" />
               <span className="relative z-10">{stateConfig.cta}</span>
-            </motion.div>
+            </div>
           </div>
         </div>
       </div>
 
       {/* Tech Edge Glow - Bottom Border Glow */}
       <div className={cn(
-        "absolute bottom-0 left-0 right-0 h-[2px] opacity-0 group-hover:opacity-100 transition-opacity duration-700 z-30",
+        "absolute bottom-0 left-0 right-0 h-[2px] opacity-0 group-hover:opacity-100 transition-opacity duration-500 z-30",
         stateConfig.color === 'emerald' ? "bg-emerald-500 shadow-[0_0_20px_rgba(16,185,129,1)]" :
         stateConfig.color === 'blue' ? "bg-blue-500 shadow-[0_0_20px_rgba(59,130,246,1)]" :
         stateConfig.color === 'amber' ? "bg-amber-500 shadow-[0_0_20px_rgba(245,158,11,1)]" :

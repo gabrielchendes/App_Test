@@ -93,6 +93,9 @@ class DataCache {
       if (typeof window !== 'undefined') {
         try {
           localStorage.removeItem(this.storagePrefix + key);
+          if (key === 'global_public_courses_catalog' || key === 'courses_list' || key === 'admin_courses') {
+            localStorage.removeItem('mp_permanent_courses_catalog_ts');
+          }
         } catch {}
       }
     } else {
@@ -107,6 +110,7 @@ class DataCache {
             }
           }
           toRemove.forEach(k => localStorage.removeItem(k));
+          localStorage.removeItem('mp_permanent_courses_catalog_ts');
         } catch {}
       }
     }
