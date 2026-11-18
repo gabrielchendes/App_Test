@@ -113,7 +113,11 @@ async function startServer() {
   let lastSettingsFetchTime = 0;
   async function fetchCurrentAppSettings() {
     const now = Date.now();
-    if (cachedAppSettings && now - lastSettingsFetchTime < 1000) {
+    const shared = (globalThis as any).__mpAppSettingsCache;
+    if (shared && now - shared.ts < 60_000) {
+      return shared.data;
+    }
+    if (cachedAppSettings && now - lastSettingsFetchTime < 60_000) {
       return cachedAppSettings;
     }
 
@@ -177,6 +181,7 @@ async function startServer() {
 
     cachedAppSettings = merged;
     lastSettingsFetchTime = now;
+    (globalThis as any).__mpAppSettingsCache = { data: merged, ts: now };
     return merged;
   }
 
@@ -184,6 +189,7 @@ async function startServer() {
   app.all(['/api/v1/clear-cache', '/api/clear-cache'], (_req, res) => {
     cachedAppSettings = null;
     lastSettingsFetchTime = 0;
+    (globalThis as any).__mpAppSettingsCache = null;
     (globalThis as any).__mpBootstrapCatalogCache = null;
     imageStreamCache.clear();
     res.setHeader('Cache-Control', 'no-store');
@@ -318,7 +324,7 @@ async function startServer() {
   app.get(['/api/v1/settings', '/api/settings'], async (_req, res) => {
     try {
       const s = await fetchCurrentAppSettings();
-      res.setHeader('Cache-Control', 'no-cache, must-revalidate');
+      res.setHeader('Cache-Control', 'public, max-age=30, stale-while-revalidate=120');
       return res.json(s);
     } catch (e: any) {
       return res.status(500).json({ error: e.message });
@@ -365,6 +371,7 @@ async function startServer() {
       // 2. Immediately purge cache and buffers so newest icons stream instantly
       cachedAppSettings = null;
       lastSettingsFetchTime = 0;
+      (globalThis as any).__mpAppSettingsCache = null;
       imageStreamCache.clear();
 
       // 3. Attempt async background sync to Supabase if credentials exist

@@ -1,11 +1,9 @@
-import React, { useState, useEffect, useRef, useCallback } from 'react';
+import React, { memo, useState, useEffect, useRef, useCallback } from 'react';
 import { User } from '@supabase/supabase-js';
 import { supabase, Notification } from '../lib/supabase';
 import { Bell, X, Check, Info } from 'lucide-react';
 import { GlowingSpinner } from './GlowingSpinner';
-import { motion, AnimatePresence } from 'motion/react';
-import { format } from 'date-fns';
-import { enUS } from 'date-fns/locale';
+import { m, AnimatePresence } from 'motion/react';
 import { useI18n } from '../contexts/I18nContext';
 import { safeFetch } from '../lib/utils';
 import { showToast } from '../lib/customToast';
@@ -13,6 +11,15 @@ import { showToast } from '../lib/customToast';
 interface NotificationBellProps {
   user: User;
 }
+
+const US_DATE_FORMATTER = new Intl.DateTimeFormat('en-US', {
+  month: 'short',
+  day: 'numeric',
+  year: 'numeric',
+  hour: 'numeric',
+  minute: '2-digit',
+  hour12: true
+});
 
 /**
  * Formats timestamps strictly in US English standard (MMM d, yyyy, h:mm a)
@@ -41,13 +48,13 @@ function formatUSDateTime(val: string | Date | number | undefined | null): strin
     }
     if (isNaN(date.getTime())) return String(val);
 
-    return format(date, 'MMM d, yyyy, h:mm a', { locale: enUS });
+    return US_DATE_FORMATTER.format(date);
   } catch (e) {
     return String(val);
   }
 }
 
-export default function NotificationBell({ user }: NotificationBellProps) {
+const NotificationBell = memo(function NotificationBell({ user }: NotificationBellProps) {
   const { t } = useI18n();
   const [notifications, setNotifications] = useState<Notification[]>([]);
   const [unreadCount, setUnreadCount] = useState(0);
@@ -57,8 +64,9 @@ export default function NotificationBell({ user }: NotificationBellProps) {
 
   const fetchNotifications = useCallback(async () => {
     try {
-      // 1. Fetch from Supabase directly
-      let sbNotifs: any[] = [];
+      // 1. Primary direct Supabase query (single lightweight request)
+      let rows: any[] = [];
+      let directOk = false;
       try {
         const { data, error } = await supabase
           .from('notifications')
@@ -67,66 +75,45 @@ export default function NotificationBell({ user }: NotificationBellProps) {
           .order('created_at', { ascending: false })
           .limit(50);
         if (!error && Array.isArray(data)) {
-          sbNotifs = data;
-        } else if (error) {
-          // Retry without ORDER BY to bypass compound index scans on busy tables
-          const { data: fallbackData } = await supabase
-            .from('notifications')
-            .select('id, user_id, broadcast_id, title, body, message, is_read, read, read_at, created_at')
-            .eq('user_id', user.id)
-            .limit(50);
-          if (Array.isArray(fallbackData)) {
-            sbNotifs = fallbackData;
-          }
+          rows = data;
+          directOk = true;
         }
       } catch (sbErr) {
         console.warn('[NotificationBell] Supabase fetch notice:', sbErr);
       }
 
-      // 2. Fetch from Central API endpoint with session auth
-      let apiNotifs: any[] = [];
-      try {
-        const session = (await supabase.auth.getSession()).data.session;
-        const headers: Record<string, string> = {};
-        if (session?.access_token) {
-          headers['Authorization'] = `Bearer ${session.access_token}`;
-        }
+      // 2. Fallback to API endpoint ONLY if direct query failed/blocked
+      if (!directOk) {
+        try {
+          const session = (await supabase.auth.getSession()).data.session;
+          const headers: Record<string, string> = {};
+          if (session?.access_token) {
+            headers['Authorization'] = `Bearer ${session.access_token}`;
+          }
 
-        const res = await safeFetch(
-          `/api/v1/notifications?action=user-notifications&userId=${encodeURIComponent(user.id)}`,
-          { headers }
-        );
-        if (res && res.success && Array.isArray(res.notifications)) {
-          apiNotifs = res.notifications;
+          const res = await safeFetch(
+            `/api/v1/notifications?action=user-notifications&userId=${encodeURIComponent(user.id)}`,
+            { headers }
+          );
+          if (res && res.success && Array.isArray(res.notifications)) {
+            rows = res.notifications;
+          }
+        } catch (apiErr) {
+          console.warn('[NotificationBell] API fetch notice:', apiErr);
         }
-      } catch (apiErr) {
-        console.warn('[NotificationBell] API fetch notice:', apiErr);
       }
 
-      // 3. Merge & Deduplicate by ID
       const notifMap = new Map<string, any>();
-      [...apiNotifs, ...sbNotifs].forEach(n => {
+      rows.forEach(n => {
         if (!n || !n.id) return;
         const isRead = Boolean(n.is_read || n.read || n.read_at);
-        const existing = notifMap.get(n.id);
-        if (existing) {
-          notifMap.set(n.id, {
-            ...existing,
-            ...n,
-            is_read: existing.is_read || isRead,
-            read: existing.read || isRead,
-            body: n.body || n.message || existing.body || existing.message || '',
-            message: n.body || n.message || existing.body || existing.message || ''
-          });
-        } else {
-          notifMap.set(n.id, {
-            ...n,
-            is_read: isRead,
-            read: isRead,
-            body: n.body || n.message || '',
-            message: n.body || n.message || ''
-          });
-        }
+        notifMap.set(n.id, {
+          ...n,
+          is_read: isRead,
+          read: isRead,
+          body: n.body || n.message || '',
+          message: n.body || n.message || ''
+        });
       });
 
       const mergedList = Array.from(notifMap.values()).sort(
@@ -143,15 +130,18 @@ export default function NotificationBell({ user }: NotificationBellProps) {
   }, [user.id]);
 
   useEffect(() => {
-    fetchNotifications();
+    // Yield initial network bandwidth to critical bootstrap request
+    const initialTimer = setTimeout(() => {
+      fetchNotifications();
+    }, 600);
 
-    // Periodic polling every 20s to ensure internal notifications appear reliably
+    // Safety fallback poll every 120s (Realtime handles instant inserts/updates)
     const pollInterval = setInterval(() => {
       if (typeof document !== 'undefined' && document.visibilityState !== 'visible') {
         return;
       }
       fetchNotifications();
-    }, 20000);
+    }, 120000);
 
     // Real-time subscription
     const channelId = Math.random().toString(36).substring(2, 9);
@@ -189,6 +179,7 @@ export default function NotificationBell({ user }: NotificationBellProps) {
     document.addEventListener('mousedown', handleClickOutside);
 
     return () => {
+      clearTimeout(initialTimer);
       clearInterval(pollInterval);
       supabase.removeChannel(channel);
       document.removeEventListener('mousedown', handleClickOutside);
@@ -275,14 +266,14 @@ export default function NotificationBell({ user }: NotificationBellProps) {
         {isOpen && (
           <>
             {/* Backdrop for mobile */}
-            <motion.div 
+            <m.div 
               initial={{ opacity: 0 }}
               animate={{ opacity: 1 }}
               exit={{ opacity: 0 }}
               onClick={() => setIsOpen(false)}
               className="fixed inset-0 bg-black/80 backdrop-blur-sm z-[999] md:hidden"
             />
-            <motion.div
+            <m.div
               initial={{ opacity: 0, scale: 0.95, y: 10 }}
               animate={{ opacity: 1, scale: 1, y: 0 }}
               exit={{ opacity: 0, scale: 0.95, y: 10 }}
@@ -386,10 +377,12 @@ export default function NotificationBell({ user }: NotificationBellProps) {
                   {t('notifications.close') || 'Close'}
                 </button>
               </div>
-            </motion.div>
+            </m.div>
           </>
         )}
       </AnimatePresence>
     </div>
   );
-}
+});
+
+export default NotificationBell;

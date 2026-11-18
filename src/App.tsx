@@ -1,15 +1,16 @@
 import { useState, useEffect, Suspense } from 'react';
+import { LazyMotion, domAnimation } from 'motion/react';
 import { supabase, isSupabaseConfigured } from './lib/supabase';
 import { User } from '@supabase/supabase-js';
 import { useSettings } from './contexts/SettingsContext';
 import { lazyWithRetry } from './lib/lazyWithRetry';
 import { safeFetch } from './lib/utils';
 import { toast } from './lib/customToast';
-import { dataCache } from './lib/cache';
-import LoginPage from './pages/LoginPage';
-import Dashboard from './pages/Dashboard';
 import { GlowingSpinner } from './components/GlowingSpinner';
 import { OfflineNotice } from './components/OfflineNotice';
+
+const LoginPage = lazyWithRetry(() => import('./pages/LoginPage'));
+const Dashboard = lazyWithRetry(() => import('./pages/Dashboard'));
 
 // Smooth hardware-accelerated Loading Screen
 function LoadingScreen() {
@@ -362,15 +363,19 @@ export default function App() {
   }
 
   return (
-    <div className="min-h-screen bg-bg-main text-white font-sans selection:bg-primary/30 text-pretty">
-      <OfflineNotice />
-      {!user ? (
-        <LoginPage />
-      ) : (
-        <Suspense fallback={<LoadingScreen />}>
-          <Dashboard user={user} />
-        </Suspense>
-      )}
-    </div>
+    <LazyMotion features={domAnimation}>
+      <div className="min-h-screen bg-bg-main text-white font-sans selection:bg-primary/30 text-pretty">
+        <OfflineNotice />
+        {!user ? (
+          <Suspense fallback={<LoadingScreen />}>
+            <LoginPage />
+          </Suspense>
+        ) : (
+          <Suspense fallback={<LoadingScreen />}>
+            <Dashboard user={user} />
+          </Suspense>
+        )}
+      </div>
+    </LazyMotion>
   );
 }

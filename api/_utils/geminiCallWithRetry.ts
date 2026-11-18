@@ -1,4 +1,4 @@
-import { GoogleGenAI } from '@google/genai';
+import { GoogleGenAI, ThinkingLevel } from '@google/genai';
 import type { GenerateContentParameters, GenerateContentResponse } from '@google/genai';
 
 export interface GeminiRetryOptions {
@@ -11,6 +11,7 @@ export interface GeminiRetryOptions {
   perCallTimeoutMs?: number;
   totalBudgetMs?: number;
   logPrefix?: string;
+  validateResponse?: (text: string) => any;
 }
 
 export function isRetryableGeminiError(error: any): boolean {
@@ -43,7 +44,8 @@ export function isRetryableGeminiError(error: any): boolean {
     msg.includes('econnreset') ||
     msg.includes('etimedout') ||
     msg.includes('timed out') ||
-    msg.includes('timeout')
+    msg.includes('timeout') ||
+    msg.includes('failed to parse valid json')
   ) {
     return true;
   }
@@ -51,15 +53,42 @@ export function isRetryableGeminiError(error: any): boolean {
   return false;
 }
 
+function buildModelConfig(modelName: string, baseConfig?: GenerateContentParameters['config']) {
+  if (!baseConfig) return undefined;
+  const effectiveConfig: any = { ...baseConfig };
+
+  const isGemini4 = modelName.includes('gemini-4');
+  const isLegacy38OrArgon = modelName.includes('3.8') || modelName.includes('argon');
+  const supportsThinking = modelName.includes('gemini-3') || modelName.includes('gemini-4');
+
+  if (isGemini4 || isLegacy38OrArgon) {
+    delete effectiveConfig.temperature;
+    delete effectiveConfig.topP;
+    delete effectiveConfig.topK;
+    delete effectiveConfig.candidateCount;
+  }
+
+  if (!supportsThinking) {
+    delete effectiveConfig.thinkingConfig;
+  } else if (isGemini4 && effectiveConfig.thinkingConfig?.thinkingLevel === ThinkingLevel.MINIMAL) {
+    effectiveConfig.thinkingConfig = {
+      ...effectiveConfig.thinkingConfig,
+      thinkingLevel: ThinkingLevel.LOW,
+    };
+  }
+
+  return effectiveConfig;
+}
+
 export async function generateContentWithRetry(
   options: GeminiRetryOptions
-): Promise<{ text: string; modelUsed: string; response: GenerateContentResponse }> {
+): Promise<{ text: string; modelUsed: string; response: GenerateContentResponse; parsed?: any }> {
   const {
     ai,
     candidateModels = [
-      'gemini-3.8-flash',
+      'gemini-4-hydrogen',
+      'gemini-3.1-flash-lite',
       'gemini-flash-latest',
-      'gemini-3.1-flash-lite'
     ],
     contents,
     config,
@@ -67,7 +96,8 @@ export async function generateContentWithRetry(
     baseDelayMs = 200,
     perCallTimeoutMs = 35000,
     totalBudgetMs = 80000,
-    logPrefix = '[Gemini Call]'
+    logPrefix = '[Gemini Call]',
+    validateResponse,
   } = options;
 
   const startTime = Date.now();
@@ -99,13 +129,7 @@ export async function generateContentWithRetry(
           }, effectiveCallTimeout);
         });
 
-        const effectiveConfig = config ? { ...config } : undefined;
-        if (effectiveConfig && (modelName.includes('3.8') || modelName.includes('argon'))) {
-          delete (effectiveConfig as any).temperature;
-          delete (effectiveConfig as any).topP;
-          delete (effectiveConfig as any).topK;
-          delete (effectiveConfig as any).candidateCount;
-        }
+        const effectiveConfig = buildModelConfig(modelName, config);
 
         const callPromise = ai.models.generateContent({
           model: modelName,
@@ -118,12 +142,22 @@ export async function generateContentWithRetry(
         });
 
         if (response && response.text) {
+          let validatedParsed: any = undefined;
+          if (validateResponse) {
+            validatedParsed = validateResponse(response.text);
+            if (validatedParsed === false) {
+              throw new Error(`Model ${modelName} returned output that failed validation`);
+            }
+          }
           return {
             text: response.text,
             modelUsed: modelName,
             response,
+            parsed: validatedParsed,
           };
         }
+
+        throw new Error(`Model ${modelName} returned empty text response`);
       } catch (err: any) {
         lastError = err;
         const isRetryable = isRetryableGeminiError(err);

@@ -1,6 +1,24 @@
-import React, { createContext, useContext, ReactNode, useCallback, useState, useEffect } from 'react';
+import React, { createContext, useContext, ReactNode, useCallback, useMemo, useState, useEffect } from 'react';
 import { useSettings } from './SettingsContext';
-import { languagePresets } from '../constants/languagePresets';
+
+const loadedPresetsCache: Partial<Record<'pt' | 'en' | 'es', Record<string, string>>> = {};
+
+async function loadLocalePreset(lang: 'pt' | 'en' | 'es'): Promise<Record<string, string>> {
+  if (loadedPresetsCache[lang]) {
+    return loadedPresetsCache[lang]!;
+  }
+  let mod: any;
+  if (lang === 'pt') {
+    mod = await import('../constants/locales/pt');
+  } else if (lang === 'es') {
+    mod = await import('../constants/locales/es');
+  } else {
+    mod = await import('../constants/locales/en');
+  }
+  const dict = mod?.default || mod?.[lang] || {};
+  loadedPresetsCache[lang] = dict;
+  return dict;
+}
 
 interface I18nContextType {
   t: (key: string, variables?: { [key: string]: any }) => string;
@@ -177,13 +195,32 @@ const FALLBACK_TRANSLATIONS: { [key: string]: string } = {
 
 export function I18nProvider({ children }: { children: ReactNode }) {
   const { settings } = useSettings();
-  const [language, setLanguage] = useState<'pt' | 'en' | 'es'>('en');
+  const configuredLang = (settings?.custom_texts?.['app.language'] as 'pt' | 'en' | 'es') || 'en';
+  const [language, setLanguage] = useState<'pt' | 'en' | 'es'>(configuredLang);
+  const [activePreset, setActivePreset] = useState<Record<string, string>>(() => loadedPresetsCache[configuredLang] || {});
 
   useEffect(() => {
     if (settings?.custom_texts?.['app.language']) {
-      setLanguage(settings.custom_texts['app.language'] as any);
+      setLanguage(settings.custom_texts['app.language'] as 'pt' | 'en' | 'es');
     }
   }, [settings?.custom_texts]);
+
+  useEffect(() => {
+    let active = true;
+    const targetLang = (['pt', 'en', 'es'].includes(language) ? language : 'en') as 'pt' | 'en' | 'es';
+    if (loadedPresetsCache[targetLang]) {
+      setActivePreset(loadedPresetsCache[targetLang]!);
+      return;
+    }
+    loadLocalePreset(targetLang)
+      .then((dict) => {
+        if (active) setActivePreset(dict);
+      })
+      .catch(() => {});
+    return () => {
+      active = false;
+    };
+  }, [language]);
 
   const t = useCallback((key: string, variables?: { [key: string]: any }) => {
     // 1. Prioridade máxima: Texto customizado pelo administrador no banco
@@ -220,10 +257,9 @@ export function I18nProvider({ children }: { children: ReactNode }) {
       }
     }
     
-    // 2. Segunda prioridade: Preset do idioma selecionado (en, es, pt)
+    // 2. Segunda prioridade: Preset dinâmico do idioma ativo
     if (!text) {
-      const currentLang = (settings?.custom_texts?.['app.language'] as any) || 'en';
-      text = languagePresets[currentLang as keyof typeof languagePresets]?.[key];
+      text = activePreset?.[key];
     }
     
     // 3. Fallback final
@@ -237,10 +273,12 @@ export function I18nProvider({ children }: { children: ReactNode }) {
       });
     }
     return text || key;
-  }, [settings]);
+  }, [settings, activePreset]);
+
+  const contextValue = useMemo(() => ({ t, language, setLanguage }), [t, language]);
 
   return (
-    <I18nContext.Provider value={{ t, language, setLanguage }}>
+    <I18nContext.Provider value={contextValue}>
       {children}
     </I18nContext.Provider>
   );

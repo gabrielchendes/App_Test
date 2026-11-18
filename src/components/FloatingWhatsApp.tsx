@@ -1,5 +1,5 @@
-import React from 'react';
-import { motion } from 'motion/react';
+import React, { memo } from 'react';
+import { m } from 'motion/react';
 import { useSettings } from '../contexts/SettingsContext';
 import WhatsAppIcon from './WhatsAppIcon';
 
@@ -7,7 +7,7 @@ interface FloatingWhatsAppProps {
   page: 'home' | 'community' | 'profile' | 'login' | 'course' | 'lesson' | 'preview';
 }
 
-export default function FloatingWhatsApp({ page }: FloatingWhatsAppProps) {
+const FloatingWhatsApp = memo(function FloatingWhatsApp({ page }: FloatingWhatsAppProps) {
   const { settings } = useSettings();
 
   const isEnabled = () => {
@@ -33,7 +33,7 @@ export default function FloatingWhatsApp({ page }: FloatingWhatsAppProps) {
   const whatsappUrl = `https://wa.me/${settings.support_whatsapp.replace(/\D/g, '')}`;
 
   return (
-    <motion.a
+    <m.a
       href={whatsappUrl}
       target="_blank"
       rel="noopener noreferrer"
@@ -45,6 +45,8 @@ export default function FloatingWhatsApp({ page }: FloatingWhatsAppProps) {
     >
       <div className="absolute inset-0 bg-white/20 rounded-full scale-0 group-hover:scale-100 transition-transform duration-300" />
       <WhatsAppIcon className="w-8 h-8 fill-white drop-shadow-md" />
-    </motion.a>
+    </m.a>
   );
-}
+});
+
+export default FloatingWhatsApp;

@@ -1,7 +1,6 @@
 import React, { memo, useMemo } from 'react';
 import { Lock, Play, Star, CheckCircle2, Rocket } from 'lucide-react';
 import { Course } from '../types/lms';
-import { motion } from 'motion/react';
 import { useI18n } from '../contexts/I18nContext';
 import { cn } from '../lib/utils';
 import { applySingleCourseOverride } from '../lib/courseOverrides';
@@ -12,11 +11,12 @@ interface ProductCardProps {
   progress?: number;
   stats?: { lessons: number, materials: number };
   settings?: any;
+  priority?: boolean;
   onOpen: (product: Course) => void;
   onPrefetch?: (product: Course) => void;
 }
 
-const ProductCard = memo(({ product, isUnlocked, progress = 0, stats, settings, onOpen, onPrefetch }: ProductCardProps) => {
+const ProductCard = memo(({ product, isUnlocked, progress = 0, stats, settings, priority = false, onOpen, onPrefetch }: ProductCardProps) => {
   const { t } = useI18n();
   const effectiveProduct = useMemo(() => applySingleCourseOverride(product), [product]);
 
@@ -90,11 +90,11 @@ const ProductCard = memo(({ product, isUnlocked, progress = 0, stats, settings, 
         {/* Status Icon (Top Left) */}
         {isUnlocked && (
           <div className={cn(
-            "absolute top-2 left-2 z-40 p-1.5 sm:p-2 rounded-lg border backdrop-blur-md shadow-lg transition-all duration-500 opacity-60",
-            stateConfig.color === 'emerald' ? "bg-emerald-500/20 text-emerald-500 border-emerald-500/30" :
-            stateConfig.color === 'blue' ? "bg-blue-500/20 text-blue-500 border-blue-500/30" :
-            stateConfig.color === 'amber' ? "bg-amber-500/20 text-amber-500 border-amber-500/30" :
-            "bg-white/20 text-white border-white/30"
+            "absolute top-2 left-2 z-40 p-1.5 sm:p-2 rounded-lg border shadow-lg transition-opacity duration-300 opacity-75",
+            stateConfig.color === 'emerald' ? "bg-emerald-950/80 text-emerald-400 border-emerald-500/35" :
+            stateConfig.color === 'blue' ? "bg-blue-950/80 text-blue-400 border-blue-500/35" :
+            stateConfig.color === 'amber' ? "bg-amber-950/80 text-amber-400 border-amber-500/35" :
+            "bg-black/75 text-white border-white/30"
           )}>
             {isCompleted ? <CheckCircle2 size={10} className="sm:size-[12px]" /> : 
              isInProgress ? <Rocket size={10} className="sm:size-[12px]" /> : 
@@ -102,11 +102,15 @@ const ProductCard = memo(({ product, isUnlocked, progress = 0, stats, settings, 
           </div>
         )}
 
-        {/* Aurora Glow Effect Layer */}
-        <div className={cn(
-          "absolute -top-10 -left-10 w-40 h-40 blur-[60px] rounded-full opacity-0 group-hover:opacity-30 transition-opacity duration-700 pointer-events-none z-0",
-          isUnlocked ? "bg-emerald-500" : "bg-purple-600"
-        )} />
+        {/* Lightweight Aurora Glow Layer (no expensive CSS blur filter) */}
+        <div
+          className="absolute -top-10 -left-10 w-40 h-40 rounded-full opacity-0 group-hover:opacity-35 transition-opacity duration-500 pointer-events-none z-0"
+          style={{
+            background: isUnlocked
+              ? 'radial-gradient(circle, rgba(16,185,129,0.5) 0%, transparent 70%)'
+              : 'radial-gradient(circle, rgba(147,51,234,0.5) 0%, transparent 70%)'
+          }}
+        />
 
         {/* Premium Shine Sweep (Visible on hover) */}
         <div className="absolute inset-0 z-20 pointer-events-none overflow-hidden">
@@ -118,7 +122,8 @@ const ProductCard = memo(({ product, isUnlocked, progress = 0, stats, settings, 
           <img
             src={(effectiveProduct.cover_url && effectiveProduct.cover_url.trim()) ? effectiveProduct.cover_url.trim() : `https://picsum.photos/seed/${effectiveProduct.id}/600/800`}
             alt={effectiveProduct.title}
-            loading="lazy"
+            loading={priority ? 'eager' : 'lazy'}
+            fetchPriority={priority ? 'high' : 'auto'}
             decoding="async"
             className="w-full h-full object-cover transition-transform duration-500 group-hover:scale-105"
             referrerPolicy="no-referrer"
@@ -130,12 +135,9 @@ const ProductCard = memo(({ product, isUnlocked, progress = 0, stats, settings, 
           {/* Lock Overlay */}
           {!isUnlocked && (
             <div className="absolute inset-0 flex items-center justify-center pointer-events-none p-3 text-center z-30">
-              {/* Golden Soft Aura Glow */}
               <div className="relative">
-                <div className="absolute -inset-2 rounded-2xl bg-gradient-to-r from-amber-500/20 to-amber-300/20 blur-md opacity-40 group-hover:opacity-70 group-hover:blur-lg transition-all duration-500" />
-                
                 {/* Main Lock Badge Container */}
-                <div className="relative w-11 h-11 sm:w-14 sm:h-14 rounded-2xl bg-black/60 border border-amber-400/80 flex items-center justify-center text-amber-300 shadow-[0_8px_25px_rgba(0,0,0,0.7),0_0_15px_rgba(245,158,11,0.25)] group-hover:border-amber-300 group-hover:bg-black/70 group-hover:shadow-[0_8px_30px_rgba(245,158,11,0.45)] group-hover:scale-110 transition-all duration-300">
+                <div className="relative w-11 h-11 sm:w-14 sm:h-14 rounded-2xl bg-black/70 border border-amber-400/80 flex items-center justify-center text-amber-300 shadow-[0_8px_25px_rgba(0,0,0,0.75),0_0_15px_rgba(245,158,11,0.28)] group-hover:border-amber-300 group-hover:bg-black/80 group-hover:shadow-[0_8px_28px_rgba(245,158,11,0.45)] group-hover:scale-110 transition-all duration-300">
                   <Lock size={24} strokeWidth={2.2} className="text-amber-300 drop-shadow-[0_0_10px_rgba(251,191,36,0.9)] sm:size-[28px]" />
                 </div>
               </div>

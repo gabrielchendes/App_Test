@@ -36,16 +36,23 @@ import {
   BookOpen,
   Calendar,
   SlidersHorizontal,
-  ExternalLink
+  ExternalLink,
+  Lock,
+  EyeOff
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { Course, Module, Chapter } from '../types/lms';
 import { supabase } from '../lib/supabase';
+import {
+  ensureValidSupabaseSession,
+  getPersistedUserEmail,
+  reauthenticateSupabaseSession,
+  isRlsOrAuthError
+} from '../lib/authSession';
 import { dataCache } from '../lib/cache';
 import { showToast } from '../lib/customToast';
 import { BlockLessonViewer } from './BlockLessonViewer';
 import { prepareChapterForDb } from '../utils/htmlAppHelper';
-import { saveChapterViaApi } from '../lib/courseOverrides';
 import { useI18n } from '../contexts/I18nContext';
 
 interface AiCourseFactoryModalProps {
@@ -140,6 +147,14 @@ export const AiCourseFactoryModal: React.FC<AiCourseFactoryModalProps> = ({
   const [isPublishing, setIsPublishing] = useState(false);
   const [publishingProgress, setPublishingProgress] = useState('');
 
+  // Inline Re-Authentication Modal state (preserves generated course if Supabase session expired)
+  const [showReauthModal, setShowReauthModal] = useState(false);
+  const [reauthEmail, setReauthEmail] = useState('');
+  const [reauthPassword, setReauthPassword] = useState('');
+  const [showReauthPassword, setShowReauthPassword] = useState(false);
+  const [reauthError, setReauthError] = useState('');
+  const [isReauthenticating, setIsReauthenticating] = useState(false);
+
   if (!isOpen) return null;
 
   // Handle Complete Generation
@@ -218,7 +233,7 @@ export const AiCourseFactoryModal: React.FC<AiCourseFactoryModalProps> = ({
       showToast.success('Complete course architecture generated successfully!');
     } catch (err: any) {
       clearInterval(stepInterval);
-      console.error('[AI Course Factory Error]', err);
+      console.warn('[AI Course Factory] Generation warning:', err);
       setGenerationError(err.message || 'An error occurred during generation.');
       const errIdx = currentStepRef.current;
       setSteps((currentSteps) =>
@@ -275,7 +290,7 @@ export const AiCourseFactoryModal: React.FC<AiCourseFactoryModalProps> = ({
         setAiEditInstruction('');
       }
     } catch (err: any) {
-      console.error('[AI Edit Error]', err);
+      console.warn('[AI Edit] Edit warning:', err);
       showToast.error(err.message || 'Failed to apply AI changes.');
     } finally {
       setIsApplyingAiEdit(false);
@@ -292,28 +307,52 @@ export const AiCourseFactoryModal: React.FC<AiCourseFactoryModalProps> = ({
     showToast.info('Reverted to previous version.');
   };
 
+  const openInlineReauth = (message?: string) => {
+    setReauthEmail(getPersistedUserEmail() || 'gabrielchendes@gmail.com');
+    setReauthPassword('');
+    setReauthError(message || '');
+    setShowReauthModal(true);
+  };
+
   // Handle Save & Publish directly to Supabase
   const handleSaveToSupabase = async () => {
     if (!generatedCourse) return;
     setIsPublishing(true);
-    setPublishingProgress('Creating course record...');
+    setPublishingProgress('Validating session and creating course...');
+
+    let createdCourseId: string | null = null;
 
     try {
+      // 0. Ensure active, non-expired Supabase JWT session before inserting modules/chapters (protected by RLS)
+      const activeSession = await ensureValidSupabaseSession();
+      if (!activeSession?.access_token) {
+        setIsPublishing(false);
+        setPublishingProgress('');
+        openInlineReauth('Confirme sua senha de administrador para renovar a sessão e publicar o curso.');
+        return;
+      }
+
+      const safePrice = Math.max(0, Math.round(Number(generatedCourse.price) || 0));
+      const safeOldPrice = Math.max(0, Math.round(Number(generatedCourse.old_price) || 0));
+      const safeBenefits = Array.isArray(generatedCourse.benefits) ? generatedCourse.benefits : [];
+      const safeOrderIndex = Math.round(Number(generatedCourse.order_index) || 0);
+
       // 1. Insert Course
       const { data: createdCourse, error: courseError } = await supabase
         .from('courses')
         .insert([
           {
-            title: generatedCourse.title,
+            title: generatedCourse.title || 'Novo Curso',
             subtitle: generatedCourse.subtitle || '',
             description: generatedCourse.description || '',
             cover_url: generatedCourse.cover_url || '',
-            price: generatedCourse.price || 0,
-            old_price: generatedCourse.old_price || 0,
+            premium_cover_url: generatedCourse.premium_cover_url || generatedCourse.cover_url || '',
+            price: safePrice,
+            old_price: safeOldPrice,
             is_active: true,
-            is_free: generatedCourse.is_free || false,
-            is_bonus: generatedCourse.is_bonus || false,
-            benefits: generatedCourse.benefits || [],
+            is_free: Boolean(generatedCourse.is_free),
+            is_bonus: Boolean(generatedCourse.is_bonus),
+            benefits: safeBenefits,
             cta_text: generatedCourse.cta_text || 'START TRANSFORMATION NOW',
             premium_badge_text: generatedCourse.premium_badge_text || '',
             offer_badge_text: generatedCourse.offer_badge_text || '',
@@ -323,8 +362,8 @@ export const AiCourseFactoryModal: React.FC<AiCourseFactoryModalProps> = ({
             instant_access_label: generatedCourse.instant_access_label || '',
             preview_enabled: true,
             preview_type: 'html',
-            preview_title: generatedCourse.preview_title || generatedCourse.title,
-            preview_subtitle: generatedCourse.preview_subtitle || generatedCourse.subtitle,
+            preview_title: generatedCourse.preview_title || generatedCourse.title || '',
+            preview_subtitle: generatedCourse.preview_subtitle || generatedCourse.subtitle || '',
             preview_rating: generatedCourse.preview_rating || '4.9 ⭐',
             preview_students_label: generatedCourse.preview_students_label || '+4,200 Students',
             preview_guarantee_label: generatedCourse.preview_guarantee_label || '7-Day Guarantee',
@@ -338,17 +377,24 @@ export const AiCourseFactoryModal: React.FC<AiCourseFactoryModalProps> = ({
             preview_guarantee_description: generatedCourse.preview_guarantee_description || '',
             preview_footer_cta: generatedCourse.preview_footer_cta || 'ENROLL NOW',
             preview_rich_text: generatedCourse.preview_rich_text || '',
-            order_index: 0
+            order_index: safeOrderIndex
           }
         ])
         .select()
         .single();
 
       if (courseError || !createdCourse) {
+        if (isRlsOrAuthError(courseError)) {
+          setIsPublishing(false);
+          setPublishingProgress('');
+          openInlineReauth('Sessão de administrador expirada. Confirme sua senha para continuar.');
+          return;
+        }
         throw new Error(courseError?.message || 'Could not insert course.');
       }
 
       const courseId = createdCourse.id;
+      createdCourseId = courseId;
 
       // 2. Insert Modules and Chapters sequentially to preserve order
       let modulesToProcess = Array.isArray(generatedModules) && generatedModules.length > 0
@@ -366,8 +412,10 @@ export const AiCourseFactoryModal: React.FC<AiCourseFactoryModalProps> = ({
         ];
       }
 
-      let lastValidModuleId: string | null = null;
       let totalCreatedModules = 0;
+      let expectedChaptersCount = 0;
+      let savedChaptersCount = 0;
+      let lastPersistError: any = null;
 
       for (let mIdx = 0; mIdx < modulesToProcess.length; mIdx++) {
         const mod = modulesToProcess[mIdx];
@@ -387,33 +435,33 @@ export const AiCourseFactoryModal: React.FC<AiCourseFactoryModalProps> = ({
 
         if (modError || !createdMod) {
           console.warn('[AI Course Factory] Module insert issue, retrying Módulo Geral fallback:', modError);
-          const retryMod = await supabase
-            .from('modules')
-            .insert([{ course_id: courseId, title: 'Módulo Geral', order_index: mIdx }])
-            .select()
-            .single();
-          createdMod = retryMod.data;
+          lastPersistError = modError;
+          if (!isRlsOrAuthError(modError)) {
+            const retryMod = await supabase
+              .from('modules')
+              .insert([{ course_id: courseId, title: mod.title || 'Módulo Geral', order_index: mIdx }])
+              .select()
+              .single();
+            createdMod = retryMod.data;
+            if (retryMod.error) lastPersistError = retryMod.error;
+          }
         }
 
-        let moduleId = createdMod?.id || lastValidModuleId;
+        const moduleId = createdMod?.id || null;
         if (!moduleId) {
-          const { data: generalMod } = await supabase
-            .from('modules')
-            .insert([{ course_id: courseId, title: 'Módulo Geral', order_index: 0 }])
-            .select()
-            .single();
-          moduleId = generalMod?.id;
-        }
-
-        if (moduleId) {
-          lastValidModuleId = moduleId;
-          totalCreatedModules++;
-        } else {
+          if (isRlsOrAuthError(lastPersistError)) {
+            break;
+          }
           continue;
         }
+
+        totalCreatedModules++;
+
         const chapters = (Array.isArray(mod.chapters) && mod.chapters.length > 0)
           ? mod.chapters
           : (Array.isArray(mod.lessons) ? mod.lessons : []);
+
+        expectedChaptersCount += chapters.length;
 
         for (let cIdx = 0; cIdx < chapters.length; cIdx++) {
           const chap = chapters[cIdx];
@@ -425,6 +473,7 @@ export const AiCourseFactoryModal: React.FC<AiCourseFactoryModalProps> = ({
 
           const { content_type: dbContentType, rich_text: dbRichText } = prepareChapterForDb({
             ...chap,
+            content_type: chap.content_type || 'interactive',
             rich_text: richTextString
           });
 
@@ -432,12 +481,12 @@ export const AiCourseFactoryModal: React.FC<AiCourseFactoryModalProps> = ({
             module_id: moduleId,
             title: chap.title || `Aula ${cIdx + 1}`,
             description: chap.description || '',
-            content_type: dbContentType,
+            content_type: dbContentType || 'interactive',
             rich_text: dbRichText,
             cover_url: chap.cover_url || '',
-            duration_minutes: chap.duration_minutes || 15,
+            duration_minutes: Math.max(1, Math.round(Number(chap.duration_minutes) || 15)),
             order_index: cIdx,
-            is_preview: cIdx === 0
+            is_preview: cIdx === 0 && mIdx === 0
           };
 
           let { data: insertedChap, error: chapError } = await supabase
@@ -446,41 +495,101 @@ export const AiCourseFactoryModal: React.FC<AiCourseFactoryModalProps> = ({
             .select()
             .single();
 
-          if (chapError) {
-            console.warn('[AI Course Factory] Chapter insert error, retrying without optional fields:', chapError);
-            const fallbackPayload = {
-              module_id: moduleId,
-              title: chap.title || `Aula ${cIdx + 1}`,
-              description: chap.description || '',
-              content_type: 'interactive',
-              rich_text: dbRichText,
-              order_index: cIdx,
-              is_preview: cIdx === 0
-            };
-            const retry2 = await supabase.from('chapters').insert([fallbackPayload]).select().single();
-            insertedChap = retry2.data;
+          if (chapError || !insertedChap) {
+            console.warn('[AI Course Factory] Chapter insert error, retrying core fields:', chapError);
+            lastPersistError = chapError;
+            if (!isRlsOrAuthError(chapError)) {
+              const fallbackPayload = {
+                module_id: moduleId,
+                title: chap.title || `Aula ${cIdx + 1}`,
+                description: chap.description || '',
+                content_type: dbContentType || 'interactive',
+                rich_text: dbRichText,
+                order_index: cIdx
+              };
+              const retry2 = await supabase.from('chapters').insert([fallbackPayload]).select().single();
+              insertedChap = retry2.data;
+              if (retry2.error) lastPersistError = retry2.error;
+            }
           }
 
           if (insertedChap?.id) {
-            saveChapterViaApi(insertedChap.id, chapterPayload).catch(() => {});
+            savedChaptersCount++;
           }
         }
       }
 
-      // Invalidate cache
+      if (totalCreatedModules === 0 || (expectedChaptersCount > 0 && savedChaptersCount === 0)) {
+        // Clean up empty shell course so broken courses are not left in catalog
+        if (createdCourseId) {
+          try {
+            await supabase.from('courses').delete().eq('id', createdCourseId);
+          } catch {}
+        }
+
+        if (isRlsOrAuthError(lastPersistError)) {
+          setIsPublishing(false);
+          setPublishingProgress('');
+          openInlineReauth('Sua permissão de gravação no Supabase expirou. Confirme sua senha para publicar o curso e todas as aulas.');
+          return;
+        }
+
+        const errMsg = lastPersistError?.message
+          ? `Não foi possível salvar os módulos/aulas no banco: ${lastPersistError.message}`
+          : 'Não foi possível salvar os módulos e aulas no banco de dados. Tente novamente.';
+        showToast.error(errMsg);
+        return;
+      }
+
+      // Invalidate client and server caches immediately
       dataCache.invalidate('courses_list');
       dataCache.invalidate('admin_courses');
+      dataCache.invalidate('global_public_courses_catalog');
       dataCache.invalidate(`course_full_${courseId}`);
+      dataCache.invalidate();
+      await fetch('/api/v1/clear-cache').catch(() => {});
 
-      showToast.success('Course published to database successfully!');
+      if (expectedChaptersCount > savedChaptersCount) {
+        showToast.error(`Curso salvo, mas ${expectedChaptersCount - savedChaptersCount} aula(s) falharam ao gravar.`);
+      } else {
+        showToast.success(`Curso publicado com ${savedChaptersCount} aula(s) salva(s) com sucesso!`);
+      }
       onCourseCreated?.(courseId);
       onClose();
     } catch (err: any) {
-      console.error('[Publish Course Error]', err);
-      showToast.error(err.message || 'Error saving course to database');
+      console.warn('[Publish Course Warning]', err);
+      if (createdCourseId) {
+        try {
+          await supabase.from('courses').delete().eq('id', createdCourseId);
+        } catch {}
+      }
+      if (isRlsOrAuthError(err)) {
+        openInlineReauth('Sessão expirada ao publicar. Confirme sua senha para finalizar a publicação.');
+      } else {
+        showToast.error(err?.message || 'Erro ao publicar o curso no banco de dados.');
+      }
     } finally {
       setIsPublishing(false);
       setPublishingProgress('');
+    }
+  };
+
+  const handleConfirmReauthAndPublish = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setReauthError('');
+    setIsReauthenticating(true);
+    try {
+      const { session, error } = await reauthenticateSupabaseSession(reauthEmail, reauthPassword);
+      if (error || !session?.access_token) {
+        setReauthError(error || 'Não foi possível autenticar.');
+        return;
+      }
+      setShowReauthModal(false);
+      setReauthPassword('');
+      showToast.success('Sessão confirmada! Publicando curso...');
+      await handleSaveToSupabase();
+    } finally {
+      setIsReauthenticating(false);
     }
   };
 
@@ -1258,6 +1367,110 @@ export const AiCourseFactoryModal: React.FC<AiCourseFactoryModalProps> = ({
                 )}
               </button>
             </div>
+          </div>
+        )}
+
+        {/* Inline Re-Authentication Overlay (preserves generated course on expired Supabase session) */}
+        {showReauthModal && (
+          <div className="fixed inset-0 z-[140] bg-black/80 backdrop-blur-md flex items-center justify-center p-4">
+            <form
+              onSubmit={handleConfirmReauthAndPublish}
+              className="w-full max-w-md bg-[#12151f] border border-white/15 rounded-3xl p-6 space-y-5 shadow-2xl"
+            >
+              <div className="flex items-start justify-between gap-3">
+                <div className="flex items-center gap-3">
+                  <div className="w-10 h-10 rounded-2xl bg-amber-500/15 border border-amber-500/30 flex items-center justify-center text-amber-400 shrink-0">
+                    <Lock size={18} />
+                  </div>
+                  <div>
+                    <h3 className="text-base font-black text-white">Confirmar Sessão de Administrador</h3>
+                    <p className="text-xs text-gray-400 mt-0.5">
+                      Seu curso gerado está preservado. Digite sua senha para gravar os módulos e aulas no Supabase.
+                    </p>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setShowReauthModal(false)}
+                  className="p-1.5 rounded-xl bg-white/5 hover:bg-white/10 text-gray-400 hover:text-white cursor-pointer"
+                >
+                  <X size={16} />
+                </button>
+              </div>
+
+              {reauthError && (
+                <div className="p-3 rounded-xl bg-rose-500/10 border border-rose-500/30 text-xs text-rose-300">
+                  {reauthError}
+                </div>
+              )}
+
+              <div className="space-y-3">
+                <div>
+                  <label className="block text-[11px] font-bold uppercase tracking-wider text-gray-400 mb-1">
+                    E-mail do Administrador
+                  </label>
+                  <input
+                    type="email"
+                    required
+                    value={reauthEmail}
+                    onChange={(e) => setReauthEmail(e.target.value)}
+                    placeholder="admin@exemplo.com"
+                    className="w-full bg-[#181c28] border border-white/10 rounded-xl px-3.5 py-2.5 text-sm text-white focus:outline-none focus:border-emerald-500"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-[11px] font-bold uppercase tracking-wider text-gray-400 mb-1">
+                    Senha
+                  </label>
+                  <div className="relative">
+                    <input
+                      type={showReauthPassword ? 'text' : 'password'}
+                      required
+                      autoFocus
+                      value={reauthPassword}
+                      onChange={(e) => setReauthPassword(e.target.value)}
+                      placeholder="Digite sua senha"
+                      className="w-full bg-[#181c28] border border-white/10 rounded-xl px-3.5 py-2.5 pr-10 text-sm text-white focus:outline-none focus:border-emerald-500"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setShowReauthPassword((v) => !v)}
+                      className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-white cursor-pointer"
+                    >
+                      {showReauthPassword ? <EyeOff size={16} /> : <Eye size={16} />}
+                    </button>
+                  </div>
+                </div>
+              </div>
+
+              <div className="flex items-center justify-end gap-2.5 pt-2">
+                <button
+                  type="button"
+                  onClick={() => setShowReauthModal(false)}
+                  className="px-4 py-2.5 rounded-xl bg-white/5 hover:bg-white/10 text-xs font-bold text-gray-300 cursor-pointer"
+                >
+                  Cancelar
+                </button>
+                <button
+                  type="submit"
+                  disabled={isReauthenticating}
+                  className="px-5 py-2.5 rounded-xl bg-gradient-to-r from-emerald-500 to-teal-600 hover:brightness-110 text-white text-xs font-black uppercase tracking-wider flex items-center gap-2 cursor-pointer disabled:opacity-50"
+                >
+                  {isReauthenticating ? (
+                    <>
+                      <Loader2 size={14} className="animate-spin" />
+                      <span>Confirmando...</span>
+                    </>
+                  ) : (
+                    <>
+                      <CheckCircle2 size={14} />
+                      <span>Confirmar e Publicar</span>
+                    </>
+                  )}
+                </button>
+              </div>
+            </form>
           </div>
         )}
       </motion.div>

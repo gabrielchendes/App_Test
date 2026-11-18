@@ -272,7 +272,7 @@ Gere ${Math.min(Math.max(1, Number(variations) || 1), 3)} variação(ões) deste
       try {
         const result = await generateContentWithRetry({
           ai,
-          candidateModels: ['gemini-3.1-flash-lite', 'gemini-3.8-flash'],
+          candidateModels: ['gemini-3.1-flash-lite', 'gemini-4-hydrogen'],
           contents: [userPrompt],
           config: {
             systemInstruction,
@@ -411,7 +411,7 @@ Gere ${Math.min(Math.max(1, Number(variations) || 1), 3)} variação(ões) deste
       try {
         const result = await generateContentWithRetry({
           ai,
-          candidateModels: ['gemini-3.1-flash-lite', 'gemini-3.8-flash'],
+          candidateModels: ['gemini-3.1-flash-lite', 'gemini-4-hydrogen'],
           contents: [userPrompt],
           config: {
             systemInstruction,

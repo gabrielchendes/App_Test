@@ -42,6 +42,7 @@ import { dataCache } from '../lib/cache';
 import { lazyWithRetry } from '../lib/lazyWithRetry';
 import { safeFetch } from '../lib/utils';
 import { applySingleCourseOverride, applyChapterOverrides, applySingleChapterOverride, useCourseOverridesSync } from '../lib/courseOverrides';
+import { isImagePreloaded, markImagePreloaded, preloadImagesBatch } from '../lib/imagePreload';
 
 const LessonVideoPlayer = lazyWithRetry(() => import('./LessonVideoPlayer'));
 const ChapterQuestions = lazyWithRetry(() => import('./ChapterQuestions'));
@@ -52,6 +53,178 @@ const AudioLessonPlayer = lazyWithRetry(() => import('./AudioLessonPlayer'));
 
 const isUUID = (str?: string) =>
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(str || '');
+
+interface LessonGridCardProps {
+  chapter: Chapter;
+  idx: number;
+  isCompleted: boolean;
+  isSelected: boolean;
+  showPlayIcon: boolean;
+  showDuration: boolean;
+  completedLabel: string;
+  onSelect: (chapter: Chapter) => void;
+}
+
+const LessonGridCard = memo(({
+  chapter,
+  idx,
+  isCompleted,
+  isSelected,
+  showPlayIcon,
+  showDuration,
+  completedLabel,
+  onSelect
+}: LessonGridCardProps) => {
+  const effectiveChapter = useMemo(() => applySingleChapterOverride(chapter), [chapter]);
+  const coverUrl = effectiveChapter.cover_url?.trim() || '';
+  const isChapterHtmlApp = chapter.content_type === 'html' || chapter.content_type === 'html_app' || isHtmlAppChapter(chapter);
+  const imgRef = React.useRef<HTMLImageElement>(null);
+  const [mediaReady, setMediaReady] = useState<boolean>(() => !coverUrl || isImagePreloaded(coverUrl));
+
+  useEffect(() => {
+    if (!coverUrl || isImagePreloaded(coverUrl)) {
+      setMediaReady(true);
+      return;
+    }
+
+    if (imgRef.current?.complete && imgRef.current.naturalWidth > 0) {
+      markImagePreloaded(coverUrl);
+      setMediaReady(true);
+      return;
+    }
+
+    setMediaReady(false);
+    const fallbackTimer = setTimeout(() => {
+      setMediaReady(true);
+    }, 2200);
+    return () => clearTimeout(fallbackTimer);
+  }, [coverUrl]);
+
+  const handleImageDone = useCallback(() => {
+    if (coverUrl) {
+      markImagePreloaded(coverUrl);
+    }
+    setMediaReady(true);
+  }, [coverUrl]);
+
+  return (
+    <button
+      type="button"
+      onClick={() => onSelect(chapter)}
+      className="group relative flex flex-col text-left transition-transform duration-200 hover:-translate-y-1.5 active:scale-[0.98] w-full cursor-pointer"
+    >
+      <div className="relative w-full mb-3 sm:mb-5">
+        <div className={`absolute -inset-[2px] sm:-inset-[3px] rounded-2xl sm:rounded-[26px] pointer-events-none transition-all duration-300 blur-[8px] ${
+          !mediaReady
+            ? 'opacity-15 bg-white/5'
+            : isSelected
+              ? isCompleted
+                ? 'opacity-100 bg-emerald-400/60 shadow-[0_0_30px_rgba(16,185,129,0.7)]'
+                : 'opacity-100 bg-gradient-to-r from-amber-400/80 via-yellow-300/90 to-amber-500/80 shadow-[0_0_35px_rgba(245,158,11,0.85),0_0_15px_rgba(251,191,36,0.5)]'
+              : isCompleted
+                ? 'opacity-30 group-hover:opacity-95 bg-emerald-500/25 group-hover:bg-emerald-400/60 group-hover:shadow-[0_0_24px_rgba(16,185,129,0.55)]'
+                : 'opacity-35 group-hover:opacity-100 bg-gradient-to-b from-amber-400/30 via-amber-500/20 to-amber-600/10 group-hover:from-amber-400/75 group-hover:via-yellow-300/80 group-hover:to-amber-500/75 group-hover:shadow-[0_0_32px_rgba(245,158,11,0.65)]'
+        }`} />
+
+        <div className={`relative aspect-square rounded-2xl sm:rounded-[24px] overflow-hidden border-[1.5px] bg-zinc-950 transition-all duration-300 w-full ${
+          !mediaReady
+            ? 'border-white/10'
+            : isSelected
+              ? isCompleted
+                ? 'border-emerald-300 ring-2 ring-emerald-400/60 shadow-[0_0_28px_rgba(16,185,129,0.45)]'
+                : 'border-amber-300 ring-2 ring-amber-400/80 shadow-[0_0_35px_rgba(245,158,11,0.6),0_0_15px_rgba(254,240,138,0.5)]'
+              : isCompleted
+                ? 'border-emerald-400/50 ring-1 ring-emerald-500/20 shadow-[0_0_16px_rgba(16,185,129,0.25)] group-hover:border-emerald-300 group-hover:ring-2 group-hover:ring-emerald-400/60 group-hover:shadow-[0_0_28px_rgba(16,185,129,0.45)]'
+                : 'border-amber-400/40 ring-1 ring-inset ring-amber-400/20 shadow-[0_8px_24px_rgba(0,0,0,0.6),0_0_16px_rgba(245,158,11,0.15)] group-hover:border-amber-300 group-hover:ring-2 group-hover:ring-amber-400/70 group-hover:shadow-[0_0_32px_rgba(245,158,11,0.55),0_0_14px_rgba(254,240,138,0.4)]'
+        }`}>
+          <div className={`absolute top-0 inset-x-3 h-[1.5px] bg-gradient-to-r from-transparent ${isSelected ? 'via-amber-200/90' : 'via-amber-300/60 group-hover:via-amber-200/90'} to-transparent z-30 pointer-events-none transition-colors duration-300`} />
+          <div className="absolute bottom-0 inset-x-6 h-[1px] bg-gradient-to-r from-transparent via-amber-400/25 to-transparent z-30 pointer-events-none" />
+
+          {coverUrl ? (
+            <>
+              {!mediaReady && (
+                <div className="absolute inset-0 bg-zinc-900 skeleton-shimmer z-20" />
+              )}
+              <img
+                ref={imgRef}
+                src={coverUrl}
+                loading={idx < 12 ? 'eager' : 'lazy'}
+                decoding="async"
+                fetchPriority={idx < 8 ? 'high' : 'auto'}
+                onLoad={handleImageDone}
+                onError={handleImageDone}
+                className={`w-full h-full object-cover transition-opacity duration-200 ${
+                  !mediaReady ? 'opacity-0' : isCompleted ? 'opacity-90' : 'opacity-100 group-hover:scale-105 transition-transform duration-500'
+                }`}
+                alt={chapter.title}
+                referrerPolicy="no-referrer"
+              />
+            </>
+          ) : (
+            <div className="w-full h-full bg-zinc-900 flex items-center justify-center text-white/30 group-hover:text-primary transition-colors">
+              {getChapterIconComponent(chapter, "w-10 h-10 sm:w-12 sm:h-12 text-white/40 group-hover:text-primary transition-colors", false)}
+            </div>
+          )}
+
+          <div className="absolute inset-0 bg-gradient-to-t from-black/60 via-transparent to-black/20 pointer-events-none" />
+
+          {mediaReady && !isCompleted && showPlayIcon && (
+            <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
+              <div className={`w-11 h-11 sm:w-14 sm:h-14 rounded-2xl border flex items-center justify-center transition-all duration-300 shadow-md ${
+                isChapterHtmlApp
+                  ? 'bg-amber-950/20 border-amber-500/25 text-amber-200 group-hover:bg-amber-600/35 group-hover:border-amber-400 group-hover:text-white group-hover:scale-105'
+                  : 'bg-black/20 border-white/20 text-white/90 group-hover:bg-black/40 group-hover:border-primary/60 group-hover:text-white group-hover:scale-105'
+              }`}>
+                {getChapterIconComponent(chapter, "w-5 h-5 sm:w-6 sm:h-6 text-white drop-shadow-[0_2px_4px_rgba(0,0,0,0.8)]", true)}
+              </div>
+            </div>
+          )}
+
+          {mediaReady && isCompleted && (
+            <div className="absolute top-2.5 left-2.5 sm:top-3.5 sm:left-3.5 bg-emerald-600 text-white text-[8px] sm:text-[10px] font-black px-2.5 py-1 rounded-full uppercase tracking-widest shadow-md italic flex items-center gap-1 border border-emerald-400 opacity-100">
+              <CheckCircle2 size={11} className="text-white shrink-0" strokeWidth={2.5} />
+              {completedLabel}
+            </div>
+          )}
+
+          {mediaReady && showDuration && (
+            <div className="absolute bottom-2.5 right-2.5 sm:bottom-3.5 sm:right-3.5 bg-black/80 backdrop-blur-md text-[8px] sm:text-[10px] font-black text-white px-2.5 py-1 rounded-lg border border-white/20 uppercase tracking-widest italic shadow-lg">
+              {chapter.duration_minutes} MIN
+            </div>
+          )}
+        </div>
+      </div>
+
+      <div className="space-y-0.5 px-2">
+        {!mediaReady ? (
+          <div className="space-y-2 py-0.5">
+            <div className="h-3.5 sm:h-4 w-4/5 bg-white/10 rounded-md skeleton-shimmer" />
+            <div className="h-3 sm:h-3.5 w-1/2 bg-white/5 rounded-md skeleton-shimmer" />
+          </div>
+        ) : (
+          <>
+            {chapter.custom_badge && chapter.custom_badge.trim() ? (
+              <div className="flex items-center gap-2">
+                <span className="text-[10px] font-black text-primary uppercase tracking-[0.2em] italic leading-none">
+                  {chapter.custom_badge.trim()}
+                </span>
+                {isCompleted && <div className="w-1 h-1 rounded-full bg-green-500" />}
+              </div>
+            ) : isCompleted ? (
+              <div className="flex items-center gap-2 py-0.5">
+                <div className="w-1.5 h-1.5 rounded-full bg-green-500" />
+              </div>
+            ) : null}
+            <h4 className={`text-xs sm:text-lg font-black uppercase italic tracking-tight leading-[1.1] transition-colors group-hover:text-primary ${isCompleted ? 'text-white/80' : 'text-white'}`}>
+              <span className="text-primary/40 mr-1 sm:mr-1.5 opacity-50">{(idx + 1).toString().padStart(2, '0')}.</span>
+              {chapter.title}
+            </h4>
+          </>
+        )}
+      </div>
+    </button>
+  );
+});
 
 interface CourseViewerProps {
   courseId: string;
@@ -151,16 +324,21 @@ export default function CourseViewer({ courseId, userId, onClose, initialCourse,
     try {
       setErrorMessage(null);
       const cached = dataCache.get(cacheKey);
+      let hadWarmCache = false;
 
-      if (cached) {
+      if (cached && Array.isArray(cached.chapters) && cached.chapters.length > 0) {
+        hadWarmCache = true;
         if (cached.course) setCourse(cached.course);
         if (cached.modules) setModules(cached.modules);
-        if (cached.chapters) {
-          setChapters(cached.chapters);
-          if (cached.chapters.length === 1 && viewModeRef.current !== 'player') {
-            setActiveChapter(cached.chapters[0]);
-            setViewMode('player');
-          }
+        setChapters(cached.chapters);
+        if (cached.chapters.length === 1 && viewModeRef.current !== 'player') {
+          setActiveChapter(cached.chapters[0]);
+          setViewMode('player');
+        } else if (cached.chapters.length > 1) {
+          const warmCoverUrls = cached.chapters
+            .slice(0, 8)
+            .map((ch: Chapter) => applySingleChapterOverride(ch).cover_url);
+          preloadImagesBatch(warmCoverUrls, 1000).catch(() => {});
         }
         if (cached.progress) setProgress(cached.progress);
         setLoading(false);
@@ -184,8 +362,8 @@ export default function CourseViewer({ courseId, userId, onClose, initialCourse,
         ? supabase.from('courses').select('*').eq('id', courseId).maybeSingle()
         : Promise.resolve({ data: initialCourse || course });
 
-      const progressQuery = (progress.length > 0)
-        ? Promise.resolve({ data: progress })
+      const progressQuery = (initialProgress !== undefined || progress.length > 0)
+        ? Promise.resolve({ data: progress.length > 0 ? progress : (initialProgress || []) })
         : (isUUID(userId) ? supabase.from('user_progress').select('*').eq('user_id', userId) : Promise.resolve({ data: [] }));
 
       const [modulesRes, courseRes, progressRes] = await Promise.allSettled([
@@ -309,17 +487,19 @@ export default function CourseViewer({ courseId, userId, onClose, initialCourse,
       }, 600000, false);
 
       // Setup initial view without overwriting an active chapter or kicking user out of player mode
+      let willAutoOpenPlayer = false;
       if (activeChapterRef.current) {
         const freshActive = finalChapters.find(ch => ch.id === activeChapterRef.current?.id);
         if (freshActive) {
           setActiveChapter(freshActive);
         }
       } else if (viewModeRef.current === 'player') {
-        // Preserving player mode
+        willAutoOpenPlayer = true;
       } else {
         if (finalChapters.length === 1) {
           setActiveChapter(finalChapters[0]);
           setViewMode('player');
+          willAutoOpenPlayer = true;
         } else if (finalChapters.length > 1) {
           const lastViewedStr = localStorage.getItem(`last_viewed_${userId}`);
           if (lastViewedStr) {
@@ -330,6 +510,7 @@ export default function CourseViewer({ courseId, userId, onClose, initialCourse,
                 if (chapter && !progressData.find(p => p.chapter_id === chapter.id)?.completed) {
                   setActiveChapter(chapter);
                   setViewMode('player');
+                  willAutoOpenPlayer = true;
                 }
               }
             } catch (e) {
@@ -337,6 +518,20 @@ export default function CourseViewer({ courseId, userId, onClose, initialCourse,
             }
           }
         }
+      }
+
+      // Synchronize image + text display: preload visible lesson covers BEFORE lifting skeleton on cold grid opens
+      if (!hadWarmCache && !willAutoOpenPlayer && finalChapters.length > 1) {
+        const visibleCoverUrls = finalChapters
+          .slice(0, 12)
+          .map(ch => applySingleChapterOverride(ch).cover_url);
+        await preloadImagesBatch(visibleCoverUrls, 1500);
+      } else if (finalChapters.length > 1) {
+        // Warm remaining covers silently in background
+        const bgCoverUrls = finalChapters
+          .slice(0, 12)
+          .map(ch => applySingleChapterOverride(ch).cover_url);
+        preloadImagesBatch(bgCoverUrls, 1500).catch(() => {});
       }
     } catch (err: any) {
       console.error('❌ Error in CourseViewer fetch:', err);
@@ -473,14 +668,23 @@ export default function CourseViewer({ courseId, userId, onClose, initialCourse,
 
   const courseChapterIds = useMemo(() => new Set(chapters.map(ch => ch.id)), [chapters]);
 
+  const completedChapterSet = useMemo(() => {
+    const set = new Set<string>();
+    for (const p of progress) {
+      if (p.completed && p.chapter_id) {
+        set.add(p.chapter_id);
+      }
+    }
+    return set;
+  }, [progress]);
+
   const completedChaptersCount = useMemo(() => {
-    const completedChapterIds = new Set(
-      progress
-        .filter(p => p.completed && courseChapterIds.has(p.chapter_id))
-        .map(p => p.chapter_id)
-    );
-    return completedChapterIds.size;
-  }, [progress, courseChapterIds]);
+    let count = 0;
+    courseChapterIds.forEach(id => {
+      if (completedChapterSet.has(id)) count++;
+    });
+    return count;
+  }, [completedChapterSet, courseChapterIds]);
 
   const calculateProgress = useCallback(() => {
     if (chapters.length === 0) return 0;
@@ -490,7 +694,7 @@ export default function CourseViewer({ courseId, userId, onClose, initialCourse,
   const calculateModuleProgress = (moduleId: string) => {
     const moduleChapters = chapters.filter(ch => ch.module_id === moduleId);
     if (moduleChapters.length === 0) return 0;
-    const completed = moduleChapters.filter(ch => progress.find(p => p.chapter_id === ch.id)?.completed).length;
+    const completed = moduleChapters.filter(ch => completedChapterSet.has(ch.id)).length;
     return Math.round((completed / moduleChapters.length) * 100);
   };
 
@@ -776,13 +980,13 @@ export default function CourseViewer({ courseId, userId, onClose, initialCourse,
         className="flex-1 overflow-y-auto scrollbar-hide relative bg-bg-main"
       >
         <PullToRefresh onRefresh={fetchCourseData}>
-          <AnimatePresence mode="wait">
+          <AnimatePresence>
             {viewMode === 'grid' ? (
               <motion.div
                 key="grid"
-                initial={{ opacity: 0, y: 20 }}
+                initial={{ opacity: 0, y: 12 }}
                 animate={{ opacity: 1, y: 0 }}
-                exit={{ opacity: 0, y: -20 }}
+                transition={{ duration: 0.18 }}
                 className="max-w-7xl mx-auto w-full p-6 sm:p-12 pb-32"
               >
                 <div className="mb-16 space-y-4 text-center">
@@ -791,7 +995,7 @@ export default function CourseViewer({ courseId, userId, onClose, initialCourse,
                 </div>
 
                 <div className="space-y-24">
-                  {loading && chapters.length === 0 ? (
+                  {loading ? (
                     <div className="space-y-10 animate-pulse">
                       <div className="flex items-center justify-center gap-4 pb-6 border-b border-white/5">
                         <div className="h-4 w-40 bg-white/10 rounded-full" />
@@ -910,126 +1114,27 @@ export default function CourseViewer({ courseId, userId, onClose, initialCourse,
                       )}
                       
                       <div className="grid grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-x-3 gap-y-6 sm:gap-x-8 sm:gap-y-12">
-                        {moduleChapters.map((chapter, idx) => {
-                          const isCompleted = progress.find(p => p.chapter_id === chapter.id)?.completed;
-                          const isChapterHtmlApp = chapter.content_type === 'html' || chapter.content_type === 'html_app' || isHtmlAppChapter(chapter);
-                          const isSelected = activeChapter?.id === chapter.id;
-                          
-                          return (
-                            <motion.button
-                            whileHover={{ y: -8, scale: 1.02 }}
-                            whileTap={{ scale: 0.98 }}
+                        {moduleChapters.map((chapter, idx) => (
+                          <LessonGridCard
                             key={chapter.id}
-                            onClick={() => {
-                              setActiveChapter(chapter);
+                            chapter={chapter}
+                            idx={idx}
+                            isCompleted={completedChapterSet.has(chapter.id)}
+                            isSelected={activeChapter?.id === chapter.id}
+                            showPlayIcon={shouldShowPlayIcon(chapter)}
+                            showDuration={shouldShowDuration(chapter)}
+                            completedLabel={t('course.completed')}
+                            onSelect={(ch) => {
+                              setActiveChapter(ch);
                               setViewMode('player');
                               window.scrollTo({ top: 0, behavior: 'smooth' });
                             }}
-                            className="group relative flex flex-col text-left transition-all w-full"
-                          >
-                            <div className="relative w-full mb-3 sm:mb-5">
-                              {/* Ambient Outer Border Glow (Golden Community Theme) */}
-                              <div className={`absolute -inset-[2px] sm:-inset-[3px] rounded-2xl sm:rounded-[26px] pointer-events-none transition-all duration-500 blur-[8px] ${
-                                isSelected
-                                  ? isCompleted
-                                    ? 'opacity-100 bg-emerald-400/60 shadow-[0_0_30px_rgba(16,185,129,0.7)]'
-                                    : 'opacity-100 bg-gradient-to-r from-amber-400/80 via-yellow-300/90 to-amber-500/80 shadow-[0_0_35px_rgba(245,158,11,0.85),0_0_15px_rgba(251,191,36,0.5)]'
-                                  : isCompleted
-                                    ? 'opacity-30 group-hover:opacity-95 bg-emerald-500/25 group-hover:bg-emerald-400/60 group-hover:shadow-[0_0_24px_rgba(16,185,129,0.55)]'
-                                    : 'opacity-35 group-hover:opacity-100 bg-gradient-to-b from-amber-400/30 via-amber-500/20 to-amber-600/10 group-hover:from-amber-400/75 group-hover:via-yellow-300/80 group-hover:to-amber-500/75 group-hover:shadow-[0_0_32px_rgba(245,158,11,0.65)]'
-                              }`} />
-
-                              <div className={`relative aspect-square rounded-2xl sm:rounded-[24px] overflow-hidden border-[1.5px] bg-zinc-950 transition-all duration-500 w-full ${
-                                isSelected 
-                                  ? isCompleted
-                                    ? 'border-emerald-300 ring-2 ring-emerald-400/60 shadow-[0_0_28px_rgba(16,185,129,0.45)]'
-                                    : 'border-amber-300 ring-2 ring-amber-400/80 shadow-[0_0_35px_rgba(245,158,11,0.6),0_0_15px_rgba(254,240,138,0.5)]'
-                                  : isCompleted 
-                                    ? 'border-emerald-400/50 ring-1 ring-emerald-500/20 shadow-[0_0_16px_rgba(16,185,129,0.25)] group-hover:border-emerald-300 group-hover:ring-2 group-hover:ring-emerald-400/60 group-hover:shadow-[0_0_28px_rgba(16,185,129,0.45)]' 
-                                    : 'border-amber-400/40 ring-1 ring-inset ring-amber-400/20 shadow-[0_8px_24px_rgba(0,0,0,0.6),0_0_16px_rgba(245,158,11,0.15)] group-hover:border-amber-300 group-hover:ring-2 group-hover:ring-amber-400/70 group-hover:shadow-[0_0_32px_rgba(245,158,11,0.55),0_0_14px_rgba(254,240,138,0.4)]'
-                              }`}>
-                                {/* Top Specular Golden Light Beam (Matching Community Post Header Gleam) */}
-                                <div className={`absolute top-0 inset-x-3 h-[1.5px] bg-gradient-to-r from-transparent ${isSelected ? 'via-amber-200/90' : 'via-amber-300/60 group-hover:via-amber-200/90'} to-transparent z-30 pointer-events-none transition-colors duration-300`} />
-                                
-                                {/* Bottom Subtle Golden Light Glow */}
-                                <div className="absolute bottom-0 inset-x-6 h-[1px] bg-gradient-to-r from-transparent via-amber-400/25 to-transparent z-30 pointer-events-none" />
-
-                              {(() => {
-                                const chCover = applySingleChapterOverride(chapter).cover_url;
-                                return chCover && chCover.trim() ? (
-                                  <img 
-                                    src={chCover.trim()} 
-                                    loading="lazy"
-                                    decoding="async"
-                                    className={`w-full h-full object-cover transition-all duration-700 ${isCompleted ? 'opacity-90' : 'opacity-100 group-hover:scale-105'}`} 
-                                    alt={chapter.title} 
-                                    referrerPolicy="no-referrer"
-                                  />
-                                ) : (
-                                  <div className="w-full h-full bg-zinc-900 flex items-center justify-center text-white/30 group-hover:text-primary transition-colors">
-                                    {getChapterIconComponent(chapter, "w-10 h-10 sm:w-12 sm:h-12 text-white/40 group-hover:text-primary transition-colors", false)}
-                                  </div>
-                                );
-                              })()}
-                              
-                              {/* Crisp Subtle Gradient to ensure text & badges pop without darkening the artwork */}
-                              <div className="absolute inset-0 bg-gradient-to-t from-black/60 via-transparent to-black/20 pointer-events-none" />
-
-                              {/* Center Play Symbol (Excluded when completed, disabled by default unless activated) */}
-                              {!isCompleted && shouldShowPlayIcon(chapter) && (
-                                <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
-                                  <div className={`w-11 h-11 sm:w-14 sm:h-14 rounded-2xl border flex items-center justify-center transition-all duration-500 shadow-md ${
-                                    isChapterHtmlApp
-                                      ? 'bg-amber-950/20 border-amber-500/25 text-amber-200 group-hover:bg-amber-600/35 group-hover:border-amber-400 group-hover:text-white group-hover:scale-105'
-                                      : 'bg-black/20 border-white/20 text-white/90 group-hover:bg-black/40 group-hover:border-primary/60 group-hover:text-white group-hover:scale-105'
-                                  }`}>
-                                    {getChapterIconComponent(chapter, "w-5 h-5 sm:w-6 sm:h-6 text-white drop-shadow-[0_2px_4px_rgba(0,0,0,0.8)]", true)}
-                                  </div>
-                                </div>
-                              )}
-
-                              {/* Top Completed Badge */}
-                              {isCompleted && (
-                                <div className="absolute top-2.5 left-2.5 sm:top-3.5 sm:left-3.5 bg-emerald-600 text-white text-[8px] sm:text-[10px] font-black px-2.5 py-1 rounded-full uppercase tracking-widest shadow-md italic flex items-center gap-1 border border-emerald-400 opacity-100">
-                                  <CheckCircle2 size={11} className="text-white shrink-0" strokeWidth={2.5} />
-                                  {t('course.completed')}
-                                </div>
-                              )}
-
-                              {/* Duration Badge (Disabled by default unless activated) */}
-                              {shouldShowDuration(chapter) && (
-                                <div className="absolute bottom-2.5 right-2.5 sm:bottom-3.5 sm:right-3.5 bg-black/80 backdrop-blur-md text-[8px] sm:text-[10px] font-black text-white px-2.5 py-1 rounded-lg border border-white/20 uppercase tracking-widest italic shadow-lg">
-                                  {chapter.duration_minutes} MIN
-                                </div>
-                              )}
-                            </div>
-                          </div>
-                            
-                            <div className="space-y-0.5 px-2">
-                              {chapter.custom_badge && chapter.custom_badge.trim() ? (
-                                <div className="flex items-center gap-2">
-                                  <span className="text-[10px] font-black text-primary uppercase tracking-[0.2em] italic leading-none">
-                                    {chapter.custom_badge.trim()}
-                                  </span>
-                                  {isCompleted && <div className="w-1 h-1 rounded-full bg-green-500" />}
-                                </div>
-                              ) : isCompleted ? (
-                                <div className="flex items-center gap-2 py-0.5">
-                                  <div className="w-1.5 h-1.5 rounded-full bg-green-500" />
-                                </div>
-                              ) : null}
-                              <h4 className={`text-xs sm:text-lg font-black uppercase italic tracking-tight leading-[1.1] transition-colors group-hover:text-primary ${isCompleted ? 'text-white/80' : 'text-white'}`}>
-                                <span className="text-primary/40 mr-1 sm:mr-1.5 opacity-50">{(idx + 1).toString().padStart(2, '0')}.</span>
-                                {chapter.title}
-                              </h4>
-                            </div>
-                          </motion.button>
-                        );
-                      })}
+                          />
+                        ))}
+                      </div>
                     </div>
-                  </div>
-                );
-              }))}
+                  );
+                }))}
             </div>
               
               <SupportSection page="course" settings={settings} t={t} />

@@ -14,7 +14,6 @@ export default defineConfig(({mode}) => {
         registerType: 'prompt',
         injectRegister: false,
         includeAssets: [
-          'favicon.svg',
           'favicon.png',
           'apple-touch-icon.png',
           'icon-192.png',
@@ -40,7 +39,11 @@ export default defineConfig(({mode}) => {
             '**/vendor-charts*.js',
             '**/vendor-quill*.js',
             '**/vendor-firebase*.js',
-            '**/browser-image-compression*.js'
+            '**/browser-image-compression*.js',
+            '**/favicon.svg',
+            '**/icon-original.png',
+            '**/apple-touch-icon-precomposed.png',
+            '**/apple-touch-icon-180x180.png'
           ],
           maximumFileSizeToCacheInBytes: 4000000,
           runtimeCaching: [
@@ -130,14 +133,11 @@ export default defineConfig(({mode}) => {
               if (id.includes('react-player') || id.includes('hls.js') || id.includes('dashjs')) {
                 return 'vendor-player';
               }
-              if (id.includes('recharts')) {
+              if (id.includes('recharts') || id.includes('victory-vendor') || id.includes('/d3-')) {
                 return 'vendor-charts';
               }
               if (id.includes('firebase') || id.includes('@firebase')) {
                 return 'vendor-firebase';
-              }
-              if (id.includes('motion')) {
-                return 'vendor-motion';
               }
               if (id.includes('lucide-react')) {
                 return 'vendor-lucide';
@@ -145,10 +145,18 @@ export default defineConfig(({mode}) => {
               if (id.includes('@supabase')) {
                 return 'vendor-supabase';
               }
+              if (id.includes('/node_modules/motion/') || id.includes('/node_modules/framer-motion/')) {
+                return 'vendor-motion';
+              }
+              if (id.includes('/node_modules/i18next') || id.includes('/node_modules/react-i18next')) {
+                return 'vendor-i18n';
+              }
               if (
                 id.includes('/node_modules/react/') ||
                 id.includes('/node_modules/react-dom/') ||
-                id.includes('/node_modules/scheduler/')
+                id.includes('/node_modules/scheduler/') ||
+                id.includes('/node_modules/clsx/') ||
+                id.includes('/node_modules/tailwind-merge/')
               ) {
                 return 'vendor-react';
               }
@@ -163,7 +171,7 @@ export default defineConfig(({mode}) => {
         'react': path.resolve(__dirname, './node_modules/react'),
         'react-dom': path.resolve(__dirname, './node_modules/react-dom'),
       },
-      dedupe: ['react', 'react-dom'],
+      dedupe: ['react', 'react-dom', 'react/jsx-runtime', 'react/jsx-dev-runtime'],
     },
     optimizeDeps: {
       include: [
@@ -172,7 +180,19 @@ export default defineConfig(({mode}) => {
         'react-dom/client',
         'react/jsx-runtime',
         'react/jsx-dev-runtime',
-        'motion/react'
+        'motion/react',
+        'lucide-react',
+        '@supabase/supabase-js',
+        'clsx',
+        'tailwind-merge',
+        'sonner',
+        'date-fns',
+        'date-fns/locale',
+        'browser-image-compression',
+        'hls.js',
+        'recharts',
+        'firebase/app',
+        'firebase/messaging'
       ],
     },
     server: {

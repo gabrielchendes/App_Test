@@ -603,15 +603,23 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       return res.status(200).json({ success: true, deleted: commentId });
     }
 
-    // 6. LIST POSTS (Merged Supabase + Local, Sorted newest first)
+    // 6. LIST POSTS (Merged Supabase + Local, Sorted newest first, supports optional pagination)
     if (action === 'list-posts' || (req.method === 'GET' && (!action || action === 'posts'))) {
+      res.setHeader('Cache-Control', 'no-store');
+      const rawLimit = Number(req.query?.limit);
+      const rawOffset = Number(req.query?.offset);
+      const hasPagination = Number.isFinite(rawLimit) && rawLimit > 0;
+      const limit = hasPagination ? Math.min(100, Math.max(1, Math.floor(rawLimit))) : 100;
+      const offset = Number.isFinite(rawOffset) && rawOffset >= 0 ? Math.floor(rawOffset) : 0;
+      const remoteFetchLimit = hasPagination ? Math.min(200, offset + limit + 1) : 100;
+
       let remotePosts: any[] = [];
       try {
         const { data, error } = await supabaseAdmin
           .from('community_posts')
-          .select('*')
+          .select('id, user_id, user_email, user_name, user_avatar_url, content, image_url, likes_count, comments_count, created_at, reply_to_id, reply_to_content, reply_to_user_name')
           .order('created_at', { ascending: false })
-          .limit(100);
+          .limit(remoteFetchLimit);
 
         if (!error && Array.isArray(data)) {
           remotePosts = data;
@@ -640,6 +648,12 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         const timeB = b.created_at ? new Date(b.created_at).getTime() : 0;
         return timeB - timeA;
       });
+
+      if (hasPagination) {
+        const pagedPosts = merged.slice(offset, offset + limit);
+        const hasMore = merged.length > offset + limit;
+        return res.status(200).json({ success: true, posts: pagedPosts, hasMore });
+      }
 
       return res.status(200).json({ success: true, posts: merged });
     }

@@ -226,6 +226,13 @@ export function prepareChapterForDb(chapter: {
     chapter.content_type === 'interactive'
   ) {
     dbContentType = chapter.content_type;
+  } else {
+    const rawRich = typeof chapter.rich_text === 'string' ? chapter.rich_text.trim() : '';
+    if (rawRich.startsWith('{') && rawRich.includes('"blocks"')) {
+      dbContentType = 'interactive';
+    } else if (chapter.content_type === 'rich_text' || rawRich.length > 0) {
+      dbContentType = 'text';
+    }
   }
 
   // Extract any existing icon and badge from rich_text

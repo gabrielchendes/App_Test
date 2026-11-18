@@ -38,7 +38,7 @@ interface AiLessonGeneratorModalProps {
   initialLessonGoal?: string;
   initialBlocks?: LessonBlock[];
   modulesMap?: Record<string, Module[]>;
-  onLessonCreated: (chapter: any) => void;
+  onLessonCreated: (chapter: any) => Promise<void> | void;
 }
 
 export const AiLessonGeneratorModal: React.FC<AiLessonGeneratorModalProps> = ({
@@ -64,8 +64,9 @@ export const AiLessonGeneratorModal: React.FC<AiLessonGeneratorModalProps> = ({
   const [generating, setGenerating] = useState<boolean>(false);
   const [improvementPrompt, setImprovementPrompt] = useState<string>('');
   const [improving, setImproving] = useState<boolean>(false);
+  const [publishing, setPublishing] = useState<boolean>(false);
 
-  // Handle reference image upload
+  // Handle reference image upload with automatic client-side downscaling to prevent 413/timeout errors
   const handleImageUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -75,20 +76,60 @@ export const AiLessonGeneratorModal: React.FC<AiLessonGeneratorModalProps> = ({
       return;
     }
 
-    if (file.size > 5 * 1024 * 1024) {
-      toast.error('Image size should be under 5MB');
+    if (file.size > 10 * 1024 * 1024) {
+      toast.error('Image size should be under 10MB');
       return;
     }
 
     const reader = new FileReader();
     reader.onload = () => {
-      const result = reader.result as string;
-      setReferenceImage({
-        mimeType: file.type,
-        data: result,
-        fileName: file.name
-      });
-      toast.success('Reference image uploaded successfully!');
+      const rawDataUrl = reader.result as string;
+      const img = new Image();
+      img.onload = () => {
+        try {
+          const MAX_DIM = 1280;
+          let { width, height } = img;
+          if (width > MAX_DIM || height > MAX_DIM) {
+            if (width >= height) {
+              height = Math.round((height * MAX_DIM) / width);
+              width = MAX_DIM;
+            } else {
+              width = Math.round((width * MAX_DIM) / height);
+              height = MAX_DIM;
+            }
+          }
+          const canvas = document.createElement('canvas');
+          canvas.width = width;
+          canvas.height = height;
+          const ctx = canvas.getContext('2d');
+          if (ctx) {
+            ctx.drawImage(img, 0, 0, width, height);
+            const compressedDataUrl = canvas.toDataURL('image/jpeg', 0.82);
+            setReferenceImage({
+              mimeType: 'image/jpeg',
+              data: compressedDataUrl,
+              fileName: file.name
+            });
+            toast.success('Reference image uploaded successfully!');
+            return;
+          }
+        } catch {}
+        setReferenceImage({
+          mimeType: file.type,
+          data: rawDataUrl,
+          fileName: file.name
+        });
+        toast.success('Reference image uploaded successfully!');
+      };
+      img.onerror = () => {
+        setReferenceImage({
+          mimeType: file.type,
+          data: rawDataUrl,
+          fileName: file.name
+        });
+        toast.success('Reference image uploaded successfully!');
+      };
+      img.src = rawDataUrl;
     };
     reader.readAsDataURL(file);
   };
@@ -137,6 +178,7 @@ export const AiLessonGeneratorModal: React.FC<AiLessonGeneratorModalProps> = ({
 
   const currentModules = selectedCourseId ? modulesMap[selectedCourseId] || [] : [];
   const activeModuleId = selectedModuleId || currentModules[0]?.id || '';
+  const effectiveCourseId = selectedCourseId || courses[0]?.id || (courses.length === 0 ? '__draft_course__' : '');
 
   // Trigger AI generation endpoint
   const handleGenerate = async (actionType: 'generate' | 'improve' | 'regenerate' = 'generate') => {
@@ -144,6 +186,9 @@ export const AiLessonGeneratorModal: React.FC<AiLessonGeneratorModalProps> = ({
       toast.error('Informe o objetivo, instruções ou carregue uma imagem de referência!');
       return;
     }
+
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 45000);
 
     try {
       if (actionType === 'improve') setImproving(true);
@@ -155,6 +200,7 @@ export const AiLessonGeneratorModal: React.FC<AiLessonGeneratorModalProps> = ({
       const response = await fetch('/api/v1/generate-lesson', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
+        signal: controller.signal,
         body: JSON.stringify({
           courseTitle: courseObj?.title || 'Curso',
           moduleTitle: moduleObj?.title || 'Módulo',
@@ -167,16 +213,29 @@ export const AiLessonGeneratorModal: React.FC<AiLessonGeneratorModalProps> = ({
         })
       });
 
-      let data: any = null;
       const rawText = await response.text();
+      let data: any = null;
       try {
-        data = JSON.parse(rawText);
+        data = rawText ? JSON.parse(rawText) : null;
       } catch {
-        throw new Error(rawText?.trim() || `Communication error with AI service (HTTP ${response.status})`);
+        data = null;
       }
 
       if (!response.ok || !data?.success || !data?.lesson) {
-        throw new Error(data?.error || 'Failed to generate lesson with AI');
+        let friendlyMsg = data?.error || '';
+        if (!friendlyMsg) {
+          if (response.status === 413) {
+            friendlyMsg = 'A imagem de referência é muito grande. Tente uma imagem menor.';
+          } else if (response.status === 502 || response.status === 504) {
+            friendlyMsg = 'O serviço de IA demorou para responder. Tente novamente em instantes.';
+          } else if (rawText && !rawText.trim().startsWith('<')) {
+            friendlyMsg = rawText.trim().slice(0, 180);
+          } else {
+            friendlyMsg = `Falha na comunicação com a IA (HTTP ${response.status}). Tente novamente.`;
+          }
+        }
+        toast.error('Erro na IA: ' + friendlyMsg);
+        return;
       }
 
       setGeneratedLesson(data.lesson);
@@ -185,9 +244,13 @@ export const AiLessonGeneratorModal: React.FC<AiLessonGeneratorModalProps> = ({
       setImprovementPrompt('');
       toast.success(actionType === 'improve' ? 'Aula aprimorada com IA!' : 'Aula gerada com sucesso pela IA!');
     } catch (err: any) {
-      console.error(err);
-      toast.error('Erro na IA: ' + err.message);
+      const msg = err?.name === 'AbortError'
+        ? 'Tempo limite excedido ao gerar a aula. Tente novamente.'
+        : (err?.message || 'Erro inesperado ao comunicar com a IA.');
+      console.warn('[AiLessonGeneratorModal] AI generation notice:', msg);
+      toast.error('Erro na IA: ' + msg);
     } finally {
+      clearTimeout(timeoutId);
       setGenerating(false);
       setImproving(false);
     }
@@ -245,16 +308,16 @@ export const AiLessonGeneratorModal: React.FC<AiLessonGeneratorModalProps> = ({
   };
 
   // Final Publish handler
-  const handlePublish = () => {
-    if (!generatedLesson) return;
-    if (!selectedCourseId || !activeModuleId) {
-      toast.error('Selecione o curso e módulo antes de publicar!');
+  const handlePublish = async () => {
+    if (!generatedLesson || publishing) return;
+    if (courses.length > 0 && !effectiveCourseId) {
+      toast.error('Selecione o curso antes de publicar!');
       return;
     }
 
     const createdChapterData = {
       ...(initialChapterId ? { id: initialChapterId } : {}),
-      module_id: activeModuleId,
+      module_id: activeModuleId || '',
       title: generatedLesson.title || lessonTitle || 'Aula Interativa',
       description: generatedLesson.description || '',
       content_type: 'interactive',
@@ -266,9 +329,16 @@ export const AiLessonGeneratorModal: React.FC<AiLessonGeneratorModalProps> = ({
       duration_minutes: generatedLesson.duration_minutes || 15
     };
 
-    onLessonCreated(createdChapterData);
-    toast.success(initialChapterId ? 'Aula atualizada com sucesso!' : 'Aula criada e adicionada com sucesso!');
-    onClose();
+    try {
+      setPublishing(true);
+      await onLessonCreated(createdChapterData);
+      onClose();
+    } catch (err) {
+      // Parent handler already displays specific error toast; keep modal open so user does not lose lesson
+      console.warn('[AiLessonGeneratorModal] Publish warning:', err);
+    } finally {
+      setPublishing(false);
+    }
   };
 
   return (
@@ -321,18 +391,22 @@ export const AiLessonGeneratorModal: React.FC<AiLessonGeneratorModalProps> = ({
                     Selecione o Curso
                   </label>
                   <select
-                    value={selectedCourseId}
+                    value={effectiveCourseId}
                     onChange={e => {
                       setSelectedCourseId(e.target.value);
                       setSelectedModuleId('');
                     }}
                     className="w-full bg-black border border-white/10 rounded-xl px-4 py-3 text-xs text-white focus:border-emerald-500 outline-none"
                   >
-                    {courses.map(c => (
-                      <option key={c.id} value={c.id}>
-                        {c.title}
-                      </option>
-                    ))}
+                    {courses.length === 0 ? (
+                      <option value="__draft_course__">Novo Curso (salvo automaticamente)</option>
+                    ) : (
+                      courses.map(c => (
+                        <option key={c.id} value={c.id}>
+                          {c.title}
+                        </option>
+                      ))
+                    )}
                   </select>
                 </div>
 
@@ -345,12 +419,21 @@ export const AiLessonGeneratorModal: React.FC<AiLessonGeneratorModalProps> = ({
                     onChange={e => setSelectedModuleId(e.target.value)}
                     className="w-full bg-black border border-white/10 rounded-xl px-4 py-3 text-xs text-white focus:border-emerald-500 outline-none"
                   >
-                    {currentModules.map(m => (
-                      <option key={m.id} value={m.id}>
-                        {m.title}
-                      </option>
-                    ))}
+                    {currentModules.length === 0 ? (
+                      <option value="">Módulo Geral (criado automaticamente)</option>
+                    ) : (
+                      currentModules.map(m => (
+                        <option key={m.id} value={m.id}>
+                          {m.title}
+                        </option>
+                      ))
+                    )}
                   </select>
+                  {currentModules.length === 0 && (
+                    <p className="text-[10px] text-emerald-400/80">
+                      Nenhum módulo criado — a aula será salva automaticamente em Módulo Geral.
+                    </p>
+                  )}
                 </div>
               </div>
 
@@ -739,9 +822,18 @@ export const AiLessonGeneratorModal: React.FC<AiLessonGeneratorModalProps> = ({
               <button
                 type="button"
                 onClick={handlePublish}
-                className="px-6 py-2.5 bg-emerald-500 hover:bg-emerald-400 text-black font-black text-xs uppercase tracking-wider rounded-xl transition-all shadow-lg shadow-emerald-500/20 flex items-center gap-1.5"
+                disabled={publishing}
+                className="px-6 py-2.5 bg-emerald-500 hover:bg-emerald-400 disabled:opacity-60 text-black font-black text-xs uppercase tracking-wider rounded-xl transition-all shadow-lg shadow-emerald-500/20 flex items-center gap-1.5 cursor-pointer"
               >
-                <Check size={16} /> Publicar Aula no Curso
+                {publishing ? (
+                  <>
+                    <Loader2 size={16} className="animate-spin" /> Salvando Aula...
+                  </>
+                ) : (
+                  <>
+                    <Check size={16} /> Publicar Aula no Curso
+                  </>
+                )}
               </button>
             </div>
           )}

@@ -45,6 +45,12 @@ import {
 import { motion, AnimatePresence } from 'motion/react';
 import { Course, Module, Chapter, Checklist } from '../types/lms';
 import { supabase } from '../lib/supabase';
+import {
+  ensureValidSupabaseSession,
+  getPersistedUserEmail,
+  reauthenticateSupabaseSession,
+  isRlsOrAuthError
+} from '../lib/authSession';
 import { toast } from '../lib/customToast';
 import CoursePreviewViewer from './CoursePreviewViewer';
 import { AdminChecklistEditor } from './AdminChecklistEditor';
@@ -66,10 +72,12 @@ import {
   applyCourseOverrides, 
   applySingleCourseOverride, 
   applyChapterOverrides, 
-  applySingleChapterOverride, 
-  saveCourseViaApi, 
-  saveChapterViaApi 
+  applySingleChapterOverride
 } from '../lib/courseOverrides';
+import {
+  saveCourseViaApi,
+  saveChapterViaApi
+} from '../lib/courseOverridesAdmin';
 
 const getNextCategoryOrderIndex = async (isBonus: boolean, isFree: boolean): Promise<number> => {
   try {
@@ -182,6 +190,7 @@ export default function CourseEditor({
   initialModulesData
 }: CourseEditorProps) {
   const [courseId, setCourseId] = useState<string | undefined>(initialCourseId);
+  const skipNextCourseFetchRef = useRef(false);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [expandedChapters, setExpandedChapters] = useState<string[]>([]);
@@ -206,6 +215,37 @@ export default function CourseEditor({
     onConfirm: () => void;
   } | null>(null);
 
+  const [showReauthModal, setShowReauthModal] = useState(false);
+  const [reauthEmail, setReauthEmail] = useState('');
+  const [reauthPassword, setReauthPassword] = useState('');
+  const [showReauthPassword, setShowReauthPassword] = useState(false);
+  const [reauthError, setReauthError] = useState('');
+  const [isReauthenticating, setIsReauthenticating] = useState(false);
+  const [pendingReauthAction, setPendingReauthAction] = useState<
+    | { type: 'save_course'; confirmed?: boolean }
+    | { type: 'save_ai_lesson'; chapterData: any }
+    | { type: 'apply_ai_course'; generatedCourse: Partial<Course>; suggestedModules?: any[]; autoGenerateLessons?: boolean }
+    | null
+  >(null);
+
+  const openEditorReauth = (
+    action:
+      | { type: 'save_course'; confirmed?: boolean }
+      | { type: 'save_ai_lesson'; chapterData: any }
+      | { type: 'apply_ai_course'; generatedCourse: Partial<Course>; suggestedModules?: any[]; autoGenerateLessons?: boolean },
+    message?: string
+  ) => {
+    setPendingReauthAction(action);
+    setReauthEmail(getPersistedUserEmail() || 'gabrielchendes@gmail.com');
+    setReauthPassword('');
+    setReauthError(message || '');
+    setShowReauthModal(true);
+  };
+
+  const ensureAuthSession = async () => {
+    return await ensureValidSupabaseSession();
+  };
+
   const handleApplyAiCourse = async (
     generatedCourse: Partial<Course>,
     suggestedModules?: any[],
@@ -218,11 +258,22 @@ export default function CourseEditor({
     setIsDirty(true);
 
     if (autoGenerateLessons && suggestedModules && suggestedModules.length > 0) {
+      let currentCourseId = getEffectiveCourseId();
+      const createdNewCourseInThisRun = !currentCourseId;
+
       try {
         setSaving(true);
-        toast.info('Criando estrutura de módulos e aulas com IA...');
+        const session = await ensureAuthSession();
+        if (!session?.access_token) {
+          setSaving(false);
+          openEditorReauth(
+            { type: 'apply_ai_course', generatedCourse, suggestedModules, autoGenerateLessons },
+            'Confirme sua senha de administrador para criar os módulos e aulas no Supabase.'
+          );
+          return;
+        }
 
-        let currentCourseId = courseId;
+        toast.info('Criando estrutura de módulos e aulas com IA...');
 
         // Automatically save course if it doesn't exist yet
         if (!currentCourseId) {
@@ -238,8 +289,8 @@ export default function CourseEditor({
             is_active: course.is_active !== undefined ? course.is_active : true,
             is_free: course.is_free || false,
             is_bonus: course.is_bonus || false,
-            price: generatedCourse.price || course.price || 9700,
-            old_price: generatedCourse.old_price || course.old_price || 29700,
+            price: Math.max(0, Math.round(Number(generatedCourse.price || course.price || 9700))),
+            old_price: Math.max(0, Math.round(Number(generatedCourse.old_price || course.old_price || 29700))),
             benefits: generatedCourse.benefits || course.benefits || [],
             cta_text: generatedCourse.cta_text || 'UNLOCK ACCESS NOW',
             premium_badge_text: generatedCourse.premium_badge_text || 'EXCLUSIVE METHOD',
@@ -273,6 +324,7 @@ export default function CourseEditor({
 
           if (courseError) throw courseError;
           currentCourseId = newCourse.id;
+          skipNextCourseFetchRef.current = true;
           setCourseId(newCourse.id);
           setCourse(newCourse);
           dataCache.invalidate();
@@ -287,21 +339,27 @@ export default function CourseEditor({
             .from('modules')
             .insert([{
               course_id: currentCourseId,
-              title: mod.title,
+              title: mod.title || `Módulo ${mIdx + 1}`,
               order_index: currentModuleCount + mIdx
             }])
             .select()
             .single();
 
           if (modError) {
-            console.error('Error creating module:', modError);
-            continue;
+            throw modError;
           }
 
           if (newMod && mod.chapters?.length) {
             for (let cIdx = 0; cIdx < mod.chapters.length; cIdx++) {
               const ch = mod.chapters[cIdx];
-              const { content_type: dbContentType, rich_text: dbRichText } = prepareChapterForDb(ch);
+              const richTextString = ch.rich_text
+                ? (typeof ch.rich_text === 'string' ? ch.rich_text : JSON.stringify(ch.rich_text))
+                : (ch.interactive_content ? JSON.stringify(ch.interactive_content) : '');
+              const { content_type: dbContentType, rich_text: dbRichText } = prepareChapterForDb({
+                ...ch,
+                content_type: ch.content_type || (richTextString.trim().startsWith('{') ? 'interactive' : 'text'),
+                rich_text: richTextString
+              });
               const { data: newChap, error: chapError } = await supabase
                 .from('chapters')
                 .insert([{
@@ -310,20 +368,28 @@ export default function CourseEditor({
                   description: ch.description || '',
                   content_type: dbContentType,
                   rich_text: dbRichText,
-                  duration_minutes: ch.duration_minutes || 15,
+                  duration_minutes: Math.max(1, Math.round(Number(ch.duration_minutes) || 15)),
                   order_index: cIdx
                 }])
                 .select()
                 .single();
 
-              if (!chapError && newChap && !firstCreatedChapter) {
+              if (chapError) {
+                console.warn('Error creating AI chapter:', chapError);
+              } else if (newChap && !firstCreatedChapter) {
                 firstCreatedChapter = newChap;
               }
             }
           }
         }
 
-        await fetchCourseData();
+        if (currentCourseId) {
+          dataCache.invalidate('course_full_' + currentCourseId);
+        }
+        dataCache.invalidate('global_public_courses_catalog');
+        dataCache.invalidate();
+        await fetch('/api/v1/clear-cache').catch(() => {});
+        await fetchCourseData(currentCourseId);
         toast.success('Módulos e Aulas criados com sucesso a partir da Copy!');
 
         // If there's a chapter created, allow direct AI Lesson generation
@@ -332,8 +398,21 @@ export default function CourseEditor({
           setIsAiModalOpen(true);
         }
       } catch (err: any) {
-        console.error('Error auto-generating lessons:', err);
-        toast.error('Erro ao gerar aulas automaticamente: ' + (err.message || 'Tente novamente.'));
+        console.warn('Warning auto-generating lessons:', err);
+        if (isRlsOrAuthError(err)) {
+          if (createdNewCourseInThisRun && currentCourseId) {
+            try {
+              await supabase.from('courses').delete().eq('id', currentCourseId);
+              setCourseId(undefined);
+            } catch {}
+          }
+          openEditorReauth(
+            { type: 'apply_ai_course', generatedCourse, suggestedModules, autoGenerateLessons },
+            'Sessão expirada no Supabase. Confirme sua senha para salvar o curso e as aulas.'
+          );
+        } else {
+          toast.error('Erro ao gerar aulas automaticamente: ' + (err.message || 'Tente novamente.'));
+        }
       } finally {
         setSaving(false);
       }
@@ -555,6 +634,10 @@ export default function CourseEditor({
     }
     
     if (courseId && courseId !== 'undefined' && courseId !== 'null' && isUUID(courseId)) {
+      if (skipNextCourseFetchRef.current) {
+        skipNextCourseFetchRef.current = false;
+        return;
+      }
       fetchCourseData();
     } else {
       if (initialCourseData) {
@@ -585,6 +668,13 @@ export default function CourseEditor({
 
           rawChapters.forEach((ch: any, chIdx: number) => {
             const chId = ch.id || `ch-temp-${mIdx}-${chIdx}-${Date.now()}`;
+            const rawRich = ch.rich_text
+              ? (typeof ch.rich_text === 'object' ? JSON.stringify(ch.rich_text) : ch.rich_text)
+              : (ch.interactive_content ? JSON.stringify(ch.interactive_content) : '');
+            const inferredType = ch.content_type && ch.content_type !== 'rich_text'
+              ? ch.content_type
+              : ((ch.interactive_content || (typeof rawRich === 'string' && rawRich.trim().startsWith('{'))) ? 'interactive' : 'text');
+
             loadedChapters.push({
               id: chId,
               course_id: '',
@@ -592,9 +682,9 @@ export default function CourseEditor({
               title: ch.title || `Aula ${chIdx + 1}`,
               description: ch.description || '',
               order_index: ch.order_index ?? chIdx,
-              content_type: ch.content_type || 'rich_text',
+              content_type: inferredType,
               video_url: ch.video_url || '',
-              rich_text: typeof ch.rich_text === 'object' ? JSON.stringify(ch.rich_text) : (ch.rich_text || ''),
+              rich_text: rawRich,
               cover_url: ch.cover_url || '',
               is_free: Boolean(ch.is_free),
               is_preview: Boolean(ch.is_preview),
@@ -645,8 +735,8 @@ export default function CourseEditor({
     }
   }, [course.linked_package_id, packages]);
 
-  const fetchCourseData = async () => {
-    const targetCourseId = getEffectiveCourseId();
+  const fetchCourseData = async (overrideCourseId?: string) => {
+    const targetCourseId = overrideCourseId || getEffectiveCourseId();
     if (!targetCourseId) {
       setLoading(false);
       return;
@@ -714,15 +804,21 @@ export default function CourseEditor({
 
   const handleLessonCreatedByAi = async (chapterData: any) => {
     try {
-      let currentCourseId = (courseId && courseId !== 'undefined' && courseId !== 'null' && isUUID(courseId)) ? courseId : null;
+      const session = await ensureAuthSession();
+      if (!session?.access_token) {
+        openEditorReauth(
+          { type: 'save_ai_lesson', chapterData },
+          'Confirme sua senha de administrador para gravar a aula gerada por IA.'
+        );
+        return;
+      }
+
+      let currentCourseId = getEffectiveCourseId();
       if (!currentCourseId) {
-        if (!course.title) {
-          toast.error('Informe o título do curso antes de adicionar aulas.');
-          return;
-        }
+        const autoTitle = course.title?.trim() || chapterData.title || 'Novo Curso';
         const nextOrder = await getNextCategoryOrderIndex(!!course.is_bonus, !course.is_bonus && !!course.is_free);
         const { data: newCourse, error } = await supabase.from('courses').insert([{
-          title: course.title,
+          title: autoTitle,
           description: course.description || '',
           is_active: course.is_active !== undefined ? course.is_active : true,
           is_free: course.is_free !== undefined ? course.is_free : true,
@@ -731,49 +827,124 @@ export default function CourseEditor({
         }]).select().single();
         if (error) throw error;
         currentCourseId = newCourse.id;
+        skipNextCourseFetchRef.current = true;
         setCourseId(newCourse.id);
-        setCourse(newCourse);
-        dataCache.invalidate();
+        setCourse(prev => ({
+          ...prev,
+          ...newCourse,
+          ...parseCourseHtmlFunnel(newCourse)
+        }));
       }
 
-      const { content_type: dbContentType, rich_text: dbRichText } = prepareChapterForDb(chapterData);
+      // Auto-resolve or create default "Módulo Geral" when no module has been created yet
+      let targetModuleId = isUUID(chapterData.module_id) ? chapterData.module_id : undefined;
 
-      if (chapterData.id) {
-        const { error: updateError } = await supabase.from('chapters').update({
-          module_id: chapterData.module_id,
+      if (!targetModuleId) {
+        const existingValidMod = modules.find(m => isUUID(m.id));
+        if (existingValidMod) {
+          targetModuleId = existingValidMod.id;
+        } else {
+          const { data: dbMods } = await supabase
+            .from('modules')
+            .select('*')
+            .eq('course_id', currentCourseId)
+            .order('order_index')
+            .limit(1);
+
+          if (dbMods && dbMods.length > 0 && isUUID(dbMods[0].id)) {
+            targetModuleId = dbMods[0].id;
+            setModules(dbMods);
+          } else {
+            const firstTempMod = modules[0];
+            const modTitle = firstTempMod?.title?.trim() || 'Módulo Geral';
+            const { data: createdMod, error: modError } = await supabase
+              .from('modules')
+              .insert([{
+                course_id: currentCourseId,
+                title: modTitle,
+                order_index: 0
+              }])
+              .select()
+              .single();
+
+            if (modError || !createdMod) {
+              throw modError || new Error('Não foi possível criar o Módulo Geral automaticamente.');
+            }
+            targetModuleId = createdMod.id;
+            setModules(prev => [...prev.filter(m => isUUID(m.id)), createdMod]);
+          }
+        }
+      }
+
+      const { content_type: dbContentType, rich_text: dbRichText } = prepareChapterForDb({
+        ...chapterData,
+        content_type: chapterData.content_type || 'interactive'
+      });
+
+      if (chapterData.id && isUUID(chapterData.id)) {
+        const updatePayload = {
+          module_id: targetModuleId,
           title: chapterData.title,
           description: chapterData.description || '',
-          content_type: dbContentType,
+          content_type: dbContentType || 'interactive',
           rich_text: dbRichText,
-          duration_minutes: chapterData.duration_minutes || 15
-        }).eq('id', chapterData.id);
-
+          duration_minutes: Math.max(1, Math.round(Number(chapterData.duration_minutes) || 15))
+        };
+        const { error: updateError } = await supabase.from('chapters').update(updatePayload).eq('id', chapterData.id);
         if (updateError) throw updateError;
+        saveChapterViaApi(chapterData.id, updatePayload).catch(() => {});
+
+        if (currentCourseId) dataCache.invalidate('course_full_' + currentCourseId);
+        dataCache.invalidate('global_public_courses_catalog');
+        dataCache.invalidate();
+        await fetch('/api/v1/clear-cache').catch(() => {});
         toast.success('Aula atualizada com IA!');
         setIsDirty(false);
-        fetchCourseData();
+        await fetchCourseData(currentCourseId);
         return;
       }
 
-      const { data: newChapter, error: chapterError } = await supabase.from('chapters').insert([{
-        module_id: chapterData.module_id,
+      const insertPayload = {
+        module_id: targetModuleId,
         title: chapterData.title,
         description: chapterData.description || '',
-        content_type: dbContentType,
+        content_type: dbContentType || 'interactive',
         rich_text: dbRichText,
-        duration_minutes: chapterData.duration_minutes || 15,
+        duration_minutes: Math.max(1, Math.round(Number(chapterData.duration_minutes) || 15)),
         order_index: chapters.length,
         is_preview: false
-      }]).select().single();
+      };
 
-      if (chapterError) throw chapterError;
+      const { data: newChapter, error: chapterError } = await supabase
+        .from('chapters')
+        .insert([insertPayload])
+        .select()
+        .single();
 
-      toast.success('Aula criada com IA e adicionada!');
+      if (chapterError || !newChapter) {
+        throw chapterError || new Error('Erro ao gravar aula no banco de dados.');
+      }
+
+      saveChapterViaApi(newChapter.id, insertPayload).catch(() => {});
+      if (currentCourseId) dataCache.invalidate('course_full_' + currentCourseId);
+      dataCache.invalidate('global_public_courses_catalog');
+      dataCache.invalidate();
+      await fetch('/api/v1/clear-cache').catch(() => {});
+
+      toast.success('Aula criada com IA e salva no curso!');
       setIsDirty(false);
-      fetchCourseData();
+      await fetchCourseData(currentCourseId);
     } catch (err: any) {
-      console.error('Erro ao salvar aula gerada por IA:', err);
-      toast.error('Erro ao salvar aula da IA: ' + err.message);
+      console.warn('Aviso ao salvar aula gerada por IA:', err);
+      if (isRlsOrAuthError(err)) {
+        openEditorReauth(
+          { type: 'save_ai_lesson', chapterData },
+          'Sua sessão de gravação no Supabase expirou. Confirme sua senha para salvar esta aula.'
+        );
+        return;
+      }
+      toast.error('Erro ao salvar aula da IA: ' + (err.message || 'Erro desconhecido'));
+      throw err;
     }
   };
 
@@ -875,6 +1046,16 @@ export default function CourseEditor({
         hide_single_module_header: course.hide_single_module_header !== false
       };
 
+      const session = await ensureAuthSession();
+      if (!session?.access_token && (chapters.length > 0 || modules.length > 0)) {
+        setSaving(false);
+        openEditorReauth(
+          { type: 'save_course', confirmed },
+          'Confirme sua senha de administrador para salvar os módulos e aulas no Supabase.'
+        );
+        return;
+      }
+
       const targetCourseId = getEffectiveCourseId();
       let activeCourseId = targetCourseId;
 
@@ -909,6 +1090,7 @@ export default function CourseEditor({
           throw error;
         }
         activeCourseId = data.id;
+        skipNextCourseFetchRef.current = true;
         setCourseId(data.id);
         setCourse(prev => ({
           ...prev,
@@ -918,6 +1100,8 @@ export default function CourseEditor({
       }
 
       // Persist all pending / temporary modules and chapters into Supabase
+      let failedChaptersCount = 0;
+      let lastChapterErrMsg = '';
       if (activeCourseId) {
         const isValidUUID = (id?: string | null): boolean =>
           Boolean(id && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id));
@@ -939,28 +1123,29 @@ export default function CourseEditor({
           if (dbMods && dbMods.length > 0) {
             currentModulesList = dbMods;
           } else {
-            const { data: generalMod } = await supabase
+            const { data: generalMod, error: genErr } = await supabase
               .from('modules')
               .insert([{
                 course_id: activeCourseId,
                 title: 'Módulo Geral',
-                order_index: 0,
-                description: 'Conteúdo principal do curso'
+                order_index: 0
               }])
               .select()
               .single();
 
+            if (genErr) {
+              console.warn('[CourseEditor] General module insert issue:', genErr);
+            }
             if (generalMod) {
               currentModulesList = [generalMod];
             }
           }
         }
 
-        // 2. Persist modules and collect real UUIDs
+        // 2. Persist modules and collect real UUIDs (modules table only has id, course_id, title, order_index)
         for (let i = 0; i < currentModulesList.length; i++) {
           const mod = currentModulesList[i];
           const hasRealId = isValidUUID(mod.id);
-          let realModId = mod.id;
 
           if (!hasRealId) {
             const { data: createdMod, error: modErr } = await supabase
@@ -968,41 +1153,40 @@ export default function CourseEditor({
               .insert([{
                 course_id: activeCourseId,
                 title: mod.title || (i === 0 ? 'Módulo Geral' : `Módulo ${i + 1}`),
-                order_index: mod.order_index ?? i,
-                description: mod.description || ''
+                order_index: mod.order_index ?? i
               }])
               .select()
               .single();
 
             if (!modErr && createdMod) {
-              realModId = createdMod.id;
               idMap.set(mod.id, createdMod.id);
               updatedModules.push(createdMod);
             } else {
               console.warn('[CourseEditor] Module insert issue, resolving fallback:', modErr);
+              if (modErr?.message) lastChapterErrMsg = modErr.message;
               const { data: genMod } = await supabase
                 .from('modules')
                 .select('*')
                 .eq('course_id', activeCourseId)
+                .order('order_index')
                 .limit(1)
-                .single();
+                .maybeSingle();
               if (genMod) {
-                realModId = genMod.id;
                 idMap.set(mod.id, genMod.id);
-                updatedModules.push(genMod);
+                if (!updatedModules.some(m => m.id === genMod.id)) {
+                  updatedModules.push(genMod);
+                }
               } else {
                 updatedModules.push(mod);
               }
             }
           } else {
-            realModId = mod.id;
             idMap.set(mod.id, mod.id);
             await supabase
               .from('modules')
               .update({
                 title: mod.title,
-                order_index: mod.order_index ?? i,
-                description: mod.description || ''
+                order_index: mod.order_index ?? i
               })
               .eq('id', mod.id);
             updatedModules.push(mod);
@@ -1012,11 +1196,12 @@ export default function CourseEditor({
         // Determine a guaranteed safe fallback module ID
         let safeDefaultModuleId = updatedModules.find(m => isValidUUID(m.id))?.id;
         if (!safeDefaultModuleId) {
-          const { data: genMod } = await supabase
+          const { data: genMod, error: genErr } = await supabase
             .from('modules')
             .insert([{ course_id: activeCourseId, title: 'Módulo Geral', order_index: 0 }])
             .select()
             .single();
+          if (genErr && !lastChapterErrMsg) lastChapterErrMsg = genErr.message;
           if (genMod) {
             safeDefaultModuleId = genMod.id;
             updatedModules.push(genMod);
@@ -1031,6 +1216,11 @@ export default function CourseEditor({
             targetModId = safeDefaultModuleId;
           }
 
+          if (!isValidUUID(targetModId)) {
+            failedChaptersCount++;
+            continue;
+          }
+
           const isTempCh = !isValidUUID(ch.id);
           const { content_type: dbContentType, rich_text: dbRichText } = prepareChapterForDb(ch);
 
@@ -1038,7 +1228,7 @@ export default function CourseEditor({
             module_id: targetModId,
             title: ch.title || `Aula ${j + 1}`,
             description: ch.description || '',
-            content_type: dbContentType || 'rich_text',
+            content_type: dbContentType || 'interactive',
             video_url: ch.video_url || '',
             pdf_url: ch.pdf_url || '',
             button_link_text: ch.button_link_text || '',
@@ -1050,7 +1240,6 @@ export default function CourseEditor({
             order_index: ch.order_index ?? j
           };
 
-          if (ch.custom_icon) chapterData.custom_icon = ch.custom_icon;
           if (ch.custom_badge !== undefined) chapterData.custom_badge = ch.custom_badge?.trim() || null;
 
           if (isTempCh) {
@@ -1060,40 +1249,47 @@ export default function CourseEditor({
               .select()
               .single();
 
-            if (chErr && (chErr.message?.includes('custom_icon') || chErr.message?.includes('custom_badge'))) {
-              delete chapterData.custom_icon;
+            if (chErr && chErr.message?.includes('custom_badge')) {
               delete chapterData.custom_badge;
               const retryCh = await supabase.from('chapters').insert([chapterData]).select().single();
               newCh = retryCh.data;
               chErr = retryCh.error;
             }
 
-            if (chErr) {
-              console.warn('[CourseEditor] Chapter insert error, retrying without optional fields:', chErr);
+            if (chErr || !newCh) {
+              console.warn('[CourseEditor] Chapter insert error, retrying core fields:', chErr);
+              if (chErr?.message) lastChapterErrMsg = chErr.message;
               const fallbackPayload = {
                 module_id: targetModId,
                 title: ch.title || `Aula ${j + 1}`,
                 description: ch.description || '',
-                content_type: 'rich_text',
+                content_type: dbContentType || 'interactive',
                 rich_text: dbRichText || '',
                 order_index: ch.order_index ?? j
               };
               const retry2 = await supabase.from('chapters').insert([fallbackPayload]).select().single();
               newCh = retry2.data;
+              if (retry2.error?.message) lastChapterErrMsg = retry2.error.message;
             }
 
             if (newCh?.id) {
               saveChapterViaApi(newCh.id, chapterData).catch(() => {});
               updatedChapters.push(fromDbChapter(newCh));
             } else {
+              failedChaptersCount++;
               updatedChapters.push(ch);
             }
           } else {
             let { error: updateErr } = await supabase.from('chapters').update(chapterData).eq('id', ch.id);
-            if (updateErr && (updateErr.message?.includes('custom_icon') || updateErr.message?.includes('custom_badge'))) {
-              delete chapterData.custom_icon;
+            if (updateErr && updateErr.message?.includes('custom_badge')) {
               delete chapterData.custom_badge;
-              await supabase.from('chapters').update(chapterData).eq('id', ch.id);
+              const retryUpd = await supabase.from('chapters').update(chapterData).eq('id', ch.id);
+              updateErr = retryUpd.error;
+            }
+            if (updateErr) {
+              console.warn('[CourseEditor] Chapter update error:', updateErr);
+              if (updateErr.message) lastChapterErrMsg = updateErr.message;
+              failedChaptersCount++;
             }
             saveChapterViaApi(ch.id, chapterData).catch(() => {});
             updatedChapters.push(ch);
@@ -1107,16 +1303,68 @@ export default function CourseEditor({
       dataCache.invalidate('course_full_' + activeCourseId);
       dataCache.invalidate('global_public_courses_catalog');
       dataCache.invalidate();
+      await fetch('/api/v1/clear-cache').catch(() => {});
 
-      if (targetCourseId) {
-        toast.success('Informações salvas!');
+      if (failedChaptersCount > 0) {
+        if (isRlsOrAuthError(lastChapterErrMsg)) {
+          openEditorReauth(
+            { type: 'save_course', confirmed },
+            'Sessão expirada ao gravar as aulas. Confirme sua senha para concluir o salvamento.'
+          );
+          return;
+        }
+        toast.error(`${failedChaptersCount} aula(s) não puderam ser salvas no banco${lastChapterErrMsg ? `: ${lastChapterErrMsg}` : '.'}`);
       } else {
-        toast.success('Curso criado e aulas salvas com sucesso!');
+        setIsDirty(false);
+        if (targetCourseId) {
+          toast.success('Informações e aulas salvas!');
+        } else {
+          toast.success('Curso criado e aulas salvas com sucesso!');
+        }
       }
     } catch (err: any) {
-      toast.error('Erro ao salvar: ' + err.message);
+      if (isRlsOrAuthError(err)) {
+        openEditorReauth(
+          { type: 'save_course', confirmed },
+          'Sua sessão de administrador expirou. Confirme sua senha para salvar o curso e suas aulas.'
+        );
+      } else {
+        toast.error('Erro ao salvar: ' + err.message);
+      }
     } finally {
       setSaving(false);
+    }
+  };
+
+  const handleConfirmEditorReauth = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setReauthError('');
+    setIsReauthenticating(true);
+    try {
+      const { session, error } = await reauthenticateSupabaseSession(reauthEmail, reauthPassword);
+      if (error || !session?.access_token) {
+        setReauthError(error || 'Não foi possível autenticar.');
+        return;
+      }
+      const actionToRun = pendingReauthAction;
+      setPendingReauthAction(null);
+      setShowReauthModal(false);
+      setReauthPassword('');
+      toast.success('Sessão confirmada! Salvando...');
+
+      if (actionToRun?.type === 'save_course') {
+        await handleSaveCourse(actionToRun.confirmed);
+      } else if (actionToRun?.type === 'save_ai_lesson') {
+        await handleLessonCreatedByAi(actionToRun.chapterData);
+      } else if (actionToRun?.type === 'apply_ai_course') {
+        await handleApplyAiCourse(
+          actionToRun.generatedCourse,
+          actionToRun.suggestedModules,
+          actionToRun.autoGenerateLessons
+        );
+      }
+    } finally {
+      setIsReauthenticating(false);
     }
   };
 
@@ -1215,6 +1463,7 @@ export default function CourseEditor({
         }
         
         currentCourseId = newCourse.id;
+        skipNextCourseFetchRef.current = true;
         setCourseId(newCourse.id);
         setCourse(newCourse);
         dataCache.invalidate();
@@ -1242,7 +1491,7 @@ export default function CourseEditor({
           } else {
             const { data: newMod, error: modError } = await supabase
               .from('modules')
-              .insert([{ course_id: currentCourseId, title: 'Módulo Geral', order_index: 0, description: 'Conteúdo principal do curso' }])
+              .insert([{ course_id: currentCourseId, title: 'Módulo Geral', order_index: 0 }])
               .select()
               .single();
             if (modError) throw modError;
@@ -1316,7 +1565,8 @@ export default function CourseEditor({
       dataCache.invalidate();
 
       setIsDirty(false);
-      fetchCourseData();
+      fetch('/api/v1/clear-cache').catch(() => {});
+      fetchCourseData(currentCourseId);
       setSelectedChapterId(null);
       setEditingChapter({
         title: '',
@@ -3154,7 +3404,7 @@ export default function CourseEditor({
                                   if (modified.title) {
                                     setModules(prev => prev.map(m => m.id === module.id ? { ...m, title: modified.title, description: modified.description || m.description } : m));
                                     if (courseId && !module.id.startsWith('mod-temp-')) {
-                                      await supabase.from('modules').update({ title: modified.title, description: modified.description || '' }).eq('id', module.id);
+                                      await supabase.from('modules').update({ title: modified.title }).eq('id', module.id);
                                     }
                                   }
                                 }
@@ -4156,22 +4406,37 @@ export default function CourseEditor({
     )}
 
     {/* AI Lesson Generator Modal */}
-    <AiLessonGeneratorModal
-      isOpen={isAiModalOpen}
-      onClose={() => {
-        setIsAiModalOpen(false);
-        setAiEditChapter(null);
-      }}
-      courses={courseId && course.title ? [{ ...course, id: courseId } as Course] : []}
-      initialCourseId={courseId}
-      initialModuleId={aiEditChapter?.module_id || modules[0]?.id}
-      initialChapterId={aiEditChapter?.id}
-      initialLessonTitle={aiEditChapter?.title}
-      initialLessonGoal={aiEditChapter?.description}
-      initialBlocks={aiEditChapter ? (aiEditChapter.rich_text ? (JSON.parse(aiEditChapter.rich_text).blocks || []) : []) : []}
-      modulesMap={courseId ? { [courseId]: modules } : {}}
-      onLessonCreated={handleLessonCreatedByAi}
-    />
+    {(() => {
+      const effectiveAiCourseId = getEffectiveCourseId() || '__draft_course__';
+      const aiCoursesList = [{ ...(course as Course), id: effectiveAiCourseId, title: course.title?.trim() || 'Novo Curso' } as Course];
+      let parsedInitialBlocks: any[] = [];
+      if (aiEditChapter?.rich_text) {
+        try {
+          const parsed = typeof aiEditChapter.rich_text === 'string'
+            ? JSON.parse(aiEditChapter.rich_text)
+            : aiEditChapter.rich_text;
+          if (Array.isArray(parsed?.blocks)) parsedInitialBlocks = parsed.blocks;
+        } catch {}
+      }
+      return (
+        <AiLessonGeneratorModal
+          isOpen={isAiModalOpen}
+          onClose={() => {
+            setIsAiModalOpen(false);
+            setAiEditChapter(null);
+          }}
+          courses={aiCoursesList}
+          initialCourseId={effectiveAiCourseId}
+          initialModuleId={aiEditChapter?.module_id || modules[0]?.id}
+          initialChapterId={aiEditChapter?.id}
+          initialLessonTitle={aiEditChapter?.title}
+          initialLessonGoal={aiEditChapter?.description}
+          initialBlocks={parsedInitialBlocks}
+          modulesMap={{ [effectiveAiCourseId]: modules }}
+          onLessonCreated={handleLessonCreatedByAi}
+        />
+      );
+    })()}
 
     {/* AI Course Copy & Sales Preview Generator Modal */}
     <AiCourseGeneratorModal
@@ -4187,8 +4452,9 @@ export default function CourseEditor({
       onClose={() => setIsAiFactoryModalOpen(false)}
       packages={packages}
       onCourseCreated={(newCourseId) => {
+        skipNextCourseFetchRef.current = true;
         setCourseId(newCourseId);
-        fetchCourseData();
+        fetchCourseData(newCourseId);
       }}
       onOpenManualEditor={(data) => {
         setCourse(prev => ({
@@ -4220,6 +4486,13 @@ export default function CourseEditor({
 
           rawChapters.forEach((ch: any, chIdx: number) => {
             const chId = `ch-temp-${mIdx}-${chIdx}-${Date.now()}`;
+            const rawRich = ch.rich_text
+              ? (typeof ch.rich_text === 'object' ? JSON.stringify(ch.rich_text) : ch.rich_text)
+              : (ch.interactive_content ? JSON.stringify(ch.interactive_content) : '');
+            const inferredType = ch.content_type && ch.content_type !== 'rich_text'
+              ? ch.content_type
+              : ((ch.interactive_content || (typeof rawRich === 'string' && rawRich.trim().startsWith('{'))) ? 'interactive' : 'text');
+
             loadedChapters.push({
               id: chId,
               course_id: courseId || '',
@@ -4227,9 +4500,9 @@ export default function CourseEditor({
               title: ch.title || `Aula ${chIdx + 1}`,
               description: ch.description || '',
               order_index: ch.order_index ?? chIdx,
-              content_type: ch.content_type || 'rich_text',
+              content_type: inferredType,
               video_url: ch.video_url || '',
-              rich_text: typeof ch.rich_text === 'object' ? JSON.stringify(ch.rich_text) : (ch.rich_text || ''),
+              rich_text: rawRich,
               cover_url: ch.cover_url || '',
               is_free: Boolean(ch.is_free),
               is_preview: Boolean(ch.is_preview),
@@ -4241,6 +4514,7 @@ export default function CourseEditor({
 
         setModules(loadedModules);
         setChapters(loadedChapters);
+        setIsDirty(true);
         setIsAiFactoryModalOpen(false);
       }}
     />
@@ -4274,6 +4548,117 @@ export default function CourseEditor({
         />
       )}
     </AnimatePresence>
+
+    {/* Inline Re-Authentication Portal (preserves unsaved course/lesson edits) */}
+    {showReauthModal && createPortal(
+      <div className="fixed inset-0 z-[260] bg-black/80 backdrop-blur-md flex items-center justify-center p-4">
+        <form
+          onSubmit={handleConfirmEditorReauth}
+          className="w-full max-w-md bg-[#12151f] border border-white/15 rounded-3xl p-6 space-y-5 shadow-2xl text-white"
+        >
+          <div className="flex items-start justify-between gap-3">
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 rounded-2xl bg-amber-500/15 border border-amber-500/30 flex items-center justify-center text-amber-400 shrink-0">
+                <Lock size={18} />
+              </div>
+              <div>
+                <h3 className="text-base font-black text-white">Confirmar Sessão de Administrador</h3>
+                <p className="text-xs text-gray-400 mt-0.5">
+                  Suas alterações estão preservadas. Digite sua senha para concluir a gravação no Supabase.
+                </p>
+              </div>
+            </div>
+            <button
+              type="button"
+              onClick={() => {
+                setShowReauthModal(false);
+                setPendingReauthAction(null);
+              }}
+              className="p-1.5 rounded-xl bg-white/5 hover:bg-white/10 text-gray-400 hover:text-white cursor-pointer"
+            >
+              <X size={16} />
+            </button>
+          </div>
+
+          {reauthError && (
+            <div className="p-3 rounded-xl bg-rose-500/10 border border-rose-500/30 text-xs text-rose-300">
+              {reauthError}
+            </div>
+          )}
+
+          <div className="space-y-3">
+            <div>
+              <label className="block text-[11px] font-bold uppercase tracking-wider text-gray-400 mb-1">
+                E-mail do Administrador
+              </label>
+              <input
+                type="email"
+                required
+                value={reauthEmail}
+                onChange={(e) => setReauthEmail(e.target.value)}
+                placeholder="admin@exemplo.com"
+                className="w-full bg-[#181c28] border border-white/10 rounded-xl px-3.5 py-2.5 text-sm text-white focus:outline-none focus:border-emerald-500"
+              />
+            </div>
+
+            <div>
+              <label className="block text-[11px] font-bold uppercase tracking-wider text-gray-400 mb-1">
+                Senha
+              </label>
+              <div className="relative">
+                <input
+                  type={showReauthPassword ? 'text' : 'password'}
+                  required
+                  autoFocus
+                  value={reauthPassword}
+                  onChange={(e) => setReauthPassword(e.target.value)}
+                  placeholder="Digite sua senha"
+                  className="w-full bg-[#181c28] border border-white/10 rounded-xl px-3.5 py-2.5 pr-10 text-sm text-white focus:outline-none focus:border-emerald-500"
+                />
+                <button
+                  type="button"
+                  onClick={() => setShowReauthPassword((v) => !v)}
+                  className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-white cursor-pointer"
+                >
+                  {showReauthPassword ? <EyeOff size={16} /> : <Eye size={16} />}
+                </button>
+              </div>
+            </div>
+          </div>
+
+          <div className="flex items-center justify-end gap-2.5 pt-2">
+            <button
+              type="button"
+              onClick={() => {
+                setShowReauthModal(false);
+                setPendingReauthAction(null);
+              }}
+              className="px-4 py-2.5 rounded-xl bg-white/5 hover:bg-white/10 text-xs font-bold text-gray-300 cursor-pointer"
+            >
+              Cancelar
+            </button>
+            <button
+              type="submit"
+              disabled={isReauthenticating}
+              className="px-5 py-2.5 rounded-xl bg-gradient-to-r from-emerald-500 to-teal-600 hover:brightness-110 text-white text-xs font-black uppercase tracking-wider flex items-center gap-2 cursor-pointer disabled:opacity-50"
+            >
+              {isReauthenticating ? (
+                <>
+                  <Loader2 size={14} className="animate-spin" />
+                  <span>Confirmando...</span>
+                </>
+              ) : (
+                <>
+                  <CheckCircle2 size={14} />
+                  <span>Confirmar e Salvar</span>
+                </>
+              )}
+            </button>
+          </div>
+        </form>
+      </div>,
+      document.body
+    )}
   </div>
 );
 }

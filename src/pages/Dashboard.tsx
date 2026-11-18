@@ -9,15 +9,13 @@ import ProductCard, { ProductCardSkeleton } from '../components/ProductCard';
 import FloatingWhatsApp from '../components/FloatingWhatsApp';
 import SupportSection from '../components/SupportSection';
 import { HomeTestimonialCard } from '../components/HomeTestimonialCard';
-import { TestimonialPage } from '../components/TestimonialPage';
-import { InspiringStoriesPage } from '../components/InspiringStoriesPage';
 import PullToRefresh from '../components/PullToRefresh';
 import WhatsAppIcon from '../components/WhatsAppIcon';
 import SmartHomeHeader from '../components/SmartHomeHeader';
 import { getDeviceType, isPWAInstalled, getDeferredPrompt, promptPWAInstall, installOnAndroidDirectly, subscribeToPrompt } from '../lib/pwa';
 import { toast, showToast } from '../lib/customToast';
 import { X, ShoppingBag, Loader2, Play, BookOpen, Star, Sparkles, Mail as MailIcon, MessageCircle, Book, Bell, Smartphone, ChevronRight } from 'lucide-react';
-import { motion, AnimatePresence } from 'motion/react';
+import { m, AnimatePresence } from 'motion/react';
 import { createNotification } from '../lib/notifications';
 import { useSettings } from '../contexts/SettingsContext';
 import { useI18n } from '../contexts/I18nContext';
@@ -28,9 +26,13 @@ import { cn } from '../lib/utils';
 import { lazyWithRetry } from '../lib/lazyWithRetry';
 import { GlowingSpinner } from '../components/GlowingSpinner';
 import { parseCourseHtmlFunnel } from '../utils/courseFunnel';
-import PWAInstallModal from '../components/PWAInstallModal';
-import { applyCourseOverrides, hydrateOverridesFromBootstrap, syncOverridesFromServer, useCourseOverridesSync } from '../lib/courseOverrides';
+import { applyCourseOverrides, applySingleChapterOverride, hydrateOverridesFromBootstrap, syncOverridesFromServer, useCourseOverridesSync } from '../lib/courseOverrides';
 import { getPermanentCachedCatalogMeta, getPermanentCachedCourses, savePermanentCatalogMeta, stripHeavyCourseDataForCache } from '../lib/coursePreload';
+import { preloadImagesBatch } from '../lib/imagePreload';
+
+const TestimonialPage = lazyWithRetry(() => import('../components/TestimonialPage').then(mod => ({ default: mod.TestimonialPage })));
+const InspiringStoriesPage = lazyWithRetry(() => import('../components/InspiringStoriesPage').then(mod => ({ default: mod.InspiringStoriesPage })));
+const PWAInstallModal = lazyWithRetry(() => import('../components/PWAInstallModal'));
 
 const isUUID = (str?: string) =>
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(str || '');
@@ -138,7 +140,7 @@ const AiAssistantModal = lazyWithRetry(() => import('../components/AiAssistantMo
 const AccessDeniedModal = lazyWithRetry(() => import('../components/AccessDeniedModal'));
 
 const ComponentLoader = () => (
-  <div className="w-full py-20 flex items-center justify-center">
+  <div className="w-full h-[60vh] flex items-center justify-center">
     <GlowingSpinner size="md" />
   </div>
 );
@@ -241,15 +243,20 @@ export default function Dashboard({ user }: DashboardProps) {
     return () => window.removeEventListener('app_courses_catalog_updated', handleCatalogUpdate);
   }, []);
 
+  const coursesCountRef = useRef(courses.length);
+  useEffect(() => {
+    coursesCountRef.current = courses.length;
+  }, [courses.length]);
+
   // Safety ceiling to prevent permanent loading spinner in case of offline/network failure
   useEffect(() => {
     const safetyTimer = setTimeout(() => {
       setLoading(false);
       setProgressReady(true);
-      setHasInitialFetchCompleted(prev => prev || courses.length > 0);
+      setHasInitialFetchCompleted(prev => prev || coursesCountRef.current > 0);
     }, 8000);
     return () => clearTimeout(safetyTimer);
-  }, [courses.length]);
+  }, []);
 
 
   useEffect(() => {
@@ -332,13 +339,16 @@ export default function Dashboard({ user }: DashboardProps) {
     };
   }, []);
 
-  const handleGlobalRefresh = async () => {
+  const [visitedTabs, setVisitedTabs] = useState<Set<'home' | 'profile' | 'community' | 'admin'>>(() => new Set([activeTab]));
+  const prevActiveTabRef = useRef(activeTab);
+
+  const handleGlobalRefresh = useCallback(async () => {
     if (activeTab === 'home') {
       await fetchData(true); // User explicitly triggered pull-to-refresh
     }
     setRefreshKey(prev => prev + 1);
     await new Promise(resolve => setTimeout(resolve, 600));
-  };
+  }, [activeTab]);
 
   // Silently sync progress when user closes CourseViewer, WITHOUT fetching courses
   useEffect(() => {
@@ -362,13 +372,23 @@ export default function Dashboard({ user }: DashboardProps) {
   }, [viewingCourseId, user?.id, syncProgressToDashboardCache]);
 
   useEffect(() => {
+    setVisitedTabs(prev => {
+      if (prev.has(activeTab)) return prev;
+      const next = new Set(prev);
+      next.add(activeTab);
+      return next;
+    });
+
     // Only update hash if it's not already correct to avoid unnecessary history changes
     if (window.location.hash !== `#${activeTab}`) {
       window.history.replaceState(null, '', `#${activeTab}`);
     }
 
-    // Always scroll to top when changing tabs (NO refetch on tab switch)
-    window.scrollTo(0, 0);
+    // Scroll to top when changing tabs (NO refetch on tab switch)
+    if (prevActiveTabRef.current !== activeTab) {
+      prevActiveTabRef.current = activeTab;
+      window.scrollTo(0, 0);
+    }
   }, [activeTab]);
   const [showWelcomeModal, setShowWelcomeModal] = useState(false);
   const [showPWAInstall, setShowPWAInstall] = useState(false);
@@ -426,20 +446,20 @@ export default function Dashboard({ user }: DashboardProps) {
       }, delayMs);
     };
 
-    // 1. High Priority: CourseViewer and CoursePreviewViewer
+    // 1. High Priority: CourseViewer, CoursePreviewViewer, and Community tab chunk
     const courseViewerTimer = scheduleIdle(() => {
       import('../components/CourseViewer');
       import('../components/CoursePreviewViewer');
-    }, 1400);
-
-    // 2. Medium Priority: Community and Ask Victoria
-    const highPriorityTimer = scheduleIdle(() => {
       import('../components/Community');
+    }, 700);
+
+    // 2. Medium Priority: Ask Victoria
+    const highPriorityTimer = scheduleIdle(() => {
       import('../components/AiAssistantModal');
       const victoriaAvatar = settings?.custom_texts?.['ai_expert.avatar_url']?.trim() || 'https://fhnmpltilhongdofnzbj.supabase.co/storage/v1/object/public/contents/Victoria.webp';
       const img = new Image();
       img.src = victoriaAvatar;
-    }, 2600);
+    }, 2200);
 
     // 3. Low Priority: Profile tab
     const profileTimer = scheduleIdle(() => {
@@ -502,15 +522,40 @@ export default function Dashboard({ user }: DashboardProps) {
     };
   }, [user.id, syncProgressToDashboardCache]);
 
-  useEffect(() => {
-    // Preload top banner assets gently for instant display
-    if (settings.banner_images?.length) {
-      settings.banner_images.slice(0, 2).forEach((url: string) => {
-        const img = new Image();
-        img.src = url;
-      });
-    }
+  const deviceType = useMemo(() => getDeviceType(), []);
 
+  const bannerImages = useMemo(() => {
+    if (settings.banner_sync !== false) {
+      return settings.banner_images || [];
+    }
+    return deviceType === 'desktop'
+      ? (settings.banner_images || [])
+      : (settings.banner_images_mobile || settings.banner_images || []);
+  }, [settings.banner_sync, settings.banner_images, settings.banner_images_mobile, deviceType]);
+
+  const bannerConfig = useMemo(() => {
+    if (settings.banner_sync !== false) {
+      return settings.banner_config || [];
+    }
+    return deviceType === 'desktop'
+      ? (settings.banner_config || [])
+      : (settings.banner_config_mobile || settings.banner_config || []);
+  }, [settings.banner_sync, settings.banner_config, settings.banner_config_mobile, deviceType]);
+
+  useEffect(() => {
+    // BannerCarousel already eagerly loads index 0 with fetchPriority="high"; preload index 1 quietly
+    if (bannerImages.length > 1 && bannerImages[1]?.trim()) {
+      const timer = setTimeout(() => {
+        const img = new Image();
+        img.decoding = 'async';
+        img.referrerPolicy = 'no-referrer';
+        img.src = bannerImages[1].trim();
+      }, 600);
+      return () => clearTimeout(timer);
+    }
+  }, [bannerImages]);
+
+  useEffect(() => {
     // Check if push prompt should be shown, strictly without auto-downloading Firebase
     if (typeof window !== 'undefined' && 'Notification' in window) {
       if (Notification.permission === 'default') {
@@ -525,7 +570,7 @@ export default function Dashboard({ user }: DashboardProps) {
         }).catch(() => {});
       }
     }
-  }, [user.id, settings.banner_images]);
+  }, [user.id]);
 
   const fetchData = async (forceNoCache = false) => {
     if (!user?.id) return;
@@ -1054,7 +1099,7 @@ export default function Dashboard({ user }: DashboardProps) {
     if (isAdmin && !isPaidCourse) return true;
 
     return false;
-  }, [purchases, courses, isAdmin]);
+  }, [purchases, isAdmin]);
 
   const handleOpenCourse = useCallback(async (courseOrPartial: any) => {
     if (!courseOrPartial) return;
@@ -1083,7 +1128,7 @@ export default function Dashboard({ user }: DashboardProps) {
       // Direct access to preview page for paid/locked courses
       setPreviewCourse(course);
     }
-  }, [courses, viewingCourseId, isUnlocked, courseStats, user?.id]);
+  }, [courses, isUnlocked, user?.id]);
 
   // O(1) Set of completed chapter IDs for instant progress calculation across all courses
   const completedChapterIdSet = useMemo(() => {
@@ -1110,10 +1155,22 @@ export default function Dashboard({ user }: DashboardProps) {
     return Math.min(100, Math.round((completedCount / chaptersInCourse.length) * 100));
   }, [courseChapters, completedChapterIdSet]);
 
-  // High-performance course prefetching: fetches modules and chapters into cache ahead of time
+  const inFlightPrefetchRef = useRef<Set<string>>(new Set());
+
+  // High-performance course prefetching: fetches modules, chapters, and lesson covers into cache ahead of time
   const prefetchCourse = useCallback(async (courseOrId: Course | string) => {
     const cId = typeof courseOrId === 'string' ? courseOrId : courseOrId?.id;
-    if (!cId || dataCache.get(`course_full_${cId}`)) return;
+    if (!cId || inFlightPrefetchRef.current.has(cId)) return;
+
+    const existing = dataCache.get(`course_full_${cId}`);
+    if (existing?.chapters?.length) {
+      // Ensure visible cover images are warm in browser decode cache
+      const urls = existing.chapters.slice(0, 8).map((ch: Chapter) => applySingleChapterOverride(ch).cover_url);
+      preloadImagesBatch(urls, 2000).catch(() => {});
+      return;
+    }
+
+    inFlightPrefetchRef.current.add(cId);
     try {
       import('../components/CourseViewer');
 
@@ -1141,32 +1198,16 @@ export default function Dashboard({ user }: DashboardProps) {
           chapters: chaptersList,
           progress: userProgressRef.current || []
         }, 600000, false);
+
+        // Preload first 8 lesson thumbnails immediately so image + text render simultaneously on click
+        const coverUrls = chaptersList.slice(0, 8).map(ch => applySingleChapterOverride(ch).cover_url);
+        preloadImagesBatch(coverUrls, 2500).catch(() => {});
       }
     } catch (_) {}
-  }, [courses]);
-
-  // Silently warm up only the first 2 unlocked courses AFTER initial dashboard data settles
-  useEffect(() => {
-    if (!hasInitialFetchCompleted || courses.length === 0) return;
-    const conn = (navigator as any)?.connection;
-    if (conn?.saveData || conn?.effectiveType === '2g' || conn?.effectiveType === 'slow-2g') {
-      return;
+    finally {
+      inFlightPrefetchRef.current.delete(cId);
     }
-
-    const unlocked = courses.filter(c => isUnlocked(c)).slice(0, 2);
-    const timers = unlocked.map((c, idx) =>
-      setTimeout(() => {
-        prefetchCourse(c);
-      }, 2000 + idx * 700)
-    );
-    return () => {
-      timers.forEach(tId => clearTimeout(tId));
-    };
-  }, [hasInitialFetchCompleted, courses, isUnlocked, prefetchCourse]);
-
-  const unlockedCourses = useMemo(() => {
-    return courses.filter(p => isUnlocked(p) && !p.is_bonus);
-  }, [courses, isUnlocked]);
+  }, [courses]);
 
   const mainCourses = useMemo(() => {
     // 1. Default free/main courses
@@ -1190,6 +1231,33 @@ export default function Dashboard({ user }: DashboardProps) {
     // 3. Combine: default free courses first, purchased paid courses always at the end!
     return [...sortedDefault, ...sortedPurchasedPaid];
   }, [courses, purchases]);
+
+  const unlockedCourses = useMemo(() => {
+    return courses.filter(p => isUnlocked(p) && !p.is_bonus);
+  }, [courses, isUnlocked]);
+
+  // Silently warm up only the primary course during idle time AFTER initial dashboard settles;
+  // other cards prefetch on hover/touch in ProductCard so initial Home network & memory stay light.
+  useEffect(() => {
+    if (!hasInitialFetchCompleted || unlockedCourses.length === 0) return;
+    const conn = (navigator as any)?.connection;
+    if (conn?.saveData || conn?.effectiveType === '2g' || conn?.effectiveType === 'slow-2g') {
+      return;
+    }
+
+    const primaryCourse = mainCourses[0] || unlockedCourses[0];
+    if (!primaryCourse) return;
+
+    const timer = setTimeout(() => {
+      if (typeof (window as any).requestIdleCallback === 'function') {
+        (window as any).requestIdleCallback(() => prefetchCourse(primaryCourse), { timeout: 3000 });
+      } else {
+        prefetchCourse(primaryCourse);
+      }
+    }, 2200);
+
+    return () => clearTimeout(timer);
+  }, [hasInitialFetchCompleted, unlockedCourses, mainCourses, prefetchCourse]);
 
   const paidCourses = useMemo(() => {
     // Paid courses that are NOT purchased
@@ -1328,6 +1396,45 @@ export default function Dashboard({ user }: DashboardProps) {
     }
   }, [globalStats.totalProgress, user.id]);
 
+  const handleOpenAi = useCallback(() => setIsAiModalOpen(true), []);
+  const handleCloseAi = useCallback(() => setIsAiModalOpen(false), []);
+  const handleOpenProgress = useCallback(() => setShowProgressModal(true), []);
+  const handleCloseProgress = useCallback(() => setShowProgressModal(false), []);
+  const handleOpenWriteTestimonial = useCallback(() => setIsWritingTestimonial(true), []);
+  const handleOpenViewTestimonials = useCallback(() => setIsViewingTestimonials(true), []);
+  const handleOpenPwaModal = useCallback(() => setShowPWAInstall(true), []);
+  const handleCloseCourseViewer = useCallback(() => {
+    setViewingCourseId(null);
+    setViewingCourse(null);
+  }, []);
+  const handleProgressChangeFromViewer = useCallback((updatedProgress: any[]) => {
+    setUserProgress(updatedProgress);
+    syncProgressToDashboardCache(updatedProgress);
+  }, [syncProgressToDashboardCache]);
+
+  const handleInstallAction = useCallback(async () => {
+    const device = getDeviceType();
+    if (device === 'desktop') {
+      setShowPWAInstall(true);
+      return;
+    }
+    if (device === 'android') {
+      const directSuccess = await installOnAndroidDirectly();
+      if (directSuccess) return;
+    }
+    const success = await promptPWAInstall();
+    if (!success) {
+      if (device === 'android') {
+        const isWebView = /wv|webview|fbav|instagram|micromessenger|threads/i.test(navigator.userAgent);
+        if (isWebView) {
+          window.location.href = `intent://${window.location.host}${window.location.pathname}${window.location.search}#Intent;scheme=https;package=com.android.chrome;end;`;
+          return;
+        }
+      }
+      setShowPWAInstall(true);
+    }
+  }, []);
+
   // Full-screen loading only if we have NO data at all
   const hasCoursesLoaded = courses.length > 0;
   
@@ -1337,29 +1444,33 @@ export default function Dashboard({ user }: DashboardProps) {
 
   if (isViewingTestimonials) {
     return (
-      <InspiringStoriesPage
-        settings={settings}
-        onBack={() => setIsViewingTestimonials(false)}
-        onWriteStory={() => {
-          setIsViewingTestimonials(false);
-          setIsWritingTestimonial(true);
-        }}
-      />
+      <Suspense fallback={<GlowingSpinner fullScreen size="lg" />}>
+        <InspiringStoriesPage
+          settings={settings}
+          onBack={() => setIsViewingTestimonials(false)}
+          onWriteStory={() => {
+            setIsViewingTestimonials(false);
+            setIsWritingTestimonial(true);
+          }}
+        />
+      </Suspense>
     );
   }
 
   if (isWritingTestimonial) {
     return (
-      <TestimonialPage 
-        user={user} 
-        courses={courses} 
-        settings={settings} 
-        onBack={() => setIsWritingTestimonial(false)} 
-        onViewStories={() => {
-          setIsWritingTestimonial(false);
-          setIsViewingTestimonials(true);
-        }}
-      />
+      <Suspense fallback={<GlowingSpinner fullScreen size="lg" />}>
+        <TestimonialPage 
+          user={user} 
+          courses={courses} 
+          settings={settings} 
+          onBack={() => setIsWritingTestimonial(false)} 
+          onViewStories={() => {
+            setIsWritingTestimonial(false);
+            setIsViewingTestimonials(true);
+          }}
+        />
+      </Suspense>
     );
   }
 
@@ -1376,15 +1487,9 @@ export default function Dashboard({ user }: DashboardProps) {
               courseId={viewingCourseId} 
               initialCourse={viewingCourse}
               initialProgress={userProgress}
-              onProgressChange={(updatedProgress) => {
-                setUserProgress(updatedProgress);
-                syncProgressToDashboardCache(updatedProgress);
-              }}
+              onProgressChange={handleProgressChangeFromViewer}
               userId={user.id} 
-              onClose={() => {
-                setViewingCourseId(null);
-                setViewingCourse(null);
-              }} 
+              onClose={handleCloseCourseViewer} 
             />
           </Suspense>
         )}
@@ -1394,7 +1499,7 @@ export default function Dashboard({ user }: DashboardProps) {
 <AnimatePresence>
 {showWelcomeModal && (
 <div className="fixed inset-0 z-[100] flex items-center justify-center p-6 bg-black/60 backdrop-blur-xl">
-<motion.div 
+<m.div 
 initial={{ opacity: 0, scale: 0.9, y: 30 }}
 animate={{ opacity: 1, scale: 1, y: 0 }}
 exit={{ opacity: 0, scale: 0.9, y: 30 }}
@@ -1441,7 +1546,7 @@ className="w-full py-3 text-[10px] text-gray-600 font-bold uppercase tracking-[0
 </button>
 </div>
 </div>
-</motion.div>
+</m.div>
 </div>
 )}
 </AnimatePresence>
@@ -1450,37 +1555,16 @@ className="w-full py-3 text-[10px] text-gray-600 font-bold uppercase tracking-[0
         user={user} 
         activeTab={activeTab} 
         onTabChange={setActiveTab} 
-        onOpenAi={() => setIsAiModalOpen(true)}
+        onOpenAi={handleOpenAi}
         isAiOpen={isAiModalOpen}
         canInstall={canInstall}
-        onInstall={async () => {
-          const device = getDeviceType();
-          if (device === 'desktop') {
-            setShowPWAInstall(true);
-            return;
-          }
-          if (device === 'android') {
-            const directSuccess = await installOnAndroidDirectly();
-            if (directSuccess) return;
-          }
-          const success = await promptPWAInstall();
-          if (!success) {
-            if (device === 'android') {
-              const isWebView = /wv|webview|fbav|instagram|micromessenger|threads/i.test(navigator.userAgent);
-              if (isWebView) {
-                window.location.href = `intent://${window.location.host}${window.location.pathname}${window.location.search}#Intent;scheme=https;package=com.android.chrome;end;`;
-                return;
-              }
-            }
-            setShowPWAInstall(true);
-          }
-        }}
+        onInstall={handleInstallAction}
         totalProgress={globalStats.totalProgress}
         progressLoading={!progressReady}
-        onOpenProgress={() => setShowProgressModal(true)}
+        onOpenProgress={handleOpenProgress}
       />
 
-      {/* Tab Content and Transitions */}
+      {/* Tab Content — Keep visited tabs mounted & pause background work when hidden for 0ms tab switching */}
       {isAiModalOpen ? (
         <div className="fixed inset-0 bg-black z-10 w-full h-full" />
       ) : (
@@ -1488,21 +1572,17 @@ className="w-full py-3 text-[10px] text-gray-600 font-bold uppercase tracking-[0
           "w-full pb-32",
           activeTab !== 'home' ? "pt-20 min-h-screen" : "min-h-screen"
         )}>
-          {activeTab === 'home' ? (
-              <PullToRefresh onRefresh={handleGlobalRefresh}>
+          {visitedTabs.has('home') && (
+            <div className={activeTab === 'home' ? 'block' : 'hidden'} aria-hidden={activeTab !== 'home'}>
+              <PullToRefresh onRefresh={handleGlobalRefresh} disabled={activeTab !== 'home'}>
                 <div className="flex flex-col">
                   {/* Banner Section */}
                   <div className="w-full">
                     <BannerCarousel 
-                      images={(settings.banner_sync !== false) 
-                        ? (settings.banner_images || []) 
-                        : (getDeviceType() === 'desktop' ? (settings.banner_images || []) : (settings.banner_images_mobile || settings.banner_images || []))
-                      } 
+                      images={bannerImages} 
                       interval={settings.banner_interval || 5000} 
-                      config={(settings.banner_sync !== false)
-                        ? (settings.banner_config || [])
-                        : (getDeviceType() === 'desktop' ? (settings.banner_config || []) : (settings.banner_config_mobile || settings.banner_config || []))
-                      }
+                      config={bannerConfig}
+                      isPausedExternally={activeTab !== 'home' || Boolean(viewingCourseId) || Boolean(previewCourse) || isAiModalOpen}
                     />
                   </div>
 
@@ -1510,11 +1590,11 @@ className="w-full py-3 text-[10px] text-gray-600 font-bold uppercase tracking-[0
                   <SmartHomeHeader 
                     totalProgress={globalStats.totalProgress} 
                     lastCourse={globalStats.lastCourse}
-                    onContinueCourse={(course) => handleOpenCourse(course as any)}
+                    onContinueCourse={handleOpenCourse}
                     settings={settings}
                     t={t}
                     showModal={showProgressModal}
-                    onCloseModal={() => setShowProgressModal(false)}
+                    onCloseModal={handleCloseProgress}
                   />
 
                   {/* Content Sections */}
@@ -1530,7 +1610,7 @@ className="w-full py-3 text-[10px] text-gray-600 font-bold uppercase tracking-[0
                           <ProductCardSkeleton />
                         </>
                       ) : mainCourses.length > 0 ? (
-                        mainCourses.map(course => (
+                        mainCourses.map((course, idx) => (
                           <ProductCard
                             key={course.id}
                             product={course}
@@ -1538,6 +1618,7 @@ className="w-full py-3 text-[10px] text-gray-600 font-bold uppercase tracking-[0
                             progress={getCourseProgress(course.id)}
                             stats={courseStats[course.id]}
                             settings={settings}
+                            priority={idx < 2}
                             onOpen={handleOpenCourse}
                             onPrefetch={prefetchCourse}
                           />
@@ -1589,7 +1670,7 @@ className="w-full py-3 text-[10px] text-gray-600 font-bold uppercase tracking-[0
                           <ProductCardSkeleton />
                         </>
                       ) : paidCourses.length > 0 ? (
-                        paidCourses.map(course => (
+                        paidCourses.map((course) => (
                           <ProductCard
                             key={course.id}
                             product={course}
@@ -1597,6 +1678,7 @@ className="w-full py-3 text-[10px] text-gray-600 font-bold uppercase tracking-[0
                             progress={getCourseProgress(course.id)}
                             stats={courseStats[course.id]}
                             settings={settings}
+                            priority={false}
                             onOpen={handleOpenCourse}
                             onPrefetch={prefetchCourse}
                           />
@@ -1618,38 +1700,49 @@ className="w-full py-3 text-[10px] text-gray-600 font-bold uppercase tracking-[0
                     <HomeTestimonialCard
                       settings={settings}
                       t={t}
-                      onOpenTestimonial={() => setIsWritingTestimonial(true)}
-                      onViewTestimonials={() => setIsViewingTestimonials(true)}
+                      onOpenTestimonial={handleOpenWriteTestimonial}
+                      onViewTestimonials={handleOpenViewTestimonials}
                     />
 
                     <SupportSection page="home" settings={settings} t={t} />
                   </div>
                 </div>
               </PullToRefresh>
-            ) : activeTab === 'community' ? (
-                <PullToRefresh onRefresh={handleGlobalRefresh}>
-                  <Suspense fallback={<ComponentLoader />}>
-                    <Community key={`community-${refreshKey}`} user={user} />
-                    <SupportSection page="community" settings={settings} t={t} />
-                  </Suspense>
-                </PullToRefresh>
-              ) : activeTab === 'admin' ? (
+            </div>
+          )}
+
+          {visitedTabs.has('community') && (
+            <div className={activeTab === 'community' ? 'block' : 'hidden'} aria-hidden={activeTab !== 'community'}>
+              <PullToRefresh onRefresh={handleGlobalRefresh} disabled={activeTab !== 'community'}>
                 <Suspense fallback={<ComponentLoader />}>
-                  <AdminPanel key={`admin-${refreshKey}`} user={user} />
+                  <Community key={`community-${refreshKey}`} user={user} isActive={activeTab === 'community'} />
                 </Suspense>
-              ) : (
-                <PullToRefresh onRefresh={handleGlobalRefresh}>
-                  <Suspense fallback={<ComponentLoader />}>
-                    <Profile 
-                      key={`profile-${refreshKey}`} 
-                      user={user} 
-                      canInstall={canInstall}
-                      onInstall={() => setShowPWAInstall(true)}
-                    />
-                    <SupportSection page="profile" settings={settings} t={t} />
-                  </Suspense>
-                </PullToRefresh>
-              )}
+                <SupportSection page="community" settings={settings} t={t} />
+              </PullToRefresh>
+            </div>
+          )}
+
+          {activeTab === 'admin' && (
+            <Suspense fallback={<ComponentLoader />}>
+              <AdminPanel key={`admin-${refreshKey}`} user={user} />
+            </Suspense>
+          )}
+
+          {visitedTabs.has('profile') && (
+            <div className={activeTab === 'profile' ? 'block' : 'hidden'} aria-hidden={activeTab !== 'profile'}>
+              <PullToRefresh onRefresh={handleGlobalRefresh} disabled={activeTab !== 'profile'}>
+                <Suspense fallback={<ComponentLoader />}>
+                  <Profile 
+                    key={`profile-${refreshKey}`} 
+                    user={user} 
+                    canInstall={canInstall}
+                    onInstall={handleOpenPwaModal}
+                  />
+                  <SupportSection page="profile" settings={settings} t={t} />
+                </Suspense>
+              </PullToRefresh>
+            </div>
+          )}
         </div>
       )}
 
@@ -1683,7 +1776,7 @@ className="w-full py-3 text-[10px] text-gray-600 font-bold uppercase tracking-[0
         <BottomNav 
           activeTab={activeTab} 
           onTabChange={setActiveTab} 
-          onOpenAi={() => setIsAiModalOpen(true)}
+          onOpenAi={handleOpenAi}
           isAiOpen={isAiModalOpen}
           userEmail={user.email} 
         />
@@ -1696,7 +1789,7 @@ className="w-full py-3 text-[10px] text-gray-600 font-bold uppercase tracking-[0
           userName={user?.user_metadata?.full_name || user?.email?.split('@')[0]} 
           userAvatar={user?.user_metadata?.avatar_url}
           isOpen={isAiModalOpen}
-          onClose={() => setIsAiModalOpen(false)}
+          onClose={handleCloseAi}
           hasUnlimitedAi={
             (userProfile?.has_unlimited_ai === false || user?.user_metadata?.has_unlimited_ai === false)
               ? false
@@ -1711,27 +1804,29 @@ className="w-full py-3 text-[10px] text-gray-600 font-bold uppercase tracking-[0
       </Suspense>
       
       {showPWAInstall && (
-        <PWAInstallModal 
-          isOpen={showPWAInstall} 
-          onClose={() => setShowPWAInstall(false)}
-          onInstall={async () => {
-            const prompt = deferredPrompt || getDeferredPrompt();
-            if (prompt) {
-              try {
-                await prompt.prompt();
-                const { outcome } = await prompt.userChoice;
-                if (outcome === 'accepted') {
-                  setDeferredPrompt(null);
-                  setCanInstall(false);
-                  return true;
+        <Suspense fallback={null}>
+          <PWAInstallModal 
+            isOpen={showPWAInstall} 
+            onClose={() => setShowPWAInstall(false)}
+            onInstall={async () => {
+              const prompt = deferredPrompt || getDeferredPrompt();
+              if (prompt) {
+                try {
+                  await prompt.prompt();
+                  const { outcome } = await prompt.userChoice;
+                  if (outcome === 'accepted') {
+                    setDeferredPrompt(null);
+                    setCanInstall(false);
+                    return true;
+                  }
+                } catch (e) {
+                  console.error('Error invoking install prompt:', e);
                 }
-              } catch (e) {
-                console.error('Error invoking install prompt:', e);
               }
-            }
-            return await promptPWAInstall();
-          }}
-        />
+              return await promptPWAInstall();
+            }}
+          />
+        </Suspense>
       )}
 
       {/* Access Denied / Inactive Subscription Overlay */}

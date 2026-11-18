@@ -197,26 +197,7 @@ export function applySingleChapterOverride<T>(chapter: T): T {
   };
 }
 
-/**
- * Helper to get active admin bearer token
- */
-async function getAuthTokenSafe(): Promise<string | null> {
-  try {
-    const { data: { session } } = await supabase.auth.getSession();
-    if (session?.access_token) return session.access_token;
-    const { data: refreshed } = await supabase.auth.refreshSession();
-    if (refreshed?.session?.access_token) return refreshed.session.access_token;
-  } catch {}
-  return null;
-}
-
-/**
- * Persists course updates to backend server & local cache with full resilience
- */
-export async function saveCourseViaApi(courseId: string, dataToSave: Record<string, any>): Promise<boolean> {
-  if (!courseId || !dataToSave) return false;
-
-  // 1. Immediately store in client memory and localStorage for 0ms reactivity
+export function setCourseOverrideInMemory(courseId: string, dataToSave: Record<string, any>): Record<string, Record<string, any>> {
   courseOverridesMemory[courseId] = {
     ...(courseOverridesMemory[courseId] || {}),
     ...dataToSave
@@ -225,62 +206,10 @@ export async function saveCourseViaApi(courseId: string, dataToSave: Record<stri
     localStorage.setItem(COURSE_OVERRIDES_CACHE_KEY, JSON.stringify(courseOverridesMemory));
   } catch {}
   notifyOverridesUpdated();
-
-  // 2. Direct cloud sync to Supabase ai_user_memory for guaranteed persistence across all devices & Vercel
-  supabase
-    .from('ai_user_memory')
-    .upsert({
-      user_id: '__global_course_overrides__',
-      facts: [courseOverridesMemory],
-      last_updated: new Date().toISOString()
-    })
-    .then(() => {})
-    .catch(() => {});
-
-  // 3. Try direct update on public.courses table
-  supabase
-    .from('courses')
-    .update(dataToSave)
-    .eq('id', courseId)
-    .then(() => {})
-    .catch(() => {});
-
-  // 4. Send to backend admin API (persists in server data/course_overrides.json & Supabase DB)
-  try {
-    const token = await getAuthTokenSafe();
-    const headers: Record<string, string> = {
-      'Content-Type': 'application/json'
-    };
-    if (token) {
-      headers['Authorization'] = `Bearer ${token}`;
-    }
-
-    const response = await safeFetch('/api/v1/admin?action=course-save', {
-      method: 'POST',
-      headers,
-      body: JSON.stringify({
-        courseId,
-        data: dataToSave
-      })
-    });
-
-    if (response && response.success) {
-      return true;
-    }
-  } catch (err) {
-    console.warn('[Overrides] saveCourseViaApi server notice:', err);
-  }
-
-  return true;
+  return courseOverridesMemory;
 }
 
-/**
- * Persists chapter updates to backend server & local cache with full resilience
- */
-export async function saveChapterViaApi(chapterId: string, dataToSave: Record<string, any>): Promise<boolean> {
-  if (!chapterId || !dataToSave) return false;
-
-  // 1. Immediately store in client memory and localStorage for 0ms reactivity
+export function setChapterOverrideInMemory(chapterId: string, dataToSave: Record<string, any>): Record<string, Record<string, any>> {
   chapterOverridesMemory[chapterId] = {
     ...(chapterOverridesMemory[chapterId] || {}),
     ...dataToSave
@@ -289,51 +218,5 @@ export async function saveChapterViaApi(chapterId: string, dataToSave: Record<st
     localStorage.setItem(CHAPTER_OVERRIDES_CACHE_KEY, JSON.stringify(chapterOverridesMemory));
   } catch {}
   notifyOverridesUpdated();
-
-  // 2. Direct cloud sync to Supabase ai_user_memory for guaranteed persistence across all devices & Vercel
-  supabase
-    .from('ai_user_memory')
-    .upsert({
-      user_id: '__global_chapter_overrides__',
-      facts: [chapterOverridesMemory],
-      last_updated: new Date().toISOString()
-    })
-    .then(() => {})
-    .catch(() => {});
-
-  // 3. Try direct update on public.chapters table
-  supabase
-    .from('chapters')
-    .update(dataToSave)
-    .eq('id', chapterId)
-    .then(() => {})
-    .catch(() => {});
-
-  // 4. Send to backend admin API (persists in server data/chapter_overrides.json & Supabase DB)
-  try {
-    const token = await getAuthTokenSafe();
-    const headers: Record<string, string> = {
-      'Content-Type': 'application/json'
-    };
-    if (token) {
-      headers['Authorization'] = `Bearer ${token}`;
-    }
-
-    const response = await safeFetch('/api/v1/admin?action=chapter-save', {
-      method: 'POST',
-      headers,
-      body: JSON.stringify({
-        chapterId,
-        data: dataToSave
-      })
-    });
-
-    if (response && response.success) {
-      return true;
-    }
-  } catch (err) {
-    console.warn('[Overrides] saveChapterViaApi server notice:', err);
-  }
-
-  return true;
+  return chapterOverridesMemory;
 }

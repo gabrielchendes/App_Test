@@ -2089,6 +2089,7 @@ async function handleUpdateSettings(req: VercelRequest, res: VercelResponse) {
   }
 
   if (updateError) throw updateError;
+  (globalThis as any).__mpAppSettingsCache = null;
 
   // If admin_email is changing, handle user creation or password update
   if (newSettings.admin_email) {

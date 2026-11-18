@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { memo } from 'react';
 import { ArrowRight, Heart } from 'lucide-react';
 import { AppSettings } from '../contexts/SettingsContext';
 
@@ -9,7 +9,7 @@ interface HomeTestimonialCardProps {
   onViewTestimonials?: () => void;
 }
 
-export const HomeTestimonialCard: React.FC<HomeTestimonialCardProps> = ({
+export const HomeTestimonialCard: React.FC<HomeTestimonialCardProps> = memo(({
   settings,
   t,
   onOpenTestimonial,
@@ -45,9 +45,15 @@ export const HomeTestimonialCard: React.FC<HomeTestimonialCardProps> = ({
         {/* Top subtle specular reflection line */}
         <div className="absolute top-0 inset-x-12 h-[1px] bg-gradient-to-r from-transparent via-amber-400/40 to-transparent pointer-events-none" />
 
-        {/* Ambient radial glows */}
-        <div className="absolute -top-24 left-1/2 -translate-x-1/2 w-96 h-44 bg-amber-500/15 rounded-full blur-3xl pointer-events-none" />
-        <div className="absolute -bottom-20 left-1/2 -translate-x-1/2 w-80 h-36 bg-amber-400/10 rounded-full blur-2xl pointer-events-none" />
+        {/* Lightweight ambient radial glows (no expensive blur filters) */}
+        <div
+          className="absolute -top-24 left-1/2 -translate-x-1/2 w-96 h-44 rounded-full pointer-events-none"
+          style={{ background: 'radial-gradient(ellipse at center, rgba(245,158,11,0.16) 0%, transparent 70%)' }}
+        />
+        <div
+          className="absolute -bottom-20 left-1/2 -translate-x-1/2 w-80 h-36 rounded-full pointer-events-none"
+          style={{ background: 'radial-gradient(ellipse at center, rgba(251,191,36,0.1) 0%, transparent 70%)' }}
+        />
 
         <div className="relative z-10 max-w-2xl mx-auto space-y-6">
           <div className="space-y-3">
@@ -93,4 +99,4 @@ export const HomeTestimonialCard: React.FC<HomeTestimonialCardProps> = ({
       </div>
     </div>
   );
-};
+});

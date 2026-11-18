@@ -94,31 +94,36 @@ const Navbar = memo(({
     window.addEventListener('user-profile-updated', handleProfileUpdated);
     window.addEventListener('storage', handleStorageChange);
 
-    // Initial background check from profiles table if cache is empty
+    // Fallback background check only if Dashboard bootstrap didn't populate cached profile within 1.8s
+    let profileFallbackTimer: ReturnType<typeof setTimeout> | null = null;
     if (user?.id && !overrideName) {
-      supabase
-        .from('profiles')
-        .select('full_name, avatar_url')
-        .eq('id', user.id)
-        .maybeSingle()
-        .then(({ data }) => {
-          if (data?.full_name) {
-            setOverrideName(data.full_name);
-            try {
-              localStorage.setItem(`cached_full_name_${user.id}`, data.full_name);
-            } catch (err) {}
-          }
-          if (data?.avatar_url) {
-            setOverrideAvatar(data.avatar_url);
-            try {
-              localStorage.setItem(`cached_avatar_url_${user.id}`, data.avatar_url);
-            } catch (err) {}
-          }
-        })
-        .catch(() => {});
+      profileFallbackTimer = setTimeout(() => {
+        if (localStorage.getItem(`cached_full_name_${user.id}`)) return;
+        supabase
+          .from('profiles')
+          .select('full_name, avatar_url')
+          .eq('id', user.id)
+          .maybeSingle()
+          .then(({ data }) => {
+            if (data?.full_name) {
+              setOverrideName(data.full_name);
+              try {
+                localStorage.setItem(`cached_full_name_${user.id}`, data.full_name);
+              } catch (err) {}
+            }
+            if (data?.avatar_url) {
+              setOverrideAvatar(data.avatar_url);
+              try {
+                localStorage.setItem(`cached_avatar_url_${user.id}`, data.avatar_url);
+              } catch (err) {}
+            }
+          })
+          .catch(() => {});
+      }, 1800);
     }
 
     return () => {
+      if (profileFallbackTimer) clearTimeout(profileFallbackTimer);
       window.removeEventListener('user-profile-updated', handleProfileUpdated);
       window.removeEventListener('storage', handleStorageChange);
     };
@@ -153,7 +158,7 @@ const Navbar = memo(({
             >
               <div className="w-7 h-7 rounded-full bg-zinc-800 overflow-hidden flex items-center justify-center border border-white/25 shrink-0">
                 {effectiveAvatar && effectiveAvatar.trim() ? (
-                  <img src={effectiveAvatar.trim()} alt="Avatar" className="w-full h-full object-cover" referrerPolicy="no-referrer" />
+                  <img src={effectiveAvatar.trim()} alt="Avatar" decoding="async" className="w-full h-full object-cover" referrerPolicy="no-referrer" />
                 ) : (
                   <UserIcon size={14} className="text-primary" />
                 )}
@@ -271,7 +276,7 @@ const Navbar = memo(({
           >
             <div className="w-8 h-8 rounded-full bg-zinc-800 overflow-hidden flex items-center justify-center border border-white/25 shrink-0">
               {effectiveAvatar && effectiveAvatar.trim() ? (
-                <img src={effectiveAvatar.trim()} alt="Avatar" className="w-full h-full object-cover" referrerPolicy="no-referrer" />
+                <img src={effectiveAvatar.trim()} alt="Avatar" decoding="async" className="w-full h-full object-cover" referrerPolicy="no-referrer" />
               ) : (
                 <UserIcon size={16} className="text-primary" />
               )}

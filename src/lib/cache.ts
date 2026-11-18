@@ -10,24 +10,7 @@ class DataCache {
   private readonly storagePrefix = 'mp_datacache_';
 
   private constructor() {
-    // Warm up memory cache from localStorage on startup if available
-    if (typeof window !== 'undefined') {
-      try {
-        for (let i = 0; i < localStorage.length; i++) {
-          const key = localStorage.key(i);
-          if (key && key.startsWith(this.storagePrefix)) {
-            const raw = localStorage.getItem(key);
-            if (raw) {
-              const parsed: CacheEntry<any> = JSON.parse(raw);
-              const actualKey = key.slice(this.storagePrefix.length);
-              this.cache.set(actualKey, parsed);
-            }
-          }
-        }
-      } catch {
-        // Ignore localStorage access restrictions
-      }
-    }
+    // Entries are loaded lazily from localStorage on first DataCache.get() call
   }
 
   static getInstance(): DataCache {

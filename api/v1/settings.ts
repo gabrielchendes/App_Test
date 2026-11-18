@@ -12,6 +12,8 @@ const supabaseAnonKey =
   process.env.VITE_SUPABASE_ANON_KEY || 
   '';
 
+const SETTINGS_CACHE_TTL_MS = 60_000;
+
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'GET, OPTIONS');
@@ -22,6 +24,13 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   }
 
   try {
+    const now = Date.now();
+    const cached = (globalThis as any).__mpAppSettingsCache;
+    if (cached && now - cached.ts < SETTINGS_CACHE_TTL_MS) {
+      res.setHeader('Cache-Control', 'public, max-age=30, stale-while-revalidate=120');
+      return res.status(200).json(cached.data);
+    }
+
     let localOverride: any = {};
     try {
       const settingsPath = path.join(process.cwd(), 'data', 'app_settings.json');
@@ -72,7 +81,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       merged.login_platform_name = merged.custom_texts['auth.platform_name'];
     }
 
-    res.setHeader('Cache-Control', 'no-cache, must-revalidate');
+    (globalThis as any).__mpAppSettingsCache = { data: merged, ts: now };
+    res.setHeader('Cache-Control', 'public, max-age=30, stale-while-revalidate=120');
     return res.status(200).json(merged);
   } catch (error: any) {
     return res.status(500).json({ error: error.message || 'Internal server error' });

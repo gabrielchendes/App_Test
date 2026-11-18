@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { motion, AnimatePresence } from 'motion/react';
+import { m, AnimatePresence } from 'motion/react';
 import { WifiOff, Wifi, X } from 'lucide-react';
 import { useI18n } from '../contexts/I18nContext';
 import { toast } from '../lib/customToast';
@@ -55,7 +55,7 @@ export const OfflineNotice: React.FC = () => {
     <div className="fixed top-[max(1.5rem,calc(env(safe-area-inset-top)+1rem))] left-1/2 -translate-x-1/2 z-[9999] pointer-events-none max-w-[88vw] sm:max-w-[380px] w-full px-2 flex justify-center">
       <AnimatePresence mode="wait">
         {isOffline ? (
-          <motion.div
+          <m.div
             key="offline-banner"
             initial={{ opacity: 0, y: -16, scale: 0.96 }}
             animate={{ opacity: 1, y: 0, scale: 1 }}
@@ -86,9 +86,9 @@ export const OfflineNotice: React.FC = () => {
             >
               <X size={13} strokeWidth={2.2} />
             </button>
-          </motion.div>
+          </m.div>
         ) : showReconnected ? (
-          <motion.div
+          <m.div
             key="online-banner"
             initial={{ opacity: 0, y: -16, scale: 0.96 }}
             animate={{ opacity: 1, y: 0, scale: 1 }}
@@ -113,7 +113,7 @@ export const OfflineNotice: React.FC = () => {
             >
               <X size={13} />
             </button>
-          </motion.div>
+          </m.div>
         ) : null}
       </AnimatePresence>
     </div>

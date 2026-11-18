@@ -1,15 +1,16 @@
 import { useState, useEffect, useRef } from 'react';
-import { motion, useMotionValue, useTransform, animate } from 'motion/react';
+import { m, useMotionValue, useTransform, animate } from 'motion/react';
 import { RefreshCw } from 'lucide-react';
 
 interface PullToRefreshProps {
   onRefresh: () => Promise<void>;
   children: React.ReactNode;
+  disabled?: boolean;
 }
 
 const PULL_THRESHOLD = 80;
 
-export default function PullToRefresh({ onRefresh, children }: PullToRefreshProps) {
+export default function PullToRefresh({ onRefresh, children, disabled = false }: PullToRefreshProps) {
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [isTriggered, setIsTriggered] = useState(false);
   const y = useMotionValue(0);
@@ -48,6 +49,12 @@ export default function PullToRefresh({ onRefresh, children }: PullToRefreshProp
   };
 
   useEffect(() => {
+    if (disabled) {
+      isPulling.current = false;
+      y.set(0);
+      return;
+    }
+
     const handleTouchStart = (e: TouchEvent) => {
       if (isRefreshing) return;
       if (isAtTop()) {
@@ -159,12 +166,12 @@ export default function PullToRefresh({ onRefresh, children }: PullToRefreshProp
       window.removeEventListener('touchmove', handleTouchMove);
       window.removeEventListener('touchend', handleTouchEnd);
     };
-  }, [onRefresh, isRefreshing, y]);
+  }, [onRefresh, isRefreshing, y, disabled]);
 
   return (
     <div ref={containerRef} className="relative overflow-visible">
       {/* Pull Indicator */}
-      <motion.div 
+      <m.div 
         style={{ opacity, scale }}
         className="absolute top-0 left-0 right-0 flex justify-center py-5 pointer-events-none z-[100]"
       >
@@ -180,20 +187,20 @@ export default function PullToRefresh({ onRefresh, children }: PullToRefreshProp
             <span className="absolute inset-0 rounded-full bg-primary/25 animate-ping opacity-60 pointer-events-none" />
           )}
           
-          <motion.div
+          <m.div
             style={{ rotate: isRefreshing ? undefined : rotate }}
             animate={isRefreshing ? { rotate: 360 } : { scale: (isTriggered || isRefreshing) ? 1.05 : 1 }}
             transition={isRefreshing ? { repeat: Infinity, duration: 0.8, ease: "linear" } : { type: "spring", stiffness: 300 }}
           >
             <RefreshCw className={`w-5 h-5 transition-colors duration-300 ${(isTriggered || isRefreshing) ? 'text-primary' : 'text-neutral-300'}`} />
-          </motion.div>
+          </m.div>
         </div>
-      </motion.div>
+      </m.div>
 
       {/* Content */}
-      <motion.div style={{ y: pullY }} className="will-change-transform">
+      <m.div style={{ y: pullY }} className="will-change-transform">
         {children}
-      </motion.div>
+      </m.div>
     </div>
   );
 }

@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useEffect, useState } from 'react';
+import React, { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { supabase } from '../lib/supabase';
 
 export interface AppSettings {
@@ -181,8 +181,9 @@ export function SettingsProvider({ children }: { children: React.ReactNode }) {
       return false;
     }
   });
+  const lastBrandingRef = useRef<{ fav?: string; ios?: string; shortTitle?: string }>({});
 
-  const fetchSettings = async () => {
+  const fetchSettings = useCallback(async () => {
     // Fast safety timeout so cold starts never block UI rendering on slow networks
     const timeoutId = setTimeout(() => {
       setLoading(false);
@@ -283,9 +284,9 @@ export function SettingsProvider({ children }: { children: React.ReactNode }) {
       clearTimeout(timeoutId);
       setLoading(false);
     }
-  };
+  }, []);
 
-  const applyTheme = (s: AppSettings) => {
+  const applyTheme = useCallback((s: AppSettings) => {
     // Apply colors to CSS variables
     document.documentElement.style.setProperty('--primary', s.primary_color);
     document.documentElement.style.setProperty('--primary-hover', s.secondary_color);
@@ -302,7 +303,7 @@ export function SettingsProvider({ children }: { children: React.ReactNode }) {
     // Update title
     document.title = s.app_name;
 
-    // 1. Update Browser Tab Favicon strictly and force browser DOM repaint with timestamp
+    // 1. Update Browser Tab Favicon only when URL actually changed (preserves HTTP/SW cache)
     let rawFav = s.favicon_url || s.custom_texts?.['config.favicon_url'];
     if (rawFav && rawFav.includes('LogoMT.png')) {
       rawFav = rawFav.replace('LogoMT.png', 'LogoMTiPhone.png');
@@ -312,58 +313,68 @@ export function SettingsProvider({ children }: { children: React.ReactNode }) {
       : ((s.custom_texts?.['config.ios_icon_url']) || s.ios_icon_url || (s.logo_url && s.logo_url.includes('iPhone') ? s.logo_url : null) || '/favicon.png');
 
     if (cleanFaviconUrl) {
-      // Remove all existing non-apple icon tags to force browsers to re-register the favicon
-      const oldIcons = document.querySelectorAll("link[rel*='icon']:not([rel*='apple-touch-icon'])");
-      oldIcons.forEach((el) => el.remove());
+      const targetFavUrl = (cleanFaviconUrl.startsWith('http') || cleanFaviconUrl.startsWith('/'))
+        ? cleanFaviconUrl
+        : '/favicon.png';
+      const currentFavLink = document.getElementById('app-favicon') as HTMLLinkElement | null;
+      const currentFavAttr = currentFavLink?.getAttribute('data-applied-src') || currentFavLink?.getAttribute('href') || '';
 
-      const t = Date.now();
-      const busterUrl = cleanFaviconUrl.startsWith('http')
-        ? (cleanFaviconUrl.includes('?') ? `${cleanFaviconUrl}&_v=${t}` : `${cleanFaviconUrl}?_v=${t}`)
-        : `/favicon.png?_v=${t}`;
+      if (!currentFavLink || currentFavAttr !== targetFavUrl || (lastBrandingRef.current.fav && lastBrandingRef.current.fav !== targetFavUrl)) {
+        const oldIcons = document.querySelectorAll("link[rel*='icon']:not([rel*='apple-touch-icon'])");
+        oldIcons.forEach((el) => el.remove());
 
-      const link = document.createElement('link');
-      link.id = 'app-favicon';
-      link.rel = 'icon';
-      if (cleanFaviconUrl.split('?')[0].endsWith('.svg')) {
-        link.type = 'image/svg+xml';
-      } else if (cleanFaviconUrl.split('?')[0].endsWith('.ico')) {
-        link.type = 'image/x-icon';
-      } else {
-        link.type = 'image/png';
+        const link = document.createElement('link');
+        link.id = 'app-favicon';
+        link.rel = 'icon';
+        link.setAttribute('data-applied-src', targetFavUrl);
+        if (targetFavUrl.split('?')[0].endsWith('.svg')) {
+          link.type = 'image/svg+xml';
+        } else if (targetFavUrl.split('?')[0].endsWith('.ico')) {
+          link.type = 'image/x-icon';
+        } else {
+          link.type = 'image/png';
+        }
+        link.href = targetFavUrl;
+        document.head.appendChild(link);
+
+        const shortcut = document.createElement('link');
+        shortcut.rel = 'shortcut icon';
+        shortcut.href = targetFavUrl;
+        document.head.appendChild(shortcut);
       }
-      link.href = busterUrl;
-      document.head.appendChild(link);
-
-      let shortcut = document.createElement('link');
-      shortcut.rel = 'shortcut icon';
-      shortcut.href = busterUrl;
-      document.head.appendChild(shortcut);
+      lastBrandingRef.current.fav = targetFavUrl;
     }
 
-    // 2. Update Apple Touch Icon (iPhone / iPad iOS)
+    // 2. Update Apple Touch Icon (iPhone / iPad iOS) only if URL differs
     const effectiveIosIcon = (s.ios_icon_url && s.ios_icon_url.trim()) || 
       (s.custom_texts?.['config.ios_icon_url'] && s.custom_texts['config.ios_icon_url'].trim()) || 
       (s.logo_url && s.logo_url.includes('iPhone') ? s.logo_url.trim() : null) || 
       '/apple-touch-icon.png';
     if (effectiveIosIcon) {
-      const appleIcons = document.querySelectorAll("link[rel='apple-touch-icon']");
-      appleIcons.forEach((el) => el.remove());
+      const targetIosUrl = (effectiveIosIcon.startsWith('http') || effectiveIosIcon.startsWith('/'))
+        ? effectiveIosIcon
+        : '/apple-touch-icon.png';
+      const existingAppleLink = document.querySelector("link[rel='apple-touch-icon']") as HTMLLinkElement | null;
+      const currentAppleAttr = existingAppleLink?.getAttribute('data-applied-src') || existingAppleLink?.getAttribute('href') || '';
 
-      const appleTimestamp = Date.now();
-      const appleBusterUrl = effectiveIosIcon.startsWith('http')
-        ? (effectiveIosIcon.includes('?') ? `${effectiveIosIcon}&_v=${appleTimestamp}` : `${effectiveIosIcon}?_v=${appleTimestamp}`)
-        : `/apple-touch-icon.png?_v=${appleTimestamp}`;
+      if (!existingAppleLink || currentAppleAttr !== targetIosUrl || (lastBrandingRef.current.ios && lastBrandingRef.current.ios !== targetIosUrl)) {
+        const appleIcons = document.querySelectorAll("link[rel='apple-touch-icon']");
+        appleIcons.forEach((el) => el.remove());
 
-      const appleLink180 = document.createElement('link');
-      appleLink180.rel = 'apple-touch-icon';
-      appleLink180.sizes = '180x180';
-      appleLink180.href = appleBusterUrl;
-      document.head.appendChild(appleLink180);
+        const appleLink180 = document.createElement('link');
+        appleLink180.rel = 'apple-touch-icon';
+        appleLink180.sizes = '180x180';
+        appleLink180.setAttribute('data-applied-src', targetIosUrl);
+        appleLink180.href = targetIosUrl;
+        document.head.appendChild(appleLink180);
 
-      const appleLink = document.createElement('link');
-      appleLink.rel = 'apple-touch-icon';
-      appleLink.href = appleBusterUrl;
-      document.head.appendChild(appleLink);
+        const appleLink = document.createElement('link');
+        appleLink.rel = 'apple-touch-icon';
+        appleLink.setAttribute('data-applied-src', targetIosUrl);
+        appleLink.href = targetIosUrl;
+        document.head.appendChild(appleLink);
+      }
+      lastBrandingRef.current.ios = targetIosUrl;
 
       // iOS Web App Title & Application Name
       const shortTitle = s.custom_texts?.['config.app_short_name'] || s.app_name || 'Missing Trigger';
@@ -373,7 +384,9 @@ export function SettingsProvider({ children }: { children: React.ReactNode }) {
         appleTitle.name = 'apple-mobile-web-app-title';
         document.head.appendChild(appleTitle);
       }
-      appleTitle.content = shortTitle;
+      if (appleTitle.content !== shortTitle) {
+        appleTitle.content = shortTitle;
+      }
 
       let appNameMeta = document.querySelector("meta[name='application-name']") as HTMLMetaElement;
       if (!appNameMeta) {
@@ -381,30 +394,37 @@ export function SettingsProvider({ children }: { children: React.ReactNode }) {
         appNameMeta.name = 'application-name';
         document.head.appendChild(appNameMeta);
       }
-      appNameMeta.content = shortTitle;
-    }
+      if (appNameMeta.content !== shortTitle) {
+        appNameMeta.content = shortTitle;
+      }
 
-    // 3. Android Web App Manifest
-    // Ensure manifest link updates dynamically with cache-busting timestamp to trigger instant re-evaluation in Chromium
-    const manifestTimestamp = Date.now();
-    let manifestLink = document.querySelector("link[rel='manifest']") as HTMLLinkElement;
-    if (manifestLink) {
-      manifestLink.href = `/manifest.json?_v=${manifestTimestamp}`;
-    } else {
-      manifestLink = document.createElement('link');
-      manifestLink.rel = 'manifest';
-      manifestLink.href = `/manifest.json?_v=${manifestTimestamp}`;
-      document.head.appendChild(manifestLink);
+      // 3. Android Web App Manifest: keep clean /manifest.json unless branding changed mid-session
+      const manifestChangedMidSession = Boolean(lastBrandingRef.current.shortTitle && lastBrandingRef.current.shortTitle !== shortTitle);
+      lastBrandingRef.current.shortTitle = shortTitle;
+      let manifestLink = document.querySelector("link[rel='manifest']") as HTMLLinkElement | null;
+      if (!manifestLink) {
+        manifestLink = document.createElement('link');
+        manifestLink.rel = 'manifest';
+        manifestLink.href = '/manifest.json';
+        document.head.appendChild(manifestLink);
+      } else if (manifestChangedMidSession) {
+        manifestLink.href = `/manifest.json?_v=${Date.now()}`;
+      }
     }
-  };
+  }, []);
 
   useEffect(() => {
     applyTheme(settings);
     fetchSettings();
-  }, []);
+  }, [applyTheme, fetchSettings]);
+
+  const contextValue = useMemo(
+    () => ({ settings, loading, refreshSettings: fetchSettings, applyTheme }),
+    [settings, loading, fetchSettings, applyTheme]
+  );
 
   return (
-    <SettingsContext.Provider value={{ settings, loading, refreshSettings: fetchSettings, applyTheme }}>
+    <SettingsContext.Provider value={contextValue}>
       {children}
     </SettingsContext.Provider>
   );

@@ -335,7 +335,7 @@ export const BlockLessonViewer: React.FC<BlockLessonViewerProps> = ({
 
   // Total items required to complete lesson
   const totalInteractives = blocks.reduce((acc, block) => {
-    if (block.type === 'checklist' || block.type === 'action_plan' || block.type === 'exercise' || block.type === 'readiness_evaluator') {
+    if (block.type === 'checklist' || block.type === 'action_plan' || block.type === 'exercise' || block.type === 'readiness_evaluator' || block.type === 'calculator') {
       return acc + (block.items?.length || 0);
     }
     if (block.type === 'quiz') {
@@ -349,7 +349,7 @@ export const BlockLessonViewer: React.FC<BlockLessonViewerProps> = ({
 
   // Completed items count
   const completedCount = blocks.reduce((acc, block, bIdx) => {
-    if (block.type === 'checklist' || block.type === 'action_plan' || block.type === 'exercise' || block.type === 'readiness_evaluator') {
+    if (block.type === 'checklist' || block.type === 'action_plan' || block.type === 'exercise' || block.type === 'readiness_evaluator' || block.type === 'calculator') {
       const count = (block.items || []).filter((item, iIdx) => {
         const key = item.id || `${block.id}_${iIdx}`;
         return !!completedItems[key];
@@ -440,7 +440,7 @@ export const BlockLessonViewer: React.FC<BlockLessonViewerProps> = ({
                     {block.type === 'ai_analyzer' && <Sparkles size={20} />}
                     {block.type === 'tracker' && <Clock size={20} />}
                     {block.type === 'simulator' && <Zap size={20} />}
-                    {block.type === 'readiness_evaluator' && <TrendingUp size={20} />}
+                    {(block.type === 'readiness_evaluator' || block.type === 'calculator') && <TrendingUp size={20} />}
                     {block.type === 'comparison' && <Split size={20} />}
                     {block.type === 'timeline' && <Layers size={20} />}
                   </div>
@@ -705,13 +705,13 @@ export const BlockLessonViewer: React.FC<BlockLessonViewerProps> = ({
                         <div className="space-y-1">
                           <h4 className="text-base font-black text-white">{block.tracker_label || 'Focus Tracker'}</h4>
                           <p className="text-xs text-gray-400 max-w-sm mx-auto">
-                            Select when your No-Contact started to calculate your streak and render your progression chart:
+                            Select your start date to calculate your consecutive streak and progression chart:
                           </p>
                         </div>
 
                         <div className="space-y-2 text-left">
                           <label className="text-[10px] font-black uppercase text-emerald-400 tracking-wider block">
-                            Start Date of No-Contact:
+                            Start Date:
                           </label>
                           <input
                             type="date"
@@ -946,7 +946,7 @@ export const BlockLessonViewer: React.FC<BlockLessonViewerProps> = ({
               )}
 
               {/* 5. MINI-APP: READINESS EVALUATOR / CALCULATOR */}
-              {block.type === 'readiness_evaluator' && (() => {
+              {(block.type === 'readiness_evaluator' || block.type === 'calculator') && (() => {
                 const scorePct = calculateReadinessScore(block);
 
                 let tierTitle = t.readinessTitle;

@@ -2,7 +2,7 @@ import { memo } from 'react';
 import { Home, User, Shield } from 'lucide-react';
 import { cn } from '../lib/utils';
 import { useSettings } from '../contexts/SettingsContext';
-import { motion } from 'motion/react';
+import { m } from 'motion/react';
 import { AskVictoriaIcon } from './AskVictoriaIcon';
 import { CommunityIcon } from './CommunityIcon';
 
@@ -59,8 +59,9 @@ const BottomNav = memo(({ activeTab, onTabChange, onOpenAi, isAiOpen, userEmail 
                 <div className="relative flex flex-col items-center justify-center py-1.5 px-2 w-full max-w-[84px] rounded-2xl transition-all">
                   {/* Sliding active tab indicator enclosing BOTH icon and text label */}
                   {isActive && (
-                    <motion.div 
-                      layoutId="slidingActiveTabIndicator"
+                    <m.div 
+                      initial={{ opacity: 0, scale: 0.92 }}
+                      animate={{ opacity: 1, scale: 1 }}
                       className={cn(
                         "absolute inset-0 rounded-2xl -z-10 transition-colors duration-200",
                         tab.isAi 
@@ -78,7 +79,7 @@ const BottomNav = memo(({ activeTab, onTabChange, onOpenAi, isAiOpen, userEmail 
                   {/* Icon */}
                   <div className="relative flex items-center justify-center h-6 w-6 mb-0.5">
                     {tab.isAi ? (
-                      <motion.div
+                      <m.div
                         animate={{ scale: isActive ? 1.12 : 1 }}
                         transition={{ type: "spring", stiffness: 400, damping: 20 }}
                       >
@@ -90,9 +91,9 @@ const BottomNav = memo(({ activeTab, onTabChange, onOpenAi, isAiOpen, userEmail 
                             isActive ? "text-pink-200 drop-shadow-[0_0_10px_rgba(244,114,182,0.8)]" : "text-zinc-400 group-hover:text-zinc-200"
                           )}
                         />
-                      </motion.div>
+                      </m.div>
                     ) : Icon ? (
-                      <motion.div
+                      <m.div
                         animate={{ scale: isActive ? 1.08 : 1 }}
                         transition={{ type: "spring", stiffness: 400, damping: 20 }}
                       >
@@ -100,7 +101,7 @@ const BottomNav = memo(({ activeTab, onTabChange, onOpenAi, isAiOpen, userEmail 
                           "transition-colors duration-200 relative z-10",
                           isActive ? "text-white drop-shadow-[0_0_10px_rgba(244,63,94,0.7)]" : "text-zinc-400 group-hover:text-zinc-200"
                         )} />
-                      </motion.div>
+                      </m.div>
                     ) : null}
                   </div>
 

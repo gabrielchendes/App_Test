@@ -2,7 +2,6 @@ import React, { useState, useEffect, useRef } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { Share, PlusSquare, Download, X, Check, Smartphone, Monitor, ChevronLeft, ChevronRight, Apple, Play } from 'lucide-react';
 import { useI18n } from '../contexts/I18nContext';
-import { languagePresets } from '../constants/languagePresets';
 import { getDeviceType, setPWADismissed, getDeferredPrompt, promptPWAInstall, isPWAInstalled, subscribeToPrompt } from '../lib/pwa';
 import { useSettings } from '../contexts/SettingsContext';
 

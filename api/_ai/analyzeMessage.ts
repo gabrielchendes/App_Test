@@ -1,4 +1,4 @@
-import { GoogleGenAI } from '@google/genai';
+import { GoogleGenAI, ThinkingLevel } from '@google/genai';
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { safeParseAiJson } from '../_utils/parseAiJson';
 import { generateContentWithRetry } from '../_utils/geminiCallWithRetry';
@@ -79,9 +79,9 @@ Mensagem enviada pela aluna para analisar:
 "${messageText}"`;
 
     const candidateModels = [
+      'gemini-4-hydrogen',
       'gemini-3.1-flash-lite',
-      'gemini-flash-latest',
-      'gemini-3.8-flash'
+      'gemini-flash-latest'
     ];
 
     const result = await generateContentWithRetry({
@@ -90,22 +90,25 @@ Mensagem enviada pela aluna para analisar:
       contents: prompt,
       config: {
         systemInstruction,
-        temperature: 0.5,
         responseMimeType: 'application/json',
+        thinkingConfig: { thinkingLevel: ThinkingLevel.LOW },
       },
-      maxAttemptsPerModel: 2,
-      baseDelayMs: 1200,
-      logPrefix: '[Analyze Message API]'
+      maxAttemptsPerModel: 1,
+      baseDelayMs: 600,
+      logPrefix: '[Analyze Message API]',
+      validateResponse: (text) => safeParseAiJson(text),
     });
 
     const responseText = result.text;
 
-    let parsedData: any = null;
-    try {
-      parsedData = safeParseAiJson(responseText);
-    } catch (parseErr) {
-      console.error('[Analyze Message API] JSON parse error:', responseText);
-      return res.status(500).json({ error: 'Failed to format message analysis in JSON.' });
+    let parsedData: any = result.parsed || null;
+    if (!parsedData) {
+      try {
+        parsedData = safeParseAiJson(responseText);
+      } catch (parseErr) {
+        console.warn('[Analyze Message API] JSON parse note:', responseText.slice(0, 300));
+        return res.status(500).json({ error: 'Failed to format message analysis in JSON.' });
+      }
     }
 
     return res.status(200).json({

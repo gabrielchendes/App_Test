@@ -1,6 +1,6 @@
-import React, { useMemo, useState } from 'react';
+import React, { memo, useMemo } from 'react';
 import { Trophy, Star, Zap, Flame, Rocket, Crown, X, CheckCircle2, ChevronRight, Target } from 'lucide-react';
-import { motion, AnimatePresence } from 'motion/react';
+import { m, AnimatePresence } from 'motion/react';
 import { cn } from '../lib/utils';
 
 interface SmartHomeHeaderProps {
@@ -18,7 +18,7 @@ interface SmartHomeHeaderProps {
   onCloseModal: () => void;
 }
 
-export default function SmartHomeHeader({ 
+const SmartHomeHeader = memo(function SmartHomeHeader({ 
   totalProgress, 
   lastCourse, 
   onContinueCourse, 
@@ -109,7 +109,7 @@ export default function SmartHomeHeader({
     <AnimatePresence>
       {showModal && (
         <div className="fixed inset-0 z-[100] flex items-start justify-center p-4 pt-24 sm:pt-28 overflow-y-auto">
-          <motion.div 
+          <m.div 
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
@@ -117,7 +117,7 @@ export default function SmartHomeHeader({
             className="absolute inset-0 bg-black/90 backdrop-blur-xl"
           />
           
-          <motion.div 
+          <m.div 
             initial={{ opacity: 0, scale: 0.9, y: 20 }}
             animate={{ opacity: 1, scale: 1, y: 0 }}
             exit={{ opacity: 0, scale: 0.9, y: 20 }}
@@ -136,7 +136,7 @@ export default function SmartHomeHeader({
               </button>
 
               {/* Level Badge */}
-              <motion.div 
+              <m.div 
                 initial={{ rotate: -20, scale: 0 }}
                 animate={{ rotate: 0, scale: 1 }}
                 transition={{ type: "spring", damping: 12, delay: 0.2 }}
@@ -150,7 +150,7 @@ export default function SmartHomeHeader({
                   {t('gamification.level_short')} {levelInfo.id}
                 </div>
                 {levelInfo.bigIcon}
-              </motion.div>
+              </m.div>
 
               <h2 className="text-2xl font-black text-white italic uppercase tracking-tight mb-1">
                 {t('gamification.modal_title', { level: levelInfo.label })}
@@ -246,11 +246,13 @@ export default function SmartHomeHeader({
                 {t('gamification.continue_journey')} <Rocket size={18} />
               </button>
             </div>
-          </motion.div>
+          </m.div>
         </div>
       )}
     </AnimatePresence>
   );
-}
+});
+
+export default SmartHomeHeader;
 
 
